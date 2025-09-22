@@ -66,6 +66,9 @@ class Room(SoftDeleteModel):
     parking_available = models.BooleanField(default=False)
     avg_rating = models.FloatField(default=0)
     number_rating = models.IntegerField(default=0)
+    latitude = models.FloatField(null=True, blank=True)
+    longitude = models.FloatField(null=True, blank=True)
+    
 
     def clean(self):
         super().clean()

@@ -409,6 +409,8 @@ def validate_pagination(limit, page, offset, max_limit=50):
             raise serializers.ValidationError({"offset": "Offset must be an integer."})
         if o < 0:
             raise serializers.ValidationError({"offset": "Offset must be ≥ 0."})
+        
+        
 
 
 
