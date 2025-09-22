@@ -162,3 +162,42 @@ class WebhookReceipt(models.Model):
     received_at = models.DateTimeField(auto_now_add=True)
 
 
+class SavedRoom(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="saved_rooms_links")
+    room = models.ForeignKey("Room", on_delete=models.CASCADE, related_name="saved_by_links")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ("user", "room")
+        indexes = [
+            models.Index(fields=["user", "room"]),
+            models.Index(fields=["room"]),
+        ]
+
+   
+    def __str__(self):
+        return f"{getattr(self.user, 'username', 'user')} → {getattr(self, 'room_id', '∅')}"
+    
+    
+    
+class MessageThread(models.Model):
+    participants = models.ManyToManyField(User, related_name="message_threads")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        users = ", ".join(self.participants.values_list("username", flat=True)[:2])
+        return f"Thread {self.id} ({users}…)" 
+
+
+class Message(models.Model):
+    thread = models.ForeignKey(MessageThread, on_delete=models.CASCADE, related_name="messages")
+    sender = models.ForeignKey(User, on_delete=models.CASCADE, related_name="sent_messages")
+    body = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["created_at"]
+        indexes = [
+            models.Index(fields=["thread", "created_at"]),
+        ]
+

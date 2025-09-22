@@ -30,3 +30,17 @@ class IsReviewUserOrReadOnly(permissions.BasePermission):
     #   Allow only if:
     #   The logged-in user created the review (review_user == request.user), or
     #   The user is an admin/staff (request.user.is_staff)  
+    
+    
+
+class IsOwnerOrReadOnly(permissions.BasePermission):
+    """
+    Read: anyone.
+    Write (PUT/PATCH/DELETE): only the room.property_owner or staff.
+    """
+    def has_object_permission(self, request, view, obj):
+        if request.method in permissions.SAFE_METHODS:
+            return True
+        owner = getattr(obj, "property_owner", None)
+        return (owner is not None and owner == request.user) or bool(request.user and request.user.is_staff)
+    

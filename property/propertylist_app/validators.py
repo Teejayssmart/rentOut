@@ -1,14 +1,24 @@
-from rest_framework import serializers
-import re
-from datetime import date
-from django.utils import timezone
-from io import BytesIO
-from PIL import Image  # needs: pip install Pillow
-import hashlib
 import decimal
+import hashlib
+import hmac
+import math
+import os
+import re
+import time
+from datetime import date
+from io import BytesIO
+
+import requests
+from PIL import Image  # needs: pip install Pillow
+
 from django.core.exceptions import ValidationError
 from django.db.models import Q
-import hmac, hashlib, time
+from django.utils import timezone
+
+from rest_framework import serializers
+from functools import lru_cache 
+
+
 
 # =========================
 # USER VALIDATORS
@@ -372,19 +382,20 @@ def validate_numeric_range(min_val, max_val, label_min="min", label_max="max"):
     if a > b:
         raise serializers.ValidationError({label_min: f"{label_min} cannot be greater than {label_max}."})
 
-# radius in km: 0..max_km
-def validate_radius_km(value, max_km=100):
+# radius in miles: 0..max_miles
+def validate_radius_miles(value, max_miles=100):
     if value is None or value == "":
         return 0.0
     try:
         v = float(value)
     except Exception:
-        raise serializers.ValidationError("Radius must be a number (km).")
+        raise serializers.ValidationError("Radius must be a number (miles).")
     if v < 0:
         raise serializers.ValidationError("Radius cannot be negative.")
-    if v > max_km:
-        raise serializers.ValidationError(f"Radius cannot exceed {max_km} km.")
+    if v > max_miles:
+        raise serializers.ValidationError(f"Radius cannot exceed {max_miles} miles.")
     return v
+
 
 # pagination: limit ≤ max_limit; page ≥ 1; offset ≥ 0
 def validate_pagination(limit, page, offset, max_limit=50):
@@ -758,4 +769,66 @@ def ensure_webhook_not_replayed(event_id: str, receipt_qs):
     if not event_id:
         raise ValidationError("Missing webhook event ID.")
     if receipt_qs.filter(event_id=event_id).exists():
-        raise ValidationError("Duplicate webhook (replay).")        
+        raise ValidationError("Duplicate webhook (replay).")   
+    
+    
+    
+
+
+def haversine_miles(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """
+    Great-circle distance between two points in MILES.
+    """
+    R_km = 6371.0
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlambda = math.radians(lon2 - lon1)
+    a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlambda/2)**2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+    d_km = R_km * c
+    return d_km / 1.60934
+
+
+def extract_postcode_from_location(location_str: str) -> str | None:
+    """Your locations store postcode at the end; reuse that convention."""
+    parts = str(location_str or "").strip().split()
+    return parts[-1] if parts else None
+
+    
+    
+from functools import lru_cache
+
+@lru_cache(maxsize=1024)
+def _mapbox_geocode_cached(postcode: str, token: str) -> tuple[float, float]:
+    url = f"https://api.mapbox.com/geocoding/v5/mapbox.places/{postcode}.json"
+    params = {"access_token": token, "limit": 1, "country": "GB"}
+    resp = requests.get(url, params=params, timeout=5)
+    resp.raise_for_status()
+    data = resp.json()
+    feats = data.get("features", [])
+    if not feats:
+        raise serializers.ValidationError("Postcode not found.")
+    lon, lat = feats[0]["center"]
+    return float(lat), float(lon)
+
+def geocode_postcode(postcode: str) -> tuple[float, float]:
+    """
+    Use Mapbox Geocoding API to convert a postcode into (lat, lon).
+    Raises ValidationError with clear messages on configuration or provider errors.
+    """
+    token = os.environ.get("MAPBOX_TOKEN")
+    if not token:
+        raise serializers.ValidationError("Geocoding not configured (MAPBOX_TOKEN missing).")
+    try:
+        return _mapbox_geocode_cached(postcode, token)
+    except requests.HTTPError as e:
+        status_code = getattr(e.response, "status_code", None)
+        if status_code in (401, 403):
+            raise serializers.ValidationError("Geocoding provider rejected the token (check MAPBOX_TOKEN).")
+        raise serializers.ValidationError("Geocoding provider error.")
+    except requests.Timeout:
+        raise serializers.ValidationError("Geocoding timed out; please try again.")
+    except serializers.ValidationError:
+        raise
+    except Exception:
+        raise serializers.ValidationError("Failed to geocode postcode.")

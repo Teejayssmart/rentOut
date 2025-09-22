@@ -1,15 +1,40 @@
-from django.urls import path, include
-from rest_framework.routers import DefaultRouter
-from propertylist_app.api.views import ( RoomAV, RoomDetailAV,
-RoomCategorieAV,RoomCategorieDetailAV,ReviewCreate, ReviewList, ReviewDetail,
-RoomCategorieVS,UserReview, RoomListGV, create_booking,webhook_in,
-RegistrationView, LoginView, LogoutView,PasswordResetRequestView,
-PasswordResetConfirmView,MeView, UserProfileView, RoomPhotoUploadView,
-RoomPhotoUploadView,RoomPhotoDeleteView,MyRoomsView, SearchRoomsView,      # ← add
-    NearbyRoomsView,)
-
 from django.conf import settings
 from django.conf.urls.static import static
+from django.urls import path, include
+
+from rest_framework.routers import DefaultRouter
+
+from propertylist_app.api.views import (
+    RoomAV,
+    RoomDetailAV,
+    RoomCategorieAV,
+    RoomCategorieDetailAV,
+    ReviewCreate,
+    ReviewList,
+    ReviewDetail,
+    RoomCategorieVS,
+    UserReview,
+    RoomListGV,
+    create_booking,
+    webhook_in,
+    RegistrationView,
+    LoginView,
+    LogoutView,
+    PasswordResetRequestView,
+    PasswordResetConfirmView,
+    MeView,
+    UserProfileView,
+    RoomPhotoUploadView,
+    RoomPhotoDeleteView,
+    MyRoomsView,
+    SearchRoomsView,
+    NearbyRoomsView,
+    RoomSaveView,
+    MySavedRoomsView,
+    MessageThreadListCreateView,
+    MessageListCreateView,
+)
+
 
 
 
@@ -58,7 +83,7 @@ urlpatterns = [
     
  
     
-    path('rooms/<int:pk>/photos/', RoomPhotoUploadView.as_view(), name='room-photo-upload'),
+    
 
     path('rooms/<int:pk>/photos/', RoomPhotoUploadView.as_view(), name='room-photo-upload'),
     path('rooms/<int:pk>/photos/<int:photo_id>/', RoomPhotoDeleteView.as_view(), name='room-photo-delete'),
@@ -69,7 +94,12 @@ urlpatterns = [
     path('search/rooms/', SearchRoomsView.as_view(), name='search-rooms'),      # ← GET /api/search/rooms/
     path('rooms/nearby/', NearbyRoomsView.as_view(), name='rooms-nearby'),      # ← GET /api/rooms/nearby/
 
+    path('rooms/<int:pk>/save/', RoomSaveView.as_view(), name='room-save'),
+    path('users/me/saved/rooms/', MySavedRoomsView.as_view(), name='my-saved-rooms'),
     
+    path("messages/threads/", MessageThreadListCreateView.as_view(), name="message-threads"),
+    path("messages/threads/<int:thread_id>/messages/", MessageListCreateView.as_view(), name="thread-messages"), 
+
     
 ]
 

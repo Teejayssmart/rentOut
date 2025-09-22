@@ -1,6 +1,18 @@
 from django.contrib.auth.models import User
+
 from rest_framework import serializers
-from propertylist_app.models import Room, RoomCategorie, Review
+
+from propertylist_app.models import (
+    Room,
+    RoomCategorie,
+    Review,
+    UserProfile,
+    RoomImage,
+    SavedRoom,
+    MessageThread,
+    Message,
+)
+
 from propertylist_app.validators import (
     validate_person_name,
     validate_age_18_plus,
@@ -14,17 +26,16 @@ from propertylist_app.validators import (
     validate_listing_photos,
     sanitize_search_text,
     validate_numeric_range,
-    validate_radius_km,
+    validate_radius_miles,
     validate_pagination,
     validate_ordering,
-    normalise_price,             
-    normalise_phone,             
-    normalise_name,               
+    normalise_price,
+    normalise_phone,
+    normalise_name,
     assert_not_duplicate_listing,
-    assert_no_duplicate_files, 
+    assert_no_duplicate_files,
+    enforce_user_caps,
 )
-from propertylist_app.validators import enforce_user_caps
-from propertylist_app.models import UserProfile, RoomImage
 
 
 
@@ -43,6 +54,8 @@ class ReviewSerializer(serializers.ModelSerializer):
 class RoomSerializer(serializers.ModelSerializer):
     # expose category name (read-only)
     category = serializers.CharField(source='category.name', read_only=True)
+    distance_miles = serializers.SerializerMethodField(read_only=True)
+    
 
     # ---- Field validators you already wrote ----
     def validate_title(self, value):
@@ -138,6 +151,17 @@ class RoomSerializer(serializers.ModelSerializer):
     class Meta:
         model = Room
         fields = "__all__"
+        
+    def get_is_saved(self, obj):
+        request = self.context.get("request")
+        if not request or not request.user or not request.user.is_authenticated:
+            return False
+        return SavedRoom.objects.filter(user=request.user, room=obj.id).exists()    
+        
+    def get_distance_miles(self, obj):
+        # Populated by the view; None if not provided
+        val = getattr(obj, "distance_miles", None)
+        return round(val, 2) if isinstance(val, (int, float)) else val   
 
     
 
@@ -260,7 +284,35 @@ class RoomImageSerializer(serializers.ModelSerializer):
         fields = ["id", "room", "image"]
         read_only_fields = ["room"]
         
+        
+class MessageSerializer(serializers.ModelSerializer):
+    sender = serializers.StringRelatedField(read_only=True)
+
+    class Meta:
+        model = Message
+        fields = ["id", "thread", "sender", "body", "created_at"]
+        read_only_fields = ["thread", "sender", "created_at"] 
+
+
+class MessageThreadSerializer(serializers.ModelSerializer):
+    participants = serializers.SlugRelatedField(
+        slug_field="username",
+        many=True,
+        queryset=User.objects.all()
+    )
+    last_message = serializers.SerializerMethodField()
+
+    class Meta:
+        model = MessageThread
+        fields = ["id", "participants", "created_at", "last_message"]
+
+    def get_last_message(self, obj):
+        msg = obj.messages.order_by("-created_at").first()
+        return MessageSerializer(msg).data if msg else None         
       
+
+
+
       
       
       

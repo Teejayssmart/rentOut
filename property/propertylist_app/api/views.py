@@ -1,39 +1,79 @@
-from django.shortcuts import get_object_or_404
-from rest_framework.response import Response
-from rest_framework.exceptions import ValidationError
-from rest_framework import status
-from rest_framework.views import APIView
-from rest_framework import generics
-from rest_framework import viewsets
-from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnly
-from rest_framework.throttling import UserRateThrottle, AnonRateThrottle, ScopedRateThrottle
-from django_filters.rest_framework import DjangoFilterBackend
-from rest_framework import filters
-from django.db import transaction
-from ..models import IdempotencyKey
-from ..validators import ensure_idempotency
-from django.contrib.auth import authenticate
-from rest_framework.decorators import api_view  # needed for create_booking view
-from rest_framework_simplejwt.tokens import RefreshToken
-from rest_framework import generics, permissions
-from rest_framework.parsers import MultiPartParser, FormParser
-from datetime import datetime  # to parse incoming datetimes
-from ..models import Booking    # booking model used below
-from ..models import RoomImage
-from ..validators import validate_no_booking_conflict
-from ..models import WebhookReceipt
-from ..validators import verify_webhook_signature, ensure_webhook_not_replayed
+from datetime import datetime
 
-from propertylist_app.api.permissions import IsAdminOrReadOnly, IsReviewUserOrReadOnly
-from propertylist_app.models import Room, RoomCategorie, Review
-from propertylist_app.api.serializers import RoomSerializer, RoomCategorieSerializer, ReviewSerializer
-from propertylist_app.api.throttling import ReviewCreateThrottle, ReviewListThrottle
-from propertylist_app.api.pagination import RoomPagination, RoomLOPagination, RoomCPagination
-from .serializers import (
-    RegistrationSerializer, LoginSerializer,
-    PasswordResetRequestSerializer, PasswordResetConfirmSerializer,
-    UserSerializer, UserProfileSerializer,  SearchFiltersSerializer
+from django.contrib.auth import authenticate
+from django.db import transaction
+from django.db.models import Q, Count
+from django.shortcuts import get_object_or_404
+
+from django_filters.rest_framework import DjangoFilterBackend
+
+from rest_framework import (
+    generics,
+    permissions,
+    serializers,
+    status,
+    filters,
+    viewsets,
 )
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.exceptions import ValidationError
+from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnly
+from rest_framework.response import Response
+from rest_framework.throttling import (
+    UserRateThrottle,
+    AnonRateThrottle,
+    ScopedRateThrottle,
+)
+from rest_framework.views import APIView
+from rest_framework_simplejwt.tokens import RefreshToken
+
+from ..models import IdempotencyKey, Booking, RoomImage, WebhookReceipt
+from ..validators import (
+    ensure_idempotency,
+    validate_no_booking_conflict,
+    verify_webhook_signature,
+    ensure_webhook_not_replayed,
+)
+
+from propertylist_app.api.pagination import RoomPagination, RoomLOPagination, RoomCPagination
+from propertylist_app.api.permissions import (
+    IsAdminOrReadOnly,
+    IsReviewUserOrReadOnly,
+    IsOwnerOrReadOnly,
+)
+from propertylist_app.api.serializers import (
+    RoomSerializer,
+    RoomCategorieSerializer,
+    ReviewSerializer,
+    RoomImageSerializer,
+    MessageThreadSerializer,
+    MessageSerializer,
+)
+from propertylist_app.api.throttling import ReviewCreateThrottle, ReviewListThrottle
+from propertylist_app.models import Room, RoomCategorie, Review,SavedRoom,MessageThread, Message
+from propertylist_app.validators import (
+    geocode_postcode,
+    haversine_miles,
+    validate_radius_miles,
+    normalize_uk_postcode,
+)
+from .serializers import (
+    RegistrationSerializer,
+    LoginSerializer,
+    PasswordResetRequestSerializer,
+    PasswordResetConfirmSerializer,
+    UserSerializer,
+    UserProfileSerializer,
+    SearchFiltersSerializer,
+)
+
+
+
+
+
+
+
 
 
 
@@ -156,8 +196,9 @@ class RoomListGV(generics.ListAPIView):
 
 
 class RoomAV(APIView):
-    permission_classes = [IsAdminOrReadOnly]
+ 
     throttle_classes = [AnonRateThrottle]
+    permission_classes = [IsAuthenticatedOrReadOnly]
 
     def get(self, request):
         rooms = Room.objects.alive()
@@ -173,7 +214,8 @@ class RoomAV(APIView):
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)  # add 400
 
 class RoomDetailAV(APIView):
-    permission_classes = [IsAdminOrReadOnly]
+    # Allow everyone to read; only the owner (or staff) can modify
+    permission_classes = [IsOwnerOrReadOnly]
 
     def get(self, request, pk):
         room = get_object_or_404(Room.objects.alive(), pk=pk)
@@ -182,6 +224,8 @@ class RoomDetailAV(APIView):
 
     def put(self, request, pk):
         room = get_object_or_404(Room.objects.alive(), pk=pk)
+        # enforce owner/staff on write
+        self.check_object_permissions(request, room)
         serializer = RoomSerializer(room, data=request.data)
         if serializer.is_valid():
             serializer.save()
@@ -190,6 +234,8 @@ class RoomDetailAV(APIView):
 
     def patch(self, request, pk):
         room = get_object_or_404(Room.objects.alive(), pk=pk)
+        # enforce owner/staff on write
+        self.check_object_permissions(request, room)
         serializer = RoomSerializer(room, data=request.data, partial=True)
         if serializer.is_valid():
             serializer.save()
@@ -198,13 +244,14 @@ class RoomDetailAV(APIView):
 
     def delete(self, request, pk):
         room = get_object_or_404(Room.objects.alive(), pk=pk)
-        room.soft_delete()  # ← soft delete instead of hard delete
+        # enforce owner/staff on write
+        self.check_object_permissions(request, room)
+        room.soft_delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
-
-
 
 @transaction.atomic
 @api_view(["POST"])
+@permission_classes([IsAuthenticated]) 
 def create_booking(request):
     key = request.headers.get("Idempotency-Key")
     info = ensure_idempotency(
@@ -353,31 +400,36 @@ class UserProfileView(generics.RetrieveUpdateAPIView):
     
     
 
-class RoomPhotoUploadView(APIView):
-    permission_classes = [IsAuthenticated]
-    # This tells DRF that the request will come as multipart/form-data (the standard for file uploads).
+class RoomPhotoUploadView(generics.CreateAPIView):
+    permission_classes = [IsAuthenticated, IsOwnerOrReadOnly]
+    serializer_class = RoomImageSerializer
     parser_classes = [MultiPartParser, FormParser]
-        # Look up the Room by primary key (pk) in the URL.
-        # Also check that the property_owner is the logged-in user.
-        # If not found → 404 error.
-    def post(self, request, pk):
-        room = get_object_or_404(Room, pk=pk, property_owner=request.user)
-        file_obj = request.FILES.get("image")
-        if not file_obj:
-            return Response({"detail": "image file is required (form-data key 'image')."},
-                            status=status.HTTP_400_BAD_REQUEST)
-            # Saves the file to MEDIA_ROOT/room_images/ (because of upload_to='room_images/').
-        photo = RoomImage.objects.create(room=room, image=file_obj)
-        return Response({"id": photo.id, "image": photo.image.url}, status=status.HTTP_201_CREATED)
 
-class RoomPhotoDeleteView(APIView):
-    permission_classes = [IsAuthenticated]
-       
-    def delete(self, request, pk, photo_id):
-        room = get_object_or_404(Room, pk=pk, property_owner=request.user)
-        photo = get_object_or_404(RoomImage, pk=photo_id, room=room)
-        photo.delete()
-        return Response(status=status.HTTP_204_NO_CONTENT)
+    def get_room(self):
+        room = get_object_or_404(Room, pk=self.kwargs["pk"])
+        self.check_object_permissions(self.request, room)
+        return room
+
+    def perform_create(self, serializer):
+        room = self.get_room()
+        file_obj = self.request.FILES.get("image")
+        if not file_obj:
+            raise ValidationError({"image": "image file is required (form-data key 'image')."})
+        serializer.save(room=room, image=file_obj)
+
+
+class RoomPhotoDeleteView(generics.DestroyAPIView):
+    permission_classes = [IsAuthenticated, IsOwnerOrReadOnly]
+    serializer_class = RoomImageSerializer
+    queryset = RoomImage.objects.select_related("room")
+    lookup_url_kwarg = "photo_id"
+
+    def get_object(self):
+        obj = super().get_object()
+        self.check_object_permissions(self.request, obj.room)
+        return obj
+
+    
     
 class MyRoomsView(generics.ListAPIView):
     serializer_class = RoomSerializer
@@ -407,9 +459,9 @@ class SearchRoomsView(generics.ListAPIView):
         q = data.get("q")
         if q:
             qs = qs.filter(
-                models.Q(title__icontains=q) |
-                models.Q(description__icontains=q) |
-                models.Q(location__icontains=q)
+                Q(title__icontains=q) |
+                Q(description__icontains=q) |
+                Q(location__icontains=q)
             )
 
         # price range
@@ -437,26 +489,162 @@ class SearchRoomsView(generics.ListAPIView):
         return qs
 
 
+
+
+
 class NearbyRoomsView(generics.ListAPIView):
-    """
-    GET /api/rooms/nearby/?postcode=&radius_km=
-    Minimal 'nearby' using postcode suffix match; radius is accepted but not used for distance.
-    """
     serializer_class = RoomSerializer
     permission_classes = [permissions.AllowAny]
+    pagination_class = RoomLOPagination
+
+    _ordered_ids = None
+    _distance_by_id = None
 
     def get_queryset(self):
-        # Re-use the same serializer to validate postcode/radius
-        ser = SearchFiltersSerializer(data=self.request.query_params)
-        ser.is_valid(raise_exception=True)
-        data = ser.validated_data
+        postcode_raw = (self.request.query_params.get("postcode") or "").strip()
+        if not postcode_raw:
+            raise ValidationError({"postcode": "Postcode is required."})
 
-        postcode = data.get("postcode")
-        # SearchFiltersSerializer already enforces postcode if radius_km is provided
-        if not postcode:
-            # If no postcode, return empty queryset (or raise 400 in a custom way)
-            return Room.objects.none()
+        # normalise postcode (ValidationError if bad format)
+        postcode = normalize_uk_postcode(postcode_raw)
 
-        qs = Room.objects.alive().filter(location__iendswith=postcode)
-        return qs
+        # validate radius
+        raw_radius = self.request.query_params.get("radius_miles", 10)
+        radius_miles = validate_radius_miles(raw_radius, max_miles=100)
+
+        # geocode postcode (ValidationError if not found or provider issue)
+        lat, lon = geocode_postcode(postcode)
+
+        base_qs = Room.objects.alive().exclude(latitude__isnull=True).exclude(longitude__isnull=True)
+
+        distances = []
+        for r in base_qs.only("id", "latitude", "longitude"):
+            d = haversine_miles(lat, lon, r.latitude, r.longitude)
+            if d <= radius_miles:
+                distances.append((r.id, d))
+
+        distances.sort(key=lambda t: t[1])
+        self._ordered_ids = [rid for rid, _ in distances]
+        self._distance_by_id = {rid: d for rid, d in distances}
+
+        return Room.objects.alive().filter(id__in=self._ordered_ids or [])
+
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.get_queryset()
+
+        room_by_id = {obj.id: obj for obj in queryset}
+        ordered_objs = []
+
+        for rid in (self._ordered_ids or []):
+            obj = room_by_id.get(rid)
+            if obj is not None:
+                obj.distance_miles = self._distance_by_id.get(rid)
+                ordered_objs.append(obj)
+
+        page = self.paginate_queryset(ordered_objs)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+
+        serializer = self.get_serializer(ordered_objs, many=True)
+        return Response(serializer.data)
     
+class RoomSaveView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, pk):
+        room = get_object_or_404(Room.objects.alive(), pk=pk)
+        obj, created = SavedRoom.objects.get_or_create(user=request.user, room=room)
+        return Response({"saved": True}, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+
+    def delete(self, request, pk):
+        room = get_object_or_404(Room.objects.alive(), pk=pk)
+        SavedRoom.objects.filter(user=request.user, room=room).delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+# GET /api/users/me/saved/rooms/ — list my saved rooms (paginated)
+class MySavedRoomsView(generics.ListAPIView):
+    serializer_class = RoomSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    pagination_class = RoomLOPagination
+
+    def get_queryset(self):
+        saved_ids = SavedRoom.objects.filter(user=self.request.user).values_list("room_id", flat=True)
+        return (
+            Room.objects.alive()
+            .filter(id__in=saved_ids)
+            .select_related("category")        # tweak these to your schema
+            .prefetch_related("reviews")       # if helpful for your serializer
+        )
+
+    # ensure serializer gets request for is_saved (optional field)
+    def get_serializer_context(self):
+        ctx = super().get_serializer_context()
+        ctx["request"] = self.request
+        return ctx    
+
+
+class MessageThreadListCreateView(generics.ListCreateAPIView):
+    """
+    GET/POST /api/messages/threads/
+    """
+    serializer_class = MessageThreadSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    pagination_class = RoomLOPagination 
+    throttle_classes = [UserRateThrottle] 
+    
+
+    def get_queryset(self):
+        return MessageThread.objects.filter(participants=self.request.user).prefetch_related("participants")
+
+    def perform_create(self, serializer):
+    # validated list of participants coming from the client (by username via serializer)
+        participants = set(serializer.validated_data.get("participants", []))
+        # always include the creator
+        participants.add(self.request.user)
+
+        # enforce 1:1 threads (exactly two distinct users)
+        if len(participants) != 2:
+            raise ValidationError({"participants": "Threads must have exactly 2 participants (you + one other user)."})
+
+        # prevent duplicate threads between the same two users
+        existing = (
+            MessageThread.objects
+            .filter(participants__in=participants)
+            .annotate(num_participants=Count("participants"))
+            .filter(num_participants=2)
+        )
+        # ensure both participants are in the same thread (each participant must belong)
+        for p in participants:
+            existing = existing.filter(participants=p)
+
+        if existing.exists():
+            raise ValidationError({"detail": "A thread between you two already exists."})
+
+        thread = serializer.save()
+        thread.participants.set(participants)
+
+
+
+class MessageListCreateView(generics.ListCreateAPIView):
+    """
+    GET/POST /api/messages/threads/<thread_id>/messages/
+    """
+    serializer_class = MessageSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    pagination_class = RoomLOPagination 
+    throttle_classes = [UserRateThrottle]
+
+    def get_queryset(self):
+        thread_id = self.kwargs["thread_id"]
+        # only allow access to threads the user is in
+        return Message.objects.filter(thread__id=thread_id, thread__participants=self.request.user)
+
+    def perform_create(self, serializer):
+        thread = get_object_or_404(
+            MessageThread.objects.filter(participants=self.request.user),
+            id=self.kwargs["thread_id"]
+        )
+        serializer.save(thread=thread, sender=self.request.user)
