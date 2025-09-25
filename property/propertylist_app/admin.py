@@ -40,6 +40,8 @@ def restore_selected(modeladmin, request, queryset):
             obj.restore()
 
 
+
+
 # ---------- ModelAdmins ----------
 
 @admin.register(Room)
