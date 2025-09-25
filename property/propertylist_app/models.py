@@ -31,14 +31,32 @@ class SoftDeleteModel(models.Model):
         self.save(update_fields=["is_deleted", "deleted_at"])
 
 
+from django.utils.text import slugify  # ⟵ add near your other imports
+
 class RoomCategorie(models.Model):
     key = models.CharField(max_length=30, unique=True)
     name = models.CharField(max_length=30)
     about = models.TextField(max_length=150)
     website = models.URLField(max_length=100)
 
+    # NEW
+    slug = models.SlugField(max_length=40, unique=True, blank=True, db_index=True)
+    active = models.BooleanField(default=True, db_index=True)
+
     def __str__(self):
         return self.name
+
+    def save(self, *args, **kwargs):
+        # auto-generate slug from name if not provided
+        if not self.slug:
+            base = slugify(self.name) or slugify(self.key)
+            candidate = base
+            i = 2
+            while RoomCategorie.objects.filter(slug=candidate).exclude(pk=self.pk).exists():
+                candidate = f"{base}-{i}"
+                i += 1
+            self.slug = candidate
+        super().save(*args, **kwargs)
 
 
 class Room(SoftDeleteModel):
@@ -77,8 +95,12 @@ class Room(SoftDeleteModel):
 
     class Meta:
         constraints = [
-            # fix: remove bad/undefined fields constraint; keep valid functional unique constraint
-            models.UniqueConstraint(Lower('title'), name='uq_room_title_lower'),
+            # enforce uniqueness of LOWER(title) **only** for non-deleted rows
+            models.UniqueConstraint(
+                Lower('title'),
+                condition=models.Q(is_deleted=False),
+                name='uq_room_title_lower_alive',
+            ),
         ]
 
     def __str__(self):
@@ -102,6 +124,7 @@ class UserProfile(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='profile')
     # E.164 numbers are up to 15 digits after '+'
     phone = models.CharField(max_length=15, unique=True, null=True, blank=True)
+    
 
     def __str__(self):
         return f"{self.user.username} profile"
@@ -142,14 +165,41 @@ class RoomImage(models.Model):
     def __str__(self):
         return f"Photo {self.id} for {self.room.title}"
     
+class AvailabilitySlot(models.Model):
+    room = models.ForeignKey(Room, on_delete=models.CASCADE, related_name="availability_slots")
+    start = models.DateTimeField(db_index=True)
+    end = models.DateTimeField(db_index=True)
+    max_bookings = models.PositiveIntegerField(default=1)
 
+    class Meta:
+       constraints = [
+        models.UniqueConstraint(
+            Lower('title'),
+            'property_owner',
+            name='uq_room_title_per_owner'
+        ),
+    ]
+    indexes = [models.Index(fields=["room", "start"])]
+
+    def __str__(self):
+        return f"{self.room_id} {self.start}–{self.end}"
+
+    @property
+    def bookings_count(self):
+        return self.bookings.filter(canceled_at__isnull=True).count()
+
+    @property
+    def is_full(self):
+        return self.bookings_count >= self.max_bookings
 
 class Booking(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="bookings")
     room = models.ForeignKey(Room, on_delete=models.CASCADE, related_name="bookings")
+    slot = models.ForeignKey(AvailabilitySlot, on_delete=models.PROTECT, related_name="bookings", null=True, blank=True)
     start = models.DateTimeField()
     end = models.DateTimeField()
     created_at = models.DateTimeField(auto_now_add=True)
+    canceled_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         indexes = [

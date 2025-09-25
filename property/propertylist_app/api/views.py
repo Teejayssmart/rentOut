@@ -1,19 +1,21 @@
 from datetime import datetime
 
 from django.contrib.auth import authenticate
+from django.contrib.auth.models import User   # ✅ Added
 from django.db import transaction
 from django.db.models import Q, Count
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
 
 from django_filters.rest_framework import DjangoFilterBackend
 
 from rest_framework import (
     generics,
     permissions,
-    serializers,
     status,
     filters,
     viewsets,
+    serializers,   # ✅ Added for EmailField validation
 )
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.exceptions import ValidationError
@@ -28,12 +30,32 @@ from rest_framework.throttling import (
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from ..models import IdempotencyKey, Booking, RoomImage, WebhookReceipt
-from ..validators import (
+# Models
+from propertylist_app.models import (
+    Room,
+    RoomCategorie,
+    Review,
+    SavedRoom,
+    MessageThread,
+    Message,
+    AvailabilitySlot,
+    Booking,
+    RoomImage,
+    WebhookReceipt,
+    IdempotencyKey,
+)
+
+# Validators / helpers
+from propertylist_app.validators import (
     ensure_idempotency,
     validate_no_booking_conflict,
     verify_webhook_signature,
     ensure_webhook_not_replayed,
+    geocode_postcode,
+    haversine_miles,
+    validate_radius_miles,
+    normalize_uk_postcode,
+    validate_avatar_image,   # ✅ Added for avatar upload
 )
 
 from propertylist_app.api.pagination import RoomPagination, RoomLOPagination, RoomCPagination
@@ -49,15 +71,11 @@ from propertylist_app.api.serializers import (
     RoomImageSerializer,
     MessageThreadSerializer,
     MessageSerializer,
+    BookingSerializer,
+    AvailabilitySlotSerializer,
 )
 from propertylist_app.api.throttling import ReviewCreateThrottle, ReviewListThrottle
-from propertylist_app.models import Room, RoomCategorie, Review,SavedRoom,MessageThread, Message
-from propertylist_app.validators import (
-    geocode_postcode,
-    haversine_miles,
-    validate_radius_miles,
-    normalize_uk_postcode,
-)
+
 from .serializers import (
     RegistrationSerializer,
     LoginSerializer,
@@ -69,15 +87,9 @@ from .serializers import (
 )
 
 
-
-
-
-
-
-
-
-
-
+# --------------------
+# Reviews
+# --------------------
 class UserReview(generics.ListAPIView):
     serializer_class = ReviewSerializer
 
@@ -125,21 +137,14 @@ class ReviewList(generics.ListAPIView):
     def get_queryset(self):
         pk = self.kwargs['pk']
         return Review.objects.filter(room=pk)
-
-
+    
 class ReviewDetail(generics.RetrieveUpdateDestroyAPIView):
     queryset = Review.objects.all()
     serializer_class = ReviewSerializer
     permission_classes = [IsReviewUserOrReadOnly]
     throttle_classes = [ScopedRateThrottle, AnonRateThrottle]
     throttle_scope = 'review-detail'
-
-
-class RoomCategorieVS(viewsets.ModelViewSet):
-    queryset = RoomCategorie.objects.all()
-    serializer_class = RoomCategorieSerializer
-    permission_classes = [IsAdminOrReadOnly]
-    throttle_classes = [AnonRateThrottle]  # fixed typo
+    
 
 
 class RoomCategorieAV(APIView):
@@ -147,8 +152,11 @@ class RoomCategorieAV(APIView):
     throttle_classes = [AnonRateThrottle]
 
     def get(self, request):
-        categories = RoomCategorie.objects.all()
-        serializer = RoomCategorieSerializer(categories, many=True)
+        qs = RoomCategorie.objects.all().order_by("name")
+        # Non-staff users see only active categories
+        if not (request.user and request.user.is_staff):
+            qs = qs.filter(active=True)
+        serializer = RoomCategorieSerializer(qs, many=True)
         return Response(serializer.data)
 
     def post(self, request):
@@ -156,8 +164,45 @@ class RoomCategorieAV(APIView):
         if serializer.is_valid():
             serializer.save()
             return Response(serializer.data)
-        else:
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)  # add 400
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+s
+
+
+
+
+# --------------------
+# Categories
+# --------------------
+class RoomCategorieVS(viewsets.ModelViewSet):
+    serializer_class = RoomCategorieSerializer
+    permission_classes = [IsAdminOrReadOnly]
+    throttle_classes = [AnonRateThrottle]
+
+    def get_queryset(self):
+        qs = RoomCategorie.objects.all().order_by("name")
+        user = getattr(self.request, "user", None)
+        if not (user and user.is_staff):
+            qs = qs.filter(active=True)
+        return qs
+
+
+class RoomCategorieAV(APIView):
+    permission_classes = [IsAdminOrReadOnly]
+    throttle_classes = [AnonRateThrottle]
+
+    def get(self, request):
+        qs = RoomCategorie.objects.all().order_by("name")
+        if not (request.user and request.user.is_staff):
+            qs = qs.filter(active=True)
+        serializer = RoomCategorieSerializer(qs, many=True)
+        return Response(serializer.data)
+
+    def post(self, request):
+        serializer = RoomCategorieSerializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
 class RoomCategorieDetailAV(APIView):
@@ -165,38 +210,37 @@ class RoomCategorieDetailAV(APIView):
     throttle_classes = [AnonRateThrottle]
 
     def get(self, request, pk):
-        try:
-            category = RoomCategorie.objects.get(pk=pk)
-        except RoomCategorie.DoesNotExist:
-            return Response({'error': 'Property not found'}, status=status.HTTP_404_NOT_FOUND)
+        category = get_object_or_404(RoomCategorie, pk=pk)
         serializer = RoomCategorieSerializer(category)
         return Response(serializer.data)
 
     def put(self, request, pk):
-        category = RoomCategorie.objects.get(pk=pk)
+        category = get_object_or_404(RoomCategorie, pk=pk)
         serializer = RoomCategorieSerializer(category, data=request.data)
         if serializer.is_valid():
             serializer.save()
             return Response(serializer.data)
-        else:
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     def delete(self, request, pk):
-        category = RoomCategorie.objects.get(pk=pk)
+        category = get_object_or_404(RoomCategorie, pk=pk)
         category.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
+
+# --------------------
+# Rooms
+# --------------------
 class RoomListGV(generics.ListAPIView):
     queryset = Room.objects.alive()
     serializer_class = RoomSerializer
     filter_backends = [filters.OrderingFilter]
     ordering_fields = ['avg_rating', 'category__name']
-    pagination_class = RoomLOPagination  # keep one; the last one was effective
+    pagination_class = RoomLOPagination
 
 
 class RoomAV(APIView):
- 
     throttle_classes = [AnonRateThrottle]
     permission_classes = [IsAuthenticatedOrReadOnly]
 
@@ -211,10 +255,11 @@ class RoomAV(APIView):
             serializer.save(property_owner=request.user)
             return Response(serializer.data)
         else:
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)  # add 400
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
 
 class RoomDetailAV(APIView):
-    # Allow everyone to read; only the owner (or staff) can modify
+    # Read for everyone; modify only owner/staff
     permission_classes = [IsOwnerOrReadOnly]
 
     def get(self, request, pk):
@@ -224,7 +269,6 @@ class RoomDetailAV(APIView):
 
     def put(self, request, pk):
         room = get_object_or_404(Room.objects.alive(), pk=pk)
-        # enforce owner/staff on write
         self.check_object_permissions(request, room)
         serializer = RoomSerializer(room, data=request.data)
         if serializer.is_valid():
@@ -234,7 +278,6 @@ class RoomDetailAV(APIView):
 
     def patch(self, request, pk):
         room = get_object_or_404(Room.objects.alive(), pk=pk)
-        # enforce owner/staff on write
         self.check_object_permissions(request, room)
         serializer = RoomSerializer(room, data=request.data, partial=True)
         if serializer.is_valid():
@@ -244,14 +287,28 @@ class RoomDetailAV(APIView):
 
     def delete(self, request, pk):
         room = get_object_or_404(Room.objects.alive(), pk=pk)
-        # enforce owner/staff on write
         self.check_object_permissions(request, room)
         room.soft_delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
+class RoomSoftDeleteView(APIView):
+    """
+    POST /api/rooms/<id>/soft-delete/
+    """
+    permission_classes = [IsOwnerOrReadOnly]
+
+    def post(self, request, pk):
+        room = get_object_or_404(Room.objects.alive(), pk=pk)
+        self.check_object_permissions(request, room)
+        room.soft_delete()
+        return Response({"detail": f"Room {room.id} soft-deleted."}, status=status.HTTP_200_OK)
+
+# --------------------
+# Idempotent booking validation endpoint (legacy)
+# --------------------
 @transaction.atomic
 @api_view(["POST"])
-@permission_classes([IsAuthenticated]) 
+@permission_classes([IsAuthenticated])
 def create_booking(request):
     key = request.headers.get("Idempotency-Key")
     info = ensure_idempotency(
@@ -295,6 +352,9 @@ def create_booking(request):
     return Response({"detail": "Validated. Ready to create booking."}, status=status.HTTP_200_OK)
 
 
+# --------------------
+# Webhooks
+# --------------------
 @api_view(["POST"])
 def webhook_in(request):
     sig_header = request.headers.get("X-Signature", "")
@@ -313,14 +373,14 @@ def webhook_in(request):
     return Response({"ok": True}, status=status.HTTP_200_OK)
 
 
-
-# Registration
+# --------------------
+# Auth / Profile
+# --------------------
 class RegistrationView(generics.CreateAPIView):
     serializer_class = RegistrationSerializer
     permission_classes = [permissions.AllowAny]
 
 
-# Login
 class LoginView(APIView):
     permission_classes = [permissions.AllowAny]
 
@@ -341,11 +401,7 @@ class LoginView(APIView):
             status=status.HTTP_200_OK,
         )
 
-        
-     
 
-
-# Logout
 class LogoutView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
@@ -361,7 +417,6 @@ class LogoutView(APIView):
         return Response({"detail": "Logged out."}, status=status.HTTP_200_OK)
 
 
-# Password reset request
 class PasswordResetRequestView(APIView):
     permission_classes = [permissions.AllowAny]
 
@@ -371,7 +426,6 @@ class PasswordResetRequestView(APIView):
         return Response({"detail": "Password reset email would be sent"})
 
 
-# Password reset confirm
 class PasswordResetConfirmView(APIView):
     permission_classes = [permissions.AllowAny]
 
@@ -381,7 +435,6 @@ class PasswordResetConfirmView(APIView):
         return Response({"detail": "Password has been reset"})
 
 
-# Current user info
 class MeView(generics.RetrieveUpdateAPIView):
     serializer_class = UserSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -390,16 +443,17 @@ class MeView(generics.RetrieveUpdateAPIView):
         return self.request.user
 
 
-# Current user profile
 class UserProfileView(generics.RetrieveUpdateAPIView):
     serializer_class = UserProfileSerializer
     permission_classes = [permissions.IsAuthenticated]
 
     def get_object(self):
         return self.request.user.profile
-    
-    
 
+
+# --------------------
+# Room photos
+# --------------------
 class RoomPhotoUploadView(generics.CreateAPIView):
     permission_classes = [IsAuthenticated, IsOwnerOrReadOnly]
     serializer_class = RoomImageSerializer
@@ -429,33 +483,32 @@ class RoomPhotoDeleteView(generics.DestroyAPIView):
         self.check_object_permissions(self.request, obj.room)
         return obj
 
-    
-    
+
+# --------------------
+# My Rooms / Search / Nearby
+# --------------------
 class MyRoomsView(generics.ListAPIView):
     serializer_class = RoomSerializer
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
         return Room.objects.alive().filter(property_owner=self.request.user)
-    
-    
+
+
 class SearchRoomsView(generics.ListAPIView):
     """
     GET /api/search/rooms/?q=&min_price=&max_price=&postcode=&radius_km=&ordering=
-    Uses your existing SearchFiltersSerializer to validate query params.
     """
-    serializer_class = RoomSerializer  # for results
+    serializer_class = RoomSerializer
     permission_classes = [permissions.AllowAny]
 
     def get_queryset(self):
-        # validate query params
         filters_ser = SearchFiltersSerializer(data=self.request.query_params)
         filters_ser.is_valid(raise_exception=True)
         data = filters_ser.validated_data
 
         qs = Room.objects.alive()
 
-        # free text: title / description / location
         q = data.get("q")
         if q:
             qs = qs.filter(
@@ -464,7 +517,6 @@ class SearchRoomsView(generics.ListAPIView):
                 Q(location__icontains=q)
             )
 
-        # price range
         min_price = data.get("min_price")
         if min_price is not None:
             qs = qs.filter(price_per_month__gte=min_price)
@@ -473,23 +525,15 @@ class SearchRoomsView(generics.ListAPIView):
         if max_price is not None:
             qs = qs.filter(price_per_month__lte=max_price)
 
-        # postcode (normalized by the serializer if provided)
         postcode = data.get("postcode")
         if postcode:
-            # simple heuristic: many sites keep the postcode at the end of location
             qs = qs.filter(location__iendswith=postcode)
 
-        # NOTE: radius_km is validated already; without geospatial data we don’t compute distances here.
-
-        # ordering (already validated/whitelisted by the serializer)
         ordering = data.get("ordering")
         if ordering:
             qs = qs.order_by(*[p.strip() for p in ordering.split(",") if p.strip()])
 
         return qs
-
-
-
 
 
 class NearbyRoomsView(generics.ListAPIView):
@@ -505,14 +549,11 @@ class NearbyRoomsView(generics.ListAPIView):
         if not postcode_raw:
             raise ValidationError({"postcode": "Postcode is required."})
 
-        # normalise postcode (ValidationError if bad format)
         postcode = normalize_uk_postcode(postcode_raw)
 
-        # validate radius
         raw_radius = self.request.query_params.get("radius_miles", 10)
         radius_miles = validate_radius_miles(raw_radius, max_miles=100)
 
-        # geocode postcode (ValidationError if not found or provider issue)
         lat, lon = geocode_postcode(postcode)
 
         base_qs = Room.objects.alive().exclude(latitude__isnull=True).exclude(longitude__isnull=True)
@@ -528,7 +569,6 @@ class NearbyRoomsView(generics.ListAPIView):
         self._distance_by_id = {rid: d for rid, d in distances}
 
         return Room.objects.alive().filter(id__in=self._ordered_ids or [])
-
 
     def list(self, request, *args, **kwargs):
         queryset = self.get_queryset()
@@ -549,14 +589,18 @@ class NearbyRoomsView(generics.ListAPIView):
 
         serializer = self.get_serializer(ordered_objs, many=True)
         return Response(serializer.data)
-    
+
+
+# --------------------
+# Save / Unsave rooms
+# --------------------
 class RoomSaveView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request, pk):
         room = get_object_or_404(Room.objects.alive(), pk=pk)
-        obj, created = SavedRoom.objects.get_or_create(user=request.user, room=room)
-        return Response({"saved": True}, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+        SavedRoom.objects.get_or_create(user=request.user, room=room)
+        return Response({"saved": True}, status=status.HTTP_201_CREATED)
 
     def delete(self, request, pk):
         room = get_object_or_404(Room.objects.alive(), pk=pk)
@@ -564,7 +608,6 @@ class RoomSaveView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
-# GET /api/users/me/saved/rooms/ — list my saved rooms (paginated)
 class MySavedRoomsView(generics.ListAPIView):
     serializer_class = RoomSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -575,57 +618,51 @@ class MySavedRoomsView(generics.ListAPIView):
         return (
             Room.objects.alive()
             .filter(id__in=saved_ids)
-            .select_related("category")        # tweak these to your schema
-            .prefetch_related("reviews")       # if helpful for your serializer
+            .select_related("category")
+            .prefetch_related("reviews")
         )
 
-    # ensure serializer gets request for is_saved (optional field)
     def get_serializer_context(self):
         ctx = super().get_serializer_context()
         ctx["request"] = self.request
-        return ctx    
+        return ctx
 
 
+# --------------------
+# Messaging
+# --------------------
 class MessageThreadListCreateView(generics.ListCreateAPIView):
     """
     GET/POST /api/messages/threads/
     """
     serializer_class = MessageThreadSerializer
     permission_classes = [permissions.IsAuthenticated]
-    pagination_class = RoomLOPagination 
-    throttle_classes = [UserRateThrottle] 
-    
+    pagination_class = RoomLOPagination
+    throttle_classes = [UserRateThrottle]
 
     def get_queryset(self):
         return MessageThread.objects.filter(participants=self.request.user).prefetch_related("participants")
 
     def perform_create(self, serializer):
-    # validated list of participants coming from the client (by username via serializer)
         participants = set(serializer.validated_data.get("participants", []))
-        # always include the creator
         participants.add(self.request.user)
 
-        # enforce 1:1 threads (exactly two distinct users)
         if len(participants) != 2:
             raise ValidationError({"participants": "Threads must have exactly 2 participants (you + one other user)."})
 
-        # prevent duplicate threads between the same two users
+        p_list = list(participants)
         existing = (
             MessageThread.objects
-            .filter(participants__in=participants)
+            .filter(participants=p_list[0])
+            .filter(participants=p_list[1])
             .annotate(num_participants=Count("participants"))
             .filter(num_participants=2)
         )
-        # ensure both participants are in the same thread (each participant must belong)
-        for p in participants:
-            existing = existing.filter(participants=p)
-
         if existing.exists():
             raise ValidationError({"detail": "A thread between you two already exists."})
 
         thread = serializer.save()
         thread.participants.set(participants)
-
 
 
 class MessageListCreateView(generics.ListCreateAPIView):
@@ -634,12 +671,11 @@ class MessageListCreateView(generics.ListCreateAPIView):
     """
     serializer_class = MessageSerializer
     permission_classes = [permissions.IsAuthenticated]
-    pagination_class = RoomLOPagination 
+    pagination_class = RoomLOPagination
     throttle_classes = [UserRateThrottle]
 
     def get_queryset(self):
         thread_id = self.kwargs["thread_id"]
-        # only allow access to threads the user is in
         return Message.objects.filter(thread__id=thread_id, thread__participants=self.request.user)
 
     def perform_create(self, serializer):
@@ -648,3 +684,291 @@ class MessageListCreateView(generics.ListCreateAPIView):
             id=self.kwargs["thread_id"]
         )
         serializer.save(thread=thread, sender=self.request.user)
+
+
+# --------------------
+# BOOKINGS (viewing requests)
+# --------------------
+class BookingListCreateView(generics.ListCreateAPIView):
+    """
+    GET /api/bookings/     → list my bookings
+    POST /api/bookings/    → create a booking (slot-based preferred; manual fallback)
+    """
+    serializer_class = BookingSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    pagination_class = RoomLOPagination
+    throttle_classes = [UserRateThrottle]
+
+    def get_queryset(self):
+        return Booking.objects.filter(user=self.request.user).order_by("-created_at")
+
+    def perform_create(self, serializer):
+        # 1) SLOT-BASED BOOKING (preferred if client sends "slot")
+        slot_id = self.request.data.get("slot")
+        if slot_id:
+            slot = get_object_or_404(AvailabilitySlot, pk=slot_id)
+
+            if getattr(slot.room, "is_deleted", False):
+                raise ValidationError({"room": "Room is not available."})
+            if slot.end <= timezone.now():
+                raise ValidationError({"slot": "This slot is in the past."})
+
+            with transaction.atomic():
+                slot_locked = AvailabilitySlot.objects.select_for_update().get(pk=slot.pk)
+                active = Booking.objects.filter(slot=slot_locked, canceled_at__isnull=True).count()
+                if active >= slot_locked.max_bookings:
+                    raise ValidationError({"detail": "This slot is fully booked."})
+
+                serializer.save(
+                    user=self.request.user,
+                    room=slot_locked.room,
+                    slot=slot_locked,
+                    start=slot_locked.start,
+                    end=slot_locked.end,
+                )
+            return  # important: stop here for slot bookings
+
+        # 2) MANUAL START/END BOOKING (fallback if no "slot" provided)
+        room_id = self.request.data.get("room")
+        if not room_id:
+            raise ValidationError({"room": "This field is required."})
+        room = get_object_or_404(Room.objects.alive(), pk=room_id)
+
+        start = serializer.validated_data.get("start")
+        end = serializer.validated_data.get("end")
+        if not start or not end:
+            raise ValidationError({"start": "start and end are required."})
+        if start >= end:
+            raise ValidationError({"end": "End must be after start."})
+
+        conflicts = Booking.objects.filter(room=room, canceled_at__isnull=True) \
+                                   .filter(start__lt=end, end__gt=start) \
+                                   .exists()
+        if conflicts:
+            raise ValidationError({"detail": "Selected dates clash with an existing booking."})
+
+        serializer.save(user=self.request.user, room=room)
+
+
+class BookingDetailView(generics.RetrieveAPIView):
+    """
+    GET /api/bookings/<id>/ → see my booking
+    """
+    serializer_class = BookingSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        if self.request.user.is_staff:
+            return Booking.objects.all()
+        return Booking.objects.filter(user=self.request.user)
+
+
+class BookingCancelView(APIView):
+    """
+    POST /api/bookings/<id>/cancel/ → soft-cancel a booking (marks canceled_at)
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, pk):
+        qs = Booking.objects.all() if request.user.is_staff else Booking.objects.filter(user=request.user)
+        booking = get_object_or_404(qs, pk=pk)
+
+        if booking.canceled_at:
+            return Response({"detail": "Booking already cancelled."}, status=status.HTTP_200_OK)
+
+        if booking.start <= timezone.now():
+            return Response({"detail": "Cannot cancel after booking has started."},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        booking.canceled_at = timezone.now()
+        booking.save(update_fields=["canceled_at"])
+        return Response({"detail": "Booking cancelled.", "canceled_at": booking.canceled_at}, status=status.HTTP_200_OK)
+
+
+# --------------------
+# Availability checks & slots
+# --------------------
+class RoomAvailabilityView(APIView):
+    """
+    GET /api/rooms/<id>/availability/?from=&to=
+    Returns: {"available": bool, "conflicts": [{"id": ..., "start": ..., "end": ...}, ...]}
+    """
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request, pk):
+        room = get_object_or_404(Room.objects.alive(), pk=pk)
+        start_str = request.query_params.get("from")
+        end_str = request.query_params.get("to")
+        if not start_str or not end_str:
+            return Response({"detail": "Query params 'from' and 'to' are required (ISO 8601)."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        try:
+            start = datetime.fromisoformat(start_str)
+            end = datetime.fromisoformat(end_str)
+        except Exception:
+            return Response({"detail": "from/to must be ISO 8601 datetimes."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        if start >= end:
+            return Response({"detail": "'to' must be after 'from'."},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        conflicts_qs = Booking.objects.filter(room=room, canceled_at__isnull=True) \
+                                      .filter(start__lt=end, end__gt=start) \
+                                      .values("id", "start", "end") \
+                                      .order_by("start")
+        conflicts = list(conflicts_qs)
+        return Response({"available": len(conflicts) == 0, "conflicts": conflicts}, status=status.HTTP_200_OK)
+
+
+class RoomAvailabilitySlotListCreateView(generics.ListCreateAPIView):
+    permission_classes = [IsAuthenticated, IsOwnerOrReadOnly]
+    serializer_class = AvailabilitySlotSerializer
+
+    def get_room(self):
+        room = get_object_or_404(Room.objects.alive(), pk=self.kwargs["pk"])
+        self.check_object_permissions(self.request, room)
+        return room
+
+    def get_queryset(self):
+        room = get_object_or_404(Room.objects.alive(), pk=self.kwargs["pk"])
+        return room.availability_slots.order_by("start")
+
+    def perform_create(self, serializer):
+        room = self.get_room()
+        start = serializer.validated_data.get("start")
+        end = serializer.validated_data.get("end")
+        if start >= end:
+            raise ValidationError({"end": "End must be after start."})
+        serializer.save(room=room)
+
+
+class RoomAvailabilitySlotDeleteView(generics.DestroyAPIView):
+    permission_classes = [IsAuthenticated, IsOwnerOrReadOnly]
+    serializer_class = AvailabilitySlotSerializer
+    lookup_url_kwarg = "slot_id"
+
+    def get_queryset(self):
+        return AvailabilitySlot.objects.select_related("room")
+
+    def perform_destroy(self, instance):
+        if Booking.objects.filter(slot=instance, canceled_at__isnull=True).exists():
+            raise ValidationError({"detail": "Cannot delete a slot with active bookings."})
+        self.check_object_permissions(self.request, instance.room)
+        return super().perform_destroy(instance)
+
+
+class RoomAvailabilityPublicView(generics.ListAPIView):
+    permission_classes = [permissions.AllowAny]
+    serializer_class = AvailabilitySlotSerializer
+
+    def get_queryset(self):
+        room = get_object_or_404(Room.objects.alive(), pk=self.kwargs["pk"])
+        qs = room.availability_slots.order_by("start")
+        f = self.request.query_params.get("from")
+        t = self.request.query_params.get("to")
+        only_free = self.request.query_params.get("only_free") in {"1", "true", "True"}
+
+        if f and t:
+            try:
+                start = datetime.fromisoformat(f)
+                end = datetime.fromisoformat(t)
+            except Exception:
+                raise ValidationError({"detail": "from/to must be ISO 8601"})
+            qs = qs.filter(start__lt=end, end__gt=start)
+
+        if only_free:
+            # Filter in Python to use the property safely
+            slot_ids = [s.id for s in qs if Booking.objects.filter(slot=s, canceled_at__isnull=True).count() < s.max_bookings]
+            qs = qs.filter(id__in=slot_ids)
+
+        return qs
+
+
+class UserAvatarUploadView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request):
+        profile = request.user.profile
+        file_obj = request.FILES.get("avatar")
+        if not file_obj:
+            return Response({"avatar": "File is required (form-data key 'avatar')."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        cleaned = validate_avatar_image(file_obj)
+        profile.avatar = cleaned
+        profile.save(update_fields=["avatar"])
+        return Response({"avatar": profile.avatar.url if profile.avatar else None},
+                        status=status.HTTP_200_OK)
+
+
+class ChangeEmailView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        current_password = request.data.get("current_password")
+        new_email = (request.data.get("new_email") or "").strip()
+
+        if not current_password or not new_email:
+            return Response({"detail": "current_password and new_email are required."},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        user = authenticate(request, username=request.user.username, password=current_password)
+        if not user:
+            return Response({"detail": "Current password is incorrect."},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            serializers.EmailField().run_validation(new_email)
+        except serializers.ValidationError:
+            return Response({"new_email": "Enter a valid email address."},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        if User.objects.filter(email__iexact=new_email).exclude(pk=request.user.pk).exists():
+            return Response({"new_email": "This email is already in use."},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        user.email = new_email
+        user.save(update_fields=["email"])
+        return Response({"detail": "Email updated."}, status=status.HTTP_200_OK)
+
+
+class ChangePasswordView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        current_password = request.data.get("current_password")
+        new_password = request.data.get("new_password")
+        confirm_password = request.data.get("confirm_password")
+
+        if not current_password or not new_password or not confirm_password:
+            return Response({"detail": "current_password, new_password, confirm_password are required."},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        if new_password != confirm_password:
+            return Response({"confirm_password": "Passwords do not match."},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        user = authenticate(request, username=request.user.username, password=current_password)
+        if not user:
+            return Response({"current_password": "Current password is incorrect."},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        from django.contrib.auth.password_validation import validate_password
+        from django.core.exceptions import ValidationError as DjangoValidationError
+        try:
+            validate_password(new_password, user=user)
+        except DjangoValidationError as e:
+            return Response({"new_password": list(e.messages)}, status=status.HTTP_400_BAD_REQUEST)
+
+        user.set_password(new_password)
+        user.save(update_fields=["password"])
+        return Response({"detail": "Password updated. Please log in again."}, status=status.HTTP_200_OK)
+
+
+class DeactivateAccountView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        request.user.is_active = False
+        request.user.save(update_fields=["is_active"])
+        return Response({"detail": "Account deactivated."}, status=status.HTTP_200_OK)

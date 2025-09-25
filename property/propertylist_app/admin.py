@@ -13,6 +13,7 @@ from propertylist_app.models import (
     SavedRoom,
     MessageThread,
     Message,
+    AvailabilitySlot,
 )
 
 # ---------- Inlines ----------
@@ -72,8 +73,12 @@ class RoomAdmin(admin.ModelAdmin):
 
 @admin.register(RoomCategorie)
 class RoomCategorieAdmin(admin.ModelAdmin):
-    list_display = ("key", "name", "website")
-    search_fields = ("key", "name")
+    list_display = ("name", "key", "slug", "active", "website")
+    list_editable = ("active",)                      # inline toggle
+    search_fields = ("name", "key", "slug")
+    list_filter = ("active",)
+    prepopulated_fields = {"slug": ("name",)}        # auto-fill slug from name
+
 
 
 @admin.register(Review)
@@ -164,3 +169,11 @@ class MessageAdmin(admin.ModelAdmin):
     def short_body(self, obj):
         text = obj.body or ""
         return (text[:60] + "…") if len(text) > 60 else text
+    
+    
+@admin.register(AvailabilitySlot)
+class AvailabilitySlotAdmin(admin.ModelAdmin):
+    list_display = ("room", "start", "end", "max_bookings")
+    list_filter = ("room",)
+    search_fields = ("room__title",)
+   
