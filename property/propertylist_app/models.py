@@ -2,8 +2,11 @@ from django.db import models
 from django.core.validators import MinValueValidator, MaxValueValidator
 from django.contrib.auth.models import User
 from django.utils import timezone
+from django.utils.text import slugify  # ⟵ add near your other imports
 from django.core.exceptions import ValidationError
 from django.db.models.functions import Lower  # fix: needed for UniqueConstraint on Lower()
+from django.db.models import Q, F
+
 
 
 
@@ -31,7 +34,7 @@ class SoftDeleteModel(models.Model):
         self.save(update_fields=["is_deleted", "deleted_at"])
 
 
-from django.utils.text import slugify  # ⟵ add near your other imports
+
 
 class RoomCategorie(models.Model):
     key = models.CharField(max_length=30, unique=True)
@@ -40,7 +43,8 @@ class RoomCategorie(models.Model):
     website = models.URLField(max_length=100)
 
     # NEW
-    slug = models.SlugField(max_length=40, unique=True, blank=True, db_index=True)
+    slug = models.SlugField(max_length=40, unique=True, null=True, blank=True, db_index=True)
+
     active = models.BooleanField(default=True, db_index=True)
 
     def __str__(self):
@@ -111,13 +115,25 @@ class Review(models.Model):
     review_user = models.ForeignKey(User, on_delete=models.CASCADE)
     rating = models.PositiveIntegerField(validators=[MinValueValidator(1), MaxValueValidator(5)])
     description = models.CharField(max_length=200, null=True)
-    created = models.DateTimeField(auto_now_add=True)   # fix: remove duplicate definition
+    created = models.DateTimeField(auto_now_add=True)
     room = models.ForeignKey(Room, on_delete=models.CASCADE, related_name="reviews")
     active = models.BooleanField(default=True)
     update = models.DateTimeField(auto_now=True)
 
+    class Meta:
+        ordering = ["-created"]
+        constraints = [
+            # one review per (room, user)
+            models.UniqueConstraint(fields=["room", "review_user"], name="uq_review_once_per_room"),
+        ]
+        indexes = [
+            models.Index(fields=["room", "review_user"]),
+            models.Index(fields=["room", "created"]),
+        ]
+
     def __str__(self):
-        return str(self.rating) + " | " + self.room.title + " | " + str(self.review_user)
+        return f"{self.rating} | {self.room.title} | {self.review_user}"
+
 
 
 class UserProfile(models.Model):
@@ -165,32 +181,45 @@ class RoomImage(models.Model):
     def __str__(self):
         return f"Photo {self.id} for {self.room.title}"
     
+# imports at the top of models.py (make sure these two exist)
+from django.db import models
+
+
 class AvailabilitySlot(models.Model):
-    room = models.ForeignKey(Room, on_delete=models.CASCADE, related_name="availability_slots")
-    start = models.DateTimeField(db_index=True)
-    end = models.DateTimeField(db_index=True)
+    room = models.ForeignKey(
+        "Room",
+        related_name="availability_slots",
+        on_delete=models.CASCADE,
+    )
+    start = models.DateTimeField()
+    end = models.DateTimeField()
     max_bookings = models.PositiveIntegerField(default=1)
 
+    created_at = models.DateTimeField(auto_now_add=True)
+
     class Meta:
-       constraints = [
-        models.UniqueConstraint(
-            Lower('title'),
-            'property_owner',
-            name='uq_room_title_per_owner'
-        ),
-    ]
-    indexes = [models.Index(fields=["room", "start"])]
+        ordering = ("start",)
+        constraints = [
+            # end must be strictly after start
+            models.CheckConstraint(
+                check=Q(end__gt=F("start")),
+                name="slot_end_after_start",
+            ),
+            # capacity must be >= 1
+            models.CheckConstraint(
+                check=Q(max_bookings__gte=1),
+                name="slot_max_bookings_gte_1",
+            ),
+            # avoid duplicate identical slots for the same room
+            models.UniqueConstraint(
+                fields=["room", "start", "end"],
+                name="unique_slot_room_start_end",
+            ),
+        ]
 
     def __str__(self):
-        return f"{self.room_id} {self.start}–{self.end}"
+        return f"{self.room} | {self.start:%Y-%m-%d %H:%M} → {self.end:%Y-%m-%d %H:%M} (cap {self.max_bookings})"
 
-    @property
-    def bookings_count(self):
-        return self.bookings.filter(canceled_at__isnull=True).count()
-
-    @property
-    def is_full(self):
-        return self.bookings_count >= self.max_bookings
 
 class Booking(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="bookings")
