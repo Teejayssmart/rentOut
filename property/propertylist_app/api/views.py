@@ -1,7 +1,8 @@
+# propertylist_app/api/views.py
 from datetime import datetime
 
 from django.contrib.auth import authenticate
-from django.contrib.auth.models import User   # ✅ Added
+from django.contrib.auth.models import User
 from django.db import transaction
 from django.db.models import Q, Count
 from django.shortcuts import get_object_or_404
@@ -15,7 +16,7 @@ from rest_framework import (
     status,
     filters,
     viewsets,
-    serializers,   # ✅ Added for EmailField validation
+    serializers,  # for EmailField validation
 )
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.exceptions import ValidationError
@@ -55,7 +56,7 @@ from propertylist_app.validators import (
     haversine_miles,
     validate_radius_miles,
     normalize_uk_postcode,
-    validate_avatar_image,   # ✅ Added for avatar upload
+    validate_avatar_image,
 )
 
 from propertylist_app.api.pagination import RoomPagination, RoomLOPagination, RoomCPagination
@@ -86,7 +87,6 @@ from .serializers import (
     SearchFiltersSerializer,
 )
 
-
 # --------------------
 # Reviews
 # --------------------
@@ -94,7 +94,7 @@ class UserReview(generics.ListAPIView):
     serializer_class = ReviewSerializer
 
     def get_queryset(self):
-        username = self.request.query_params.get('username', None)
+        username = self.request.query_params.get("username", None)
         return Review.objects.filter(review_user__username=username)
 
 
@@ -107,73 +107,64 @@ class ReviewCreate(generics.CreateAPIView):
         return Review.objects.all()
 
     def perform_create(self, serializer):
-        pk = self.kwargs.get('pk')
-        room = Room.objects.get(pk=pk)
+        room = get_object_or_404(Room, pk=self.kwargs.get("pk"))
+        user = self.request.user
 
-        review_user = self.request.user
-        review_queryset = Review.objects.filter(room=room, review_user=review_user)
+        # Block reviewing your own listing (robust to different owner field names)
+        owner_id = getattr(room, "property_owner_id", None)
+        if owner_id is None:
+            owner_obj = (
+                getattr(room, "property_owner", None)
+                or getattr(room, "owner", None)
+                or getattr(room, "landlord", None)
+            )
+            owner_id = getattr(owner_obj, "id", None)
+        if owner_id == user.id:
+            raise ValidationError("You cannot review your own room.")
 
-        if review_queryset.exists():
+        # One review per user per room
+        if Review.objects.filter(room=room, review_user=user).exists():
             raise ValidationError("You have already reviewed this room!")
 
-        # correct average rating calculation
-        new_rating = serializer.validated_data['rating']
+        # Create the review
+        review = serializer.save(room=room, review_user=user)
+
+        # Update rolling average and count on the room
+        new_rating = review.rating
         if room.number_rating == 0:
             room.avg_rating = new_rating
         else:
             room.avg_rating = ((room.avg_rating * room.number_rating) + new_rating) / (room.number_rating + 1)
-
         room.number_rating = room.number_rating + 1
-        room.save()
-
-        serializer.save(room=room, review_user=review_user)
+        room.save(update_fields=["avg_rating", "number_rating"])
 
 
 class ReviewList(generics.ListAPIView):
     serializer_class = ReviewSerializer
     filter_backends = [DjangoFilterBackend]
-    filterset_fields = ['review_user__username', 'active']
+    filterset_fields = ["review_user__username", "active"]
 
     def get_queryset(self):
-        pk = self.kwargs['pk']
+        pk = self.kwargs["pk"]
         return Review.objects.filter(room=pk)
-    
+
+
 class ReviewDetail(generics.RetrieveUpdateDestroyAPIView):
     queryset = Review.objects.all()
     serializer_class = ReviewSerializer
     permission_classes = [IsReviewUserOrReadOnly]
     throttle_classes = [ScopedRateThrottle, AnonRateThrottle]
-    throttle_scope = 'review-detail'
-    
-
-
-class RoomCategorieAV(APIView):
-    permission_classes = [IsAdminOrReadOnly]
-    throttle_classes = [AnonRateThrottle]
-
-    def get(self, request):
-        qs = RoomCategorie.objects.all().order_by("name")
-        # Non-staff users see only active categories
-        if not (request.user and request.user.is_staff):
-            qs = qs.filter(active=True)
-        serializer = RoomCategorieSerializer(qs, many=True)
-        return Response(serializer.data)
-
-    def post(self, request):
-        serializer = RoomCategorieSerializer(data=request.data)
-        if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-s
-
-
+    throttle_scope = "review-detail"
 
 
 # --------------------
 # Categories
 # --------------------
 class RoomCategorieVS(viewsets.ModelViewSet):
+    """
+    Admin/staff can create/update/delete.
+    Non-staff can read, limited to active=True.
+    """
     serializer_class = RoomCategorieSerializer
     permission_classes = [IsAdminOrReadOnly]
     throttle_classes = [AnonRateThrottle]
@@ -228,7 +219,6 @@ class RoomCategorieDetailAV(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
-
 # --------------------
 # Rooms
 # --------------------
@@ -236,7 +226,7 @@ class RoomListGV(generics.ListAPIView):
     queryset = Room.objects.alive()
     serializer_class = RoomSerializer
     filter_backends = [filters.OrderingFilter]
-    ordering_fields = ['avg_rating', 'category__name']
+    ordering_fields = ["avg_rating", "category__name"]
     pagination_class = RoomLOPagination
 
 
@@ -291,6 +281,7 @@ class RoomDetailAV(APIView):
         room.soft_delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
+
 class RoomSoftDeleteView(APIView):
     """
     POST /api/rooms/<id>/soft-delete/
@@ -302,6 +293,7 @@ class RoomSoftDeleteView(APIView):
         self.check_object_permissions(request, room)
         room.soft_delete()
         return Response({"detail": f"Room {room.id} soft-deleted."}, status=status.HTTP_200_OK)
+
 
 # --------------------
 # Idempotent booking validation endpoint (legacy)
@@ -316,7 +308,7 @@ def create_booking(request):
         key=key,
         action="create_booking",
         payload_bytes=request.body,
-        idem_qs=IdempotencyKey.objects
+        idem_qs=IdempotencyKey.objects,
     )
 
     room_id = request.data.get("room")
@@ -346,7 +338,7 @@ def create_booking(request):
         user_id=request.user.id,
         key=key,
         action="create_booking",
-        request_hash=info["request_hash"]
+        request_hash=info["request_hash"],
     )
 
     return Response({"detail": "Validated. Ready to create booking."}, status=status.HTTP_200_OK)
@@ -363,7 +355,7 @@ def webhook_in(request):
         payload=request.body,
         signature_header=sig_header,
         scheme="sha256=",
-        clock_skew=300
+        clock_skew=300,
     )
 
     event_id = request.headers.get("X-Event-Id") or request.data.get("id")
@@ -512,9 +504,9 @@ class SearchRoomsView(generics.ListAPIView):
         q = data.get("q")
         if q:
             qs = qs.filter(
-                Q(title__icontains=q) |
-                Q(description__icontains=q) |
-                Q(location__icontains=q)
+                Q(title__icontains=q)
+                | Q(description__icontains=q)
+                | Q(location__icontains=q)
             )
 
         min_price = data.get("min_price")
@@ -681,7 +673,7 @@ class MessageListCreateView(generics.ListCreateAPIView):
     def perform_create(self, serializer):
         thread = get_object_or_404(
             MessageThread.objects.filter(participants=self.request.user),
-            id=self.kwargs["thread_id"]
+            id=self.kwargs["thread_id"],
         )
         serializer.save(thread=thread, sender=self.request.user)
 
@@ -741,9 +733,11 @@ class BookingListCreateView(generics.ListCreateAPIView):
         if start >= end:
             raise ValidationError({"end": "End must be after start."})
 
-        conflicts = Booking.objects.filter(room=room, canceled_at__isnull=True) \
-                                   .filter(start__lt=end, end__gt=start) \
-                                   .exists()
+        conflicts = (
+            Booking.objects.filter(room=room, canceled_at__isnull=True)
+            .filter(start__lt=end, end__gt=start)
+            .exists()
+        )
         if conflicts:
             raise ValidationError({"detail": "Selected dates clash with an existing booking."})
 
@@ -777,12 +771,17 @@ class BookingCancelView(APIView):
             return Response({"detail": "Booking already cancelled."}, status=status.HTTP_200_OK)
 
         if booking.start <= timezone.now():
-            return Response({"detail": "Cannot cancel after booking has started."},
-                            status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"detail": "Cannot cancel after booking has started."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         booking.canceled_at = timezone.now()
         booking.save(update_fields=["canceled_at"])
-        return Response({"detail": "Booking cancelled.", "canceled_at": booking.canceled_at}, status=status.HTTP_200_OK)
+        return Response(
+            {"detail": "Booking cancelled.", "canceled_at": booking.canceled_at},
+            status=status.HTTP_200_OK,
+        )
 
 
 # --------------------
@@ -800,22 +799,30 @@ class RoomAvailabilityView(APIView):
         start_str = request.query_params.get("from")
         end_str = request.query_params.get("to")
         if not start_str or not end_str:
-            return Response({"detail": "Query params 'from' and 'to' are required (ISO 8601)."},
-                            status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"detail": "Query params 'from' and 'to' are required (ISO 8601)."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         try:
             start = datetime.fromisoformat(start_str)
             end = datetime.fromisoformat(end_str)
         except Exception:
-            return Response({"detail": "from/to must be ISO 8601 datetimes."},
-                            status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"detail": "from/to must be ISO 8601 datetimes."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         if start >= end:
-            return Response({"detail": "'to' must be after 'from'."},
-                            status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"detail": "'to' must be after 'from'."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-        conflicts_qs = Booking.objects.filter(room=room, canceled_at__isnull=True) \
-                                      .filter(start__lt=end, end__gt=start) \
-                                      .values("id", "start", "end") \
-                                      .order_by("start")
+        conflicts_qs = (
+            Booking.objects.filter(room=room, canceled_at__isnull=True)
+            .filter(start__lt=end, end__gt=start)
+            .values("id", "start", "end")
+            .order_by("start")
+        )
         conflicts = list(conflicts_qs)
         return Response({"available": len(conflicts) == 0, "conflicts": conflicts}, status=status.HTTP_200_OK)
 
@@ -877,28 +884,38 @@ class RoomAvailabilityPublicView(generics.ListAPIView):
             qs = qs.filter(start__lt=end, end__gt=start)
 
         if only_free:
-            # Filter in Python to use the property safely
-            slot_ids = [s.id for s in qs if Booking.objects.filter(slot=s, canceled_at__isnull=True).count() < s.max_bookings]
+            slot_ids = [
+                s.id
+                for s in qs
+                if Booking.objects.filter(slot=s, canceled_at__isnull=True).count() < s.max_bookings
+            ]
             qs = qs.filter(id__in=slot_ids)
 
         return qs
 
 
+# --------------------
+# Profile utilities
+# --------------------
 class UserAvatarUploadView(APIView):
     permission_classes = [permissions.IsAuthenticated]
     parser_classes = [MultiPartParser, FormParser]
 
     def post(self, request):
         profile = request.user.profile
-        file_obj = request.FILES.get("avatar")
+        file_obj = self.request.FILES.get("avatar")
         if not file_obj:
-            return Response({"avatar": "File is required (form-data key 'avatar')."},
-                            status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"avatar": "File is required (form-data key 'avatar')."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         cleaned = validate_avatar_image(file_obj)
         profile.avatar = cleaned
         profile.save(update_fields=["avatar"])
-        return Response({"avatar": profile.avatar.url if profile.avatar else None},
-                        status=status.HTTP_200_OK)
+        return Response(
+            {"avatar": profile.avatar.url if profile.avatar else None},
+            status=status.HTTP_200_OK,
+        )
 
 
 class ChangeEmailView(APIView):
@@ -909,23 +926,27 @@ class ChangeEmailView(APIView):
         new_email = (request.data.get("new_email") or "").strip()
 
         if not current_password or not new_email:
-            return Response({"detail": "current_password and new_email are required."},
-                            status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"detail": "current_password and new_email are required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         user = authenticate(request, username=request.user.username, password=current_password)
         if not user:
-            return Response({"detail": "Current password is incorrect."},
-                            status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"detail": "Current password is incorrect."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
+        # validate email format
         try:
             serializers.EmailField().run_validation(new_email)
         except serializers.ValidationError:
-            return Response({"new_email": "Enter a valid email address."},
-                            status=status.HTTP_400_BAD_REQUEST)
+            return Response({"new_email": "Enter a valid email address."}, status=status.HTTP_400_BAD_REQUEST)
 
+        # unique email
         if User.objects.filter(email__iexact=new_email).exclude(pk=request.user.pk).exists():
-            return Response({"new_email": "This email is already in use."},
-                            status=status.HTTP_400_BAD_REQUEST)
+            return Response({"new_email": "This email is already in use."}, status=status.HTTP_400_BAD_REQUEST)
 
         user.email = new_email
         user.save(update_fields=["email"])
@@ -941,20 +962,21 @@ class ChangePasswordView(APIView):
         confirm_password = request.data.get("confirm_password")
 
         if not current_password or not new_password or not confirm_password:
-            return Response({"detail": "current_password, new_password, confirm_password are required."},
-                            status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"detail": "current_password, new_password, confirm_password are required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         if new_password != confirm_password:
-            return Response({"confirm_password": "Passwords do not match."},
-                            status=status.HTTP_400_BAD_REQUEST)
+            return Response({"confirm_password": "Passwords do not match."}, status=status.HTTP_400_BAD_REQUEST)
 
         user = authenticate(request, username=request.user.username, password=current_password)
         if not user:
-            return Response({"current_password": "Current password is incorrect."},
-                            status=status.HTTP_400_BAD_REQUEST)
+            return Response({"current_password": "Current password is incorrect."}, status=status.HTTP_400_BAD_REQUEST)
 
         from django.contrib.auth.password_validation import validate_password
         from django.core.exceptions import ValidationError as DjangoValidationError
+
         try:
             validate_password(new_password, user=user)
         except DjangoValidationError as e:
