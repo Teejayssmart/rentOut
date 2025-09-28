@@ -29,6 +29,7 @@ class SoftDeleteQuerySet(models.QuerySet):
             pass
         return qs
 
+
     def dead(self):    
         return self.filter(is_deleted=True)
 
