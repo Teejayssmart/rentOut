@@ -12,10 +12,20 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 
 from pathlib import Path
 from datetime import timedelta
+import os
+from dotenv import load_dotenv
+
+
 
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Load environment variables from .env
+load_dotenv(BASE_DIR / ".env")
+
+# Cache TTL for geocode results (seconds)
+GEO_CACHE_TTL_SECONDS = 60 * 60 * 24 * 7  # 7 days
 
 
 # Quick-start development settings - unsuitable for production
@@ -29,6 +39,11 @@ DEBUG = True
 
 ALLOWED_HOSTS = []
 
+STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")
+STRIPE_PUBLISHABLE_KEY = os.getenv("STRIPE_PUBLISHABLE_KEY", "")
+STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
+SITE_URL = os.getenv("SITE_URL", "http://127.0.0.1:8000")
+
 
 # Application definition
 
@@ -41,7 +56,7 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
 
-    "propertylist_app",
+    'propertylist_app.apps.PropertylistAppConfig',
 
     "rest_framework",
     "rest_framework_simplejwt",
@@ -118,9 +133,10 @@ AUTH_PASSWORD_VALIDATORS = [
 # Internationalization
 # https://docs.djangoproject.com/en/5.2/topics/i18n/
 
-LANGUAGE_CODE = 'en-us'
+LANGUAGE_CODE = 'en-uk'
 
-TIME_ZONE = 'UTC'
+TIME_ZONE = "Europe/London"
+
 
 USE_I18N = True
 

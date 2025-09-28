@@ -23,9 +23,7 @@ from propertylist_app.api.views import (
     PasswordResetRequestView,
     PasswordResetConfirmView,
     MeView,
-    UserProfileView,
-    RoomPhotoUploadView,
-    RoomPhotoDeleteView,
+    UserProfileView, 
     MyRoomsView,
     SearchRoomsView,
     NearbyRoomsView,
@@ -40,11 +38,26 @@ from propertylist_app.api.views import (
     RoomAvailabilitySlotListCreateView,
     RoomAvailabilitySlotDeleteView,
     RoomAvailabilityPublicView,
+    RoomSaveToggleView,
+    RoomPhotoUploadView,
+    RoomPhotoDeleteView,
     UserAvatarUploadView,
     ChangeEmailView,
     ChangePasswordView,
     DeactivateAccountView,
     RoomSoftDeleteView,
+    CreateListingCheckoutSessionView,
+    stripe_webhook,
+    StripeSuccessView,
+    StripeCancelView,
+    ThreadMarkReadView,         
+    StartThreadFromRoomView,
+    ReportCreateView,
+    ModerationReportListView,
+    ModerationReportUpdateView,
+    RoomModerationStatusView,
+    OpsStatsView,
+    
 )
 
 router = DefaultRouter()
@@ -99,11 +112,22 @@ urlpatterns = [
 
     # Saved rooms
     path('rooms/<int:pk>/save/', RoomSaveView.as_view(), name='room-save'),
+    path("rooms/<int:pk>/save-toggle/", RoomSaveToggleView.as_view(), name="room-save-toggle"),
     path('users/me/saved/rooms/', MySavedRoomsView.as_view(), name='my-saved-rooms'),
 
     # Messaging
     path("messages/threads/", MessageThreadListCreateView.as_view(), name="message-threads"),
     path("messages/threads/<int:thread_id>/messages/", MessageListCreateView.as_view(), name="thread-messages"),
+    path("messages/threads/", MessageThreadListCreateView.as_view(), name="message-threads"),
+    path("messages/threads/<int:thread_id>/messages/", MessageListCreateView.as_view(), name="thread-messages"),
+    
+    # NEW: mark a thread as read
+    path("messages/threads/<int:thread_id>/read/", ThreadMarkReadView.as_view(), name="thread-mark-read"),
+    
+    # NEW: start a thread from a room
+    path("rooms/<int:room_id>/start-thread/", StartThreadFromRoomView.as_view(), name="start-thread-from-room"),
+
+
 
     # Bookings / viewings
     path("bookings/", BookingListCreateView.as_view(), name="bookings-list-create"),
@@ -125,7 +149,23 @@ urlpatterns = [
     
     path('rooms/<int:pk>/soft-delete/', RoomSoftDeleteView.as_view(), name='room-soft-delete'),
     
+    # Payments
+    path("payments/checkout/rooms/<int:pk>/", CreateListingCheckoutSessionView.as_view(), name="payments-checkout-room"),
+    path("payments/webhook/", stripe_webhook, name="stripe-webhook"),
+    path("payments/success/", StripeSuccessView.as_view(), name="payments-success"),
+    path("payments/cancel/",  StripeCancelView.as_view(),  name="payments-cancel"),
     
+    # Reporting
+    path("reports/", ReportCreateView.as_view(), name="report-create"),
+    
+    # Moderation (staff-only)
+    path("moderation/reports/", ModerationReportListView.as_view(), name="moderation-report-list"),
+    path("moderation/reports/<int:pk>/", ModerationReportUpdateView.as_view(), name="moderation-report-update"),
+    path("moderation/rooms/<int:pk>/status/", RoomModerationStatusView.as_view(), name="moderation-room-status"),
+    
+    # Ops
+    path("ops/stats/", OpsStatsView.as_view(), name="ops-stats"),
+
 
 ]
 

@@ -1,6 +1,8 @@
 from django.contrib.auth.models import User
 from rest_framework import serializers
 from django.core.validators import RegexValidator
+from propertylist_app.models import Payment
+
 
 
 class RegistrationSerializer(serializers.ModelSerializer):
@@ -43,3 +45,6 @@ class RegistrationSerializer(serializers.ModelSerializer):
         account.set_password(password)
         account.save()
         return account
+    
+    
+

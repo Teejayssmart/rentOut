@@ -6,13 +6,31 @@ from django.utils.text import slugify  # ⟵ add near your other imports
 from django.core.exceptions import ValidationError
 from django.db.models.functions import Lower  # fix: needed for UniqueConstraint on Lower()
 from django.db.models import Q, F
+from decimal import Decimal
+
+from django.contrib.contenttypes.models import ContentType
+from django.contrib.contenttypes.fields import GenericForeignKey
+from django.conf import settings
+
 
 
 
 
 class SoftDeleteQuerySet(models.QuerySet):
-    def alive(self):   return self.filter(is_deleted=False)
-    def dead(self):    return self.filter(is_deleted=True)
+    def alive(self):
+        qs = self.filter(is_deleted=False)
+        # If model has a 'status' field, also require 'active'
+        try:
+            field_names = {f.name for f in self.model._meta.fields}
+            if "status" in field_names:
+                qs = qs.filter(status="active")
+        except Exception:
+            # Be defensive: if anything odd happens, fall back to is_deleted only
+            pass
+        return qs
+
+    def dead(self):    
+        return self.filter(is_deleted=True)
 
 
 class SoftDeleteModel(models.Model):
@@ -63,6 +81,8 @@ class RoomCategorie(models.Model):
         super().save(*args, **kwargs)
 
 
+
+
 class Room(SoftDeleteModel):
     title = models.CharField(max_length=200)
     description = models.TextField()
@@ -90,6 +110,11 @@ class Room(SoftDeleteModel):
     number_rating = models.IntegerField(default=0)
     latitude = models.FloatField(null=True, blank=True)
     longitude = models.FloatField(null=True, blank=True)
+    paid_until = models.DateField(null=True, blank=True)  # listing is paid/active until this date
+    STATUS_CHOICES = (("active", "Active"),("hidden", "Hidden"),)
+    status = models.CharField(max_length=16, choices=STATUS_CHOICES, default="active")
+
+
     
 
     def clean(self):
@@ -279,4 +304,112 @@ class Message(models.Model):
         indexes = [
             models.Index(fields=["thread", "created_at"]),
         ]
+        
+class MessageRead(models.Model):
+    """
+    Records that a given user has read a specific message.
+    """
+    message = models.ForeignKey("Message", on_delete=models.CASCADE, related_name="reads")
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="message_reads")
+    read_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ("message", "user")
+        indexes = [
+            models.Index(fields=["user", "message"]),
+        ]
+
+    def __str__(self):
+        return f"Read m#{self.message_id} by {self.user_id} at {self.read_at:%Y-%m-%d %H:%M:%S}"
+
+
+class Payment(models.Model):
+    class Provider(models.TextChoices):
+        STRIPE = "stripe", "Stripe"
+
+    class Status(models.TextChoices):
+        REQUIRES_PAYMENT = "requires_payment_method", "Requires payment"
+        REQUIRES_ACTION  = "requires_action", "Requires action"
+        PROCESSING       = "processing", "Processing"
+        SUCCEEDED        = "succeeded", "Succeeded"
+        CANCELED         = "canceled", "Canceled"
+
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="payments")
+    room = models.ForeignKey("Room", on_delete=models.SET_NULL, null=True, blank=True, related_name="payments")
+
+    provider = models.CharField(max_length=20, choices=Provider.choices, default=Provider.STRIPE)
+    amount = models.DecimalField(max_digits=9, decimal_places=2, default=Decimal("0.00"))
+    currency = models.CharField(max_length=10, default="GBP")
+
+    # Stripe-specific references (store at least one of these)
+    stripe_payment_intent_id = models.CharField(max_length=200, blank=True, default="")
+    stripe_checkout_session_id = models.CharField(max_length=200, blank=True, default="")
+
+    status = models.CharField(max_length=40, choices=Status.choices, default=Status.REQUIRES_PAYMENT)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    # optional: for quick lookups / housekeeping
+    class Meta:
+        indexes = [
+            models.Index(fields=["user", "created_at"]),
+            models.Index(fields=["room", "created_at"]),
+            models.Index(fields=["stripe_payment_intent_id"]),
+            models.Index(fields=["stripe_checkout_session_id"]),
+        ]
+
+    def __str__(self):
+        who = getattr(self.user, "username", self.user_id)
+        return f"Payment {self.id} {self.amount} {self.currency} by {who} [{self.status}]"
+    
+    
+    
+class Report(models.Model):
+    """
+    Generic reports for moderation (Room, Review, Message, User, etc).
+    """
+    TARGET_CHOICES = (
+        ("room", "Room"),
+        ("review", "Review"),
+        ("message", "Message"),
+        ("user", "User"),
+    )
+    STATUS_CHOICES = (
+        ("open", "Open"),
+        ("in_review", "In review"),
+        ("resolved", "Resolved"),
+        ("rejected", "Rejected"),
+    )
+
+    reporter = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="reports")
+    target_type = models.CharField(max_length=16, choices=TARGET_CHOICES)
+    # Generic relation
+    content_type = models.ForeignKey(ContentType, on_delete=models.CASCADE)
+    object_id = models.PositiveIntegerField()
+    target = GenericForeignKey("content_type", "object_id")
+
+    reason = models.CharField(max_length=64)           # e.g., "spam", "abuse", "scam", "inaccurate", "other"
+    details = models.TextField(blank=True)
+
+    status = models.CharField(max_length=16, choices=STATUS_CHOICES, default="open")
+    handled_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="handled_reports"
+    )
+    resolution_notes = models.TextField(blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["status"]),
+            models.Index(fields=["target_type", "object_id"]),
+            models.Index(fields=["created_at"]),
+        ]
+
+    def __str__(self):
+        return f"Report #{self.pk} {self.target_type}:{self.object_id} ({self.status})"
+    
+
 

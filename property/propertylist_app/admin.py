@@ -1,5 +1,6 @@
 
-from django.contrib import admin
+from django.contrib import admin, messages
+from django.utils import timezone
 from propertylist_app.models import (
     Room,
     RoomCategorie,
@@ -14,7 +15,10 @@ from propertylist_app.models import (
     MessageThread,
     Message,
     AvailabilitySlot,
+    Payment,
+    
 )
+
 
 # ---------- Inlines ----------
 
@@ -38,6 +42,43 @@ def restore_selected(modeladmin, request, queryset):
     for obj in queryset:
         if hasattr(obj, "restore"):
             obj.restore()
+
+@admin.action(description="Approve selected rooms (set status=active)")
+def approve_rooms(modeladmin, request, queryset):
+    updated = queryset.update(status="active")
+    # audit (best-effort)
+    try:
+        for r_id in queryset.values_list("id", flat=True):
+            AuditLog.objects.create(
+                actor=request.user,
+                action="room.approve",
+                object_type="room",
+                object_id=str(r_id),
+                meta={"via_admin_action": True, "at": timezone.now().isoformat()},
+            )
+    except Exception:
+        pass
+    messages.success(request, f"{updated} room(s) approved.")
+
+@admin.action(description="Hide selected rooms (set status=hidden)")
+def hide_rooms(modeladmin, request, queryset):
+    updated = queryset.update(status="hidden")
+    # audit (best-effort)
+    try:
+        for r_id in queryset.values_list("id", flat=True):
+            AuditLog.objects.create(
+                actor=request.user,
+                action="room.hide",
+                object_type="room",
+                object_id=str(r_id),
+                meta={"via_admin_action": True, "at": timezone.now().isoformat()},
+            )
+    except Exception:
+        pass
+    messages.success(request, f"{updated} room(s) hidden.")
+    
+    
+   
 
 
 # ---------- ModelAdmins ----------
@@ -68,7 +109,7 @@ class RoomAdmin(admin.ModelAdmin):
     search_fields = ("title", "location", "property_owner__username")
     readonly_fields = ("created_at", "updated_at")
     inlines = [RoomImageInline]
-    actions = [soft_delete_selected, restore_selected]
+    actions = [soft_delete_selected, restore_selected,approve_rooms, hide_rooms]
 
 
 @admin.register(RoomCategorie)
@@ -176,4 +217,14 @@ class AvailabilitySlotAdmin(admin.ModelAdmin):
     list_display = ("room", "start", "end", "max_bookings")
     list_filter = ("room",)
     search_fields = ("room__title",)
-   
+    
+    
+    
+@admin.register(Payment)
+class PaymentAdmin(admin.ModelAdmin):
+    list_display = ("id", "user", "room", "amount", "currency", "status", "created_at")
+    list_filter  = ("status", "currency", "provider")
+    search_fields = ("user__username", "room__title", "stripe_checkout_session_id", "stripe_payment_intent_id")
+    readonly_fields = ("created_at",)
+    
+    

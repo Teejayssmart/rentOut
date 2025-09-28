@@ -11,8 +11,11 @@ from propertylist_app.models import (
     MessageThread,
     Message,
     Booking,
-    AvailabilitySlot,
+    AvailabilitySlot,Payment,
+    Report
 )
+from django.contrib.contenttypes.models import ContentType
+
 
 from propertylist_app.validators import (
     validate_person_name,
@@ -321,14 +324,33 @@ class MessageThreadSerializer(serializers.ModelSerializer):
         queryset=User.objects.all()
     )
     last_message = serializers.SerializerMethodField()
+    unread_count = serializers.SerializerMethodField()
 
     class Meta:
         model = MessageThread
-        fields = ["id", "participants", "created_at", "last_message"]
+        fields = ["id", "participants", "created_at", "last_message", "unread_count"]
 
     def get_last_message(self, obj):
         msg = obj.messages.order_by("-created_at").first()
         return MessageSerializer(msg).data if msg else None
+
+    def get_unread_count(self, obj):
+        """
+        Count messages in this thread that:
+        - were NOT sent by the current user, and
+        - do NOT have a MessageRead record for the current user.
+        """
+        request = self.context.get("request")
+        if not request or not request.user or not request.user.is_authenticated:
+            return 0
+
+        # Avoid N+1: the query is filtered; it's fine for now.
+        return (
+            obj.messages
+            .exclude(sender=request.user)
+            .exclude(reads__user=request.user)
+            .count()
+        )
 
 
 class BookingSerializer(serializers.ModelSerializer):
@@ -351,3 +373,79 @@ class AvailabilitySlotSerializer(serializers.ModelSerializer):
     def get_is_full(self, obj):
         # relies on AvailabilitySlot.is_full property (backed by Booking FK with related_name="bookings")
         return obj.is_full
+
+
+class PaymentSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Payment
+        fields = [
+            "id", "user", "room", "amount", "currency",
+            "stripe_checkout_session_id", "stripe_payment_intent_id",
+            "status", "error_message", "created_at"
+        ]
+        read_only_fields = [
+            "user", "amount", "currency",
+            "stripe_checkout_session_id", "stripe_payment_intent_id",
+            "status", "error_message", "created_at"
+        ]
+    
+    
+class ReportSerializer(serializers.ModelSerializer):
+    # Accept a friendly "target_type" + "object_id" from the client
+    target_type = serializers.ChoiceField(choices=[c[0] for c in Report.TARGET_CHOICES])
+
+    class Meta:
+        model = Report
+        fields = [
+            "id", "reporter", "target_type", "object_id",
+            "reason", "details",
+            "status", "handled_by", "resolution_notes",
+            "created_at", "updated_at",
+        ]
+        read_only_fields = ["id", "reporter", "status", "handled_by", "resolution_notes", "created_at", "updated_at"]
+
+    def validate(self, attrs):
+        ttype = attrs.get("target_type")
+        oid = attrs.get("object_id")
+        if ttype == "room":
+            model = Room
+        elif ttype == "review":
+            from propertylist_app.models import Review
+            model = Review
+        elif ttype == "message":
+            from propertylist_app.models import Message
+            model = Message
+        elif ttype == "user":
+            from django.contrib.auth import get_user_model
+            model = get_user_model()
+        else:
+            raise serializers.ValidationError({"target_type": "Unsupported target type."})
+
+        # ensure the object exists
+        if not model.objects.filter(pk=oid).exists():
+            raise serializers.ValidationError({"object_id": f"{ttype} with id {oid} does not exist."})
+
+        return attrs
+
+    def create(self, validated_data):
+        # map target_type to content_type
+        ttype = validated_data["target_type"]
+        oid = validated_data["object_id"]
+
+        if ttype == "room":
+            model = Room
+        elif ttype == "review":
+            from propertylist_app.models import Review
+            model = Review
+        elif ttype == "message":
+            from propertylist_app.models import Message
+            model = Message
+        else:
+            from django.contrib.auth import get_user_model
+            model = get_user_model()
+
+        validated_data["content_type"] = ContentType.objects.get_for_model(model)
+        # default status is "open"
+        validated_data["reporter"] = self.context["request"].user
+        return super().create(validated_data)
+    

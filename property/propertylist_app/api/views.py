@@ -1,12 +1,20 @@
-# propertylist_app/api/views.py
-from datetime import datetime
+import stripe
 
+from datetime import datetime, timedelta
+
+from propertylist_app.services.geo import geocode_postcode_cached
+
+from django.conf import settings
+from django.views.decorators.csrf import csrf_exempt
 from django.contrib.auth import authenticate
 from django.contrib.auth.models import User
 from django.db import transaction
-from django.db.models import Q, Count
+from django.db.models import Q, Count, OuterRef, Subquery,Count,Sum
+    
 from django.shortcuts import get_object_or_404
+from django.utils import timezone as dj_tz
 from django.utils import timezone
+
 
 from django_filters.rest_framework import DjangoFilterBackend
 
@@ -21,7 +29,7 @@ from rest_framework import (
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.exceptions import ValidationError
 from rest_framework.parsers import MultiPartParser, FormParser
-from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnly
+from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnly, AllowAny,IsAdminUser
 from rest_framework.response import Response
 from rest_framework.throttling import (
     UserRateThrottle,
@@ -36,15 +44,27 @@ from propertylist_app.models import (
     Room,
     RoomCategorie,
     Review,
+    UserProfile,
+    RoomImage,
     SavedRoom,
     MessageThread,
     Message,
-    AvailabilitySlot,
+    MessageRead,
     Booking,
-    RoomImage,
-    WebhookReceipt,
-    IdempotencyKey,
+    AvailabilitySlot,
+    Payment,
+    IdempotencyKey,      # <-- ADDED
+    WebhookReceipt,      # <-- ADDED
+    Report,
+    AuditLog,
+    
 )
+
+
+
+
+
+
 
 # Validators / helpers
 from propertylist_app.validators import (
@@ -57,6 +77,7 @@ from propertylist_app.validators import (
     validate_radius_miles,
     normalize_uk_postcode,
     validate_avatar_image,
+    
 )
 
 from propertylist_app.api.pagination import RoomPagination, RoomLOPagination, RoomCPagination
@@ -74,6 +95,8 @@ from propertylist_app.api.serializers import (
     MessageSerializer,
     BookingSerializer,
     AvailabilitySlotSerializer,
+    PaymentSerializer,
+    ReportSerializer,
 )
 from propertylist_app.api.throttling import ReviewCreateThrottle, ReviewListThrottle
 
@@ -86,6 +109,7 @@ from .serializers import (
     UserProfileSerializer,
     SearchFiltersSerializer,
 )
+stripe.api_key = settings.STRIPE_SECRET_KEY
 
 # --------------------
 # Reviews
@@ -489,46 +513,160 @@ class MyRoomsView(generics.ListAPIView):
 
 class SearchRoomsView(generics.ListAPIView):
     """
-    GET /api/search/rooms/?q=&min_price=&max_price=&postcode=&radius_km=&ordering=
+    GET /api/search/rooms/
+      ?q=<text>
+      &min_price=<int>
+      &max_price=<int>
+      &postcode=<UK_postcode>
+      &radius_miles=<int>       # default 10
+      &ordering=<field>[,-field]
+
+    Supported ordering:
+      - price_per_month, -price_per_month
+      - avg_rating, -avg_rating
+      - distance_miles, -distance_miles   (only when postcode is supplied)
+      - created_at, -created_at           (if your Room model has it; ignored if not)
+
+    Notes:
+      - Distance filters/order use **miles** consistently.
+      - When postcode is supplied, results are filtered to within radius and
+        a .distance_miles attribute is attached for each room (and is orderable).
     """
     serializer_class = RoomSerializer
     permission_classes = [permissions.AllowAny]
+    pagination_class = RoomLOPagination
+
+    _ordered_ids = None
+    _distance_by_id = None
 
     def get_queryset(self):
-        filters_ser = SearchFiltersSerializer(data=self.request.query_params)
-        filters_ser.is_valid(raise_exception=True)
-        data = filters_ser.validated_data
+        params = self.request.query_params
+        q_text      = (params.get("q") or "").strip()
+        min_price   = params.get("min_price")
+        max_price   = params.get("max_price")
+        postcode    = (params.get("postcode") or "").strip()
+        raw_radius  = params.get("radius_miles", 10)
 
         qs = Room.objects.alive()
 
-        q = data.get("q")
-        if q:
+        # --- Text search (simple icontains over a few fields)
+        if q_text:
             qs = qs.filter(
-                Q(title__icontains=q)
-                | Q(description__icontains=q)
-                | Q(location__icontains=q)
+                Q(title__icontains=q_text)
+                | Q(description__icontains=q_text)
+                | Q(location__icontains=q_text)
             )
 
-        min_price = data.get("min_price")
+        # --- Price filters
         if min_price is not None:
-            qs = qs.filter(price_per_month__gte=min_price)
-
-        max_price = data.get("max_price")
+            try:
+                qs = qs.filter(price_per_month__gte=int(min_price))
+            except Exception:
+                raise ValidationError({"min_price": "Must be an integer."})
         if max_price is not None:
-            qs = qs.filter(price_per_month__lte=max_price)
+            try:
+                qs = qs.filter(price_per_month__lte=int(max_price))
+            except Exception:
+                raise ValidationError({"max_price": "Must be an integer."})
 
-        postcode = data.get("postcode")
+        # --- Optional geo filter (miles consistent)
+        self._ordered_ids = None
+        self._distance_by_id = None
+
         if postcode:
-            qs = qs.filter(location__iendswith=postcode)
+            try:
+                radius_miles = validate_radius_miles(raw_radius, max_miles=100)
+            except ValidationError:
+                radius_miles = 10
 
-        ordering = data.get("ordering")
-        if ordering:
-            qs = qs.order_by(*[p.strip() for p in ordering.split(",") if p.strip()])
+            # Geocode with caching (service)
+            lat, lon = geocode_postcode_cached(postcode)
+
+            # Pre-filter rooms that have coordinates
+            base_qs = qs.exclude(latitude__isnull=True).exclude(longitude__isnull=True)
+
+            # Compute distances in Python (keeps it DB-agnostic)
+            distances = []
+            for r in base_qs.only("id", "latitude", "longitude"):
+                d = haversine_miles(lat, lon, r.latitude, r.longitude)
+                if d <= radius_miles:
+                    distances.append((r.id, d))
+
+            # Order by distance by default if postcode given (unless overridden later)
+            distances.sort(key=lambda t: t[1])
+            ids_in_radius = [rid for rid, _ in distances]
+            self._ordered_ids = ids_in_radius
+            self._distance_by_id = {rid: d for rid, d in distances}
+
+            qs = qs.filter(id__in=ids_in_radius)
+
+        # --- Ordering
+        ordering_param = (params.get("ordering") or "").strip()
+
+        # Default ordering
+        if not ordering_param:
+            ordering_param = "-avg_rating" if not postcode else "distance_miles"
+
+        # If distance is requested, apply ordering on the Python-side list in .list()
+        # and leave DB ordering neutral to preserve our explicit order.
+        if ordering_param in {"distance_miles", "-distance_miles"} and self._ordered_ids is not None:
+            # We'll re-order in list()
+            pass
+        else:
+            # Allow a safe subset of model fields for DB ordering
+            allowed = {
+                "price_per_month": "price_per_month",
+                "-price_per_month": "-price_per_month",
+                "avg_rating": "avg_rating",
+                "-avg_rating": "-avg_rating",
+                "created_at": "created_at",
+                "-created_at": "-created_at",
+            }
+            mapped = allowed.get(ordering_param)
+            if mapped:
+                qs = qs.order_by(mapped)
 
         return qs
 
+    def list(self, request, *args, **kwargs):
+        queryset = self.get_queryset()
+
+        # If we've computed distances (when postcode provided)
+        if self._distance_by_id is not None:
+            room_by_id = {obj.id: obj for obj in queryset}
+            ordered_objs = []
+
+            for rid in (self._ordered_ids or []):
+                obj = room_by_id.get(rid)
+                if obj is not None:
+                    obj.distance_miles = self._distance_by_id.get(rid)
+                    ordered_objs.append(obj)
+
+            # Check if ordering wants reverse distance
+            ordering_param = (request.query_params.get("ordering") or "").strip()
+            if ordering_param == "-distance_miles":
+                ordered_objs.reverse()
+
+            page = self.paginate_queryset(ordered_objs)
+            if page is not None:
+                serializer = self.get_serializer(page, many=True)
+                return self.get_paginated_response(serializer.data)
+            serializer = self.get_serializer(ordered_objs, many=True)
+            return Response(serializer.data)
+
+        # No geo distances — fall back to default list
+        return super().list(request, *args, **kwargs)
+
+
 
 class NearbyRoomsView(generics.ListAPIView):
+    """
+    GET /api/rooms/nearby/?postcode=<UK_postcode>&radius_miles=<int>
+
+    - Uses cached geocoding (service) and computes distances in **miles** only.
+    - Returns rooms within radius; each object gets .distance_miles attached.
+    - Supports pagination via RoomLOPagination.
+    """
     serializer_class = RoomSerializer
     permission_classes = [permissions.AllowAny]
     pagination_class = RoomLOPagination
@@ -541,13 +679,14 @@ class NearbyRoomsView(generics.ListAPIView):
         if not postcode_raw:
             raise ValidationError({"postcode": "Postcode is required."})
 
-        postcode = normalize_uk_postcode(postcode_raw)
-
+        # Miles only, with validation
         raw_radius = self.request.query_params.get("radius_miles", 10)
         radius_miles = validate_radius_miles(raw_radius, max_miles=100)
 
-        lat, lon = geocode_postcode(postcode)
+        # Geocode (cached)
+        lat, lon = geocode_postcode_cached(postcode_raw)
 
+        # Filter to rooms with coordinates
         base_qs = Room.objects.alive().exclude(latitude__isnull=True).exclude(longitude__isnull=True)
 
         distances = []
@@ -583,6 +722,7 @@ class NearbyRoomsView(generics.ListAPIView):
         return Response(serializer.data)
 
 
+
 # --------------------
 # Save / Unsave rooms
 # --------------------
@@ -600,19 +740,82 @@ class RoomSaveView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
+
+
+class RoomSaveToggleView(APIView):
+    """
+    POST /api/rooms/<pk>/save-toggle/
+    - First call → saves room → {"saved": true,  "saved_at": "<ISO8601>"}
+    - Second call → unsaves room → {"saved": false, "saved_at": null}
+
+    Notes:
+    - We don’t rely on a SavedRoom timestamp column. When creating, we return
+      the current time as 'saved_at'. When removing, we return null.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, pk):
+        room = get_object_or_404(Room.objects.alive(), pk=pk)
+        obj, created = SavedRoom.objects.get_or_create(user=request.user, room=room)
+        if created:
+            # New save: return a user-friendly 'saved_at' timestamp
+            return Response(
+                {"saved": True, "saved_at": timezone.now().isoformat()},
+                status=status.HTTP_201_CREATED
+            )
+        # Already saved → toggle OFF
+        obj.delete()
+        return Response({"saved": False, "saved_at": None}, status=status.HTTP_200_OK)
+
+
+
 class MySavedRoomsView(generics.ListAPIView):
     serializer_class = RoomSerializer
     permission_classes = [permissions.IsAuthenticated]
     pagination_class = RoomLOPagination
 
     def get_queryset(self):
-        saved_ids = SavedRoom.objects.filter(user=self.request.user).values_list("room_id", flat=True)
-        return (
+        """
+        Supports ?ordering=... with safe options:
+        -saved_at (default), saved_at
+        -price_per_month, price_per_month
+        -avg_rating, avg_rating
+        'saved_at' is derived from the SavedRoom id (no schema change needed).
+        """
+        user = self.request.user
+
+        # Base: only rooms this user saved
+        saved_qs = SavedRoom.objects.filter(user=user)
+
+        # Annotate each Room with 'saved_id' (latest SavedRoom id for this user+room)
+        latest_saved_id = (
+            SavedRoom.objects
+            .filter(user=user, room=OuterRef("pk"))
+            .order_by("-id")
+            .values("id")[:1]
+        )
+
+        qs = (
             Room.objects.alive()
-            .filter(id__in=saved_ids)
+            .filter(id__in=saved_qs.values_list("room_id", flat=True))
+            .annotate(saved_id=Subquery(latest_saved_id))
             .select_related("category")
             .prefetch_related("reviews")
         )
+
+        # Map public 'saved_at' to internal 'saved_id'
+        ordering = (self.request.query_params.get("ordering") or "-saved_at").strip()
+        mapping = {
+            "saved_at": "saved_id",
+            "-saved_at": "-saved_id",
+            "price_per_month": "price_per_month",
+            "-price_per_month": "-price_per_month",
+            "avg_rating": "avg_rating",
+            "-avg_rating": "-avg_rating",
+        }
+        qs = qs.order_by(mapping.get(ordering, "-saved_id"))
+        return qs
+
 
     def get_serializer_context(self):
         ctx = super().get_serializer_context()
@@ -676,6 +879,83 @@ class MessageListCreateView(generics.ListCreateAPIView):
             id=self.kwargs["thread_id"],
         )
         serializer.save(thread=thread, sender=self.request.user)
+
+
+class ThreadMarkReadView(APIView):
+    """
+    POST /api/messages/threads/<thread_id>/read/
+    Marks all messages in the thread (not sent by me) as read for the current user.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    throttle_classes = [UserRateThrottle]
+
+    def post(self, request, thread_id):
+        thread = get_object_or_404(
+            MessageThread.objects.filter(participants=request.user),
+            pk=thread_id
+        )
+
+        # Messages I didn't send and haven't marked as read yet
+        to_mark = (
+            thread.messages
+            .exclude(sender=request.user)
+            .exclude(reads__user=request.user)
+        )
+
+        # Bulk create read records. ignore_conflicts avoids duplicate key errors.
+        MessageRead.objects.bulk_create(
+            [MessageRead(message=m, user=request.user) for m in to_mark],
+            ignore_conflicts=True
+        )
+
+        return Response({"marked": to_mark.count()}, status=status.HTTP_200_OK)
+
+
+class StartThreadFromRoomView(APIView):
+    """
+    POST /api/rooms/<int:room_id>/start-thread/
+    Body (optional): { "body": "Hello, is this room available for viewing?" }
+
+    - Creates (or returns) a 1:1 thread between the current user and the room owner.
+    - If 'body' is provided, creates the first message in that thread from the current user.
+    - Returns the thread data.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    throttle_classes = [UserRateThrottle]
+
+    def post(self, request, room_id):
+        room = get_object_or_404(Room.objects.alive(), pk=room_id)
+
+        if room.property_owner == request.user:
+            return Response(
+                {"detail": "You are the owner of this room; no thread needed."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Does a 1:1 thread between these two users already exist?
+        existing = (
+            MessageThread.objects
+            .filter(participants=room.property_owner)
+            .filter(participants=request.user)
+            .annotate(num_participants=Count("participants"))
+            .filter(num_participants=2)
+            .first()
+        )
+
+        if existing:
+            thread = existing
+        else:
+            thread = MessageThread.objects.create()
+            thread.participants.set([request.user, room.property_owner])
+
+        # Optional first message
+        body = (request.data or {}).get("body", "").strip()
+        if body:
+            Message.objects.create(thread=thread, sender=request.user, body=body)
+
+        # Return the thread with metadata
+        serializer = MessageThreadSerializer(thread, context={"request": request})
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
 
 # --------------------
@@ -994,3 +1274,375 @@ class DeactivateAccountView(APIView):
         request.user.is_active = False
         request.user.save(update_fields=["is_active"])
         return Response({"detail": "Account deactivated."}, status=status.HTTP_200_OK)
+
+
+class CreateListingCheckoutSessionView(APIView):
+    """
+    POST /api/payments/checkout/rooms/<pk>/
+    Body: {}
+    Creates a £1 Stripe Checkout Session to pay the listing fee for the room.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, pk):
+        room = get_object_or_404(Room, pk=pk)
+
+        # only the owner pays for their own room
+        if getattr(room, "property_owner_id", None) != request.user.id:
+            return Response({"detail": "You can only pay for your own room."},
+                            status=status.HTTP_403_FORBIDDEN)
+
+        # amount: £1.00 -> 100 pence
+        amount_pence = 100
+
+        # Create a Payment row in 'created' state
+        payment = Payment.objects.create(
+            user=request.user,
+            room=room,
+            amount=amount_pence,
+            currency="GBP",
+            status="created",
+        )
+
+        success_url = f"{settings.SITE_URL}/api/payments/success/?session_id={{CHECKOUT_SESSION_ID}}&payment_id={payment.id}"
+        cancel_url  = f"{settings.SITE_URL}/api/payments/cancel/?payment_id={payment.id}"
+
+        session = stripe.checkout.Session.create(
+            mode="payment",
+            success_url=success_url,
+            cancel_url=cancel_url,
+            customer_email=request.user.email or None,
+            line_items=[{
+                "price_data": {
+                    "currency": "gbp",
+                    "product_data": {"name": f"Listing fee for: {room.title}"},
+                    "unit_amount": amount_pence,
+                },
+                "quantity": 1,
+            }],
+            metadata={
+                "payment_id": str(payment.id),
+                "room_id": str(room.id),
+                "user_id": str(request.user.id),
+            },
+        )
+
+        # store session id
+        payment.stripe_checkout_session_id = session.id
+        payment.save(update_fields=["stripe_checkout_session_id"])
+
+        return Response({
+            "sessionId": session.id,
+            "publishableKey": settings.STRIPE_PUBLISHABLE_KEY
+        }, status=status.HTTP_200_OK)
+
+
+@csrf_exempt
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def stripe_webhook(request):
+    payload = request.body
+    sig_header = request.META.get("HTTP_STRIPE_SIGNATURE", "")
+
+    try:
+        event = stripe.Webhook.construct_event(
+            payload=payload,
+            sig_header=sig_header,
+            secret=settings.STRIPE_WEBHOOK_SECRET,
+        )
+    except ValueError:
+        return Response(status=400)  # invalid payload
+    except stripe.error.SignatureVerificationError:
+        return Response(status=400)  # invalid signature
+
+    if event["type"] == "checkout.session.completed":
+        session = event["data"]["object"]
+        payment_intent = session.get("payment_intent")
+        metadata = session.get("metadata") or {}
+        payment_id = metadata.get("payment_id")
+
+        if payment_id:
+            try:
+                payment = Payment.objects.select_related("room", "user").get(id=payment_id)
+            except Payment.DoesNotExist:
+                return Response(status=200)
+
+            # mark payment succeeded
+            payment.status = "succeeded"
+            payment.stripe_payment_intent_id = payment_intent or ""
+            payment.save(update_fields=["status", "stripe_payment_intent_id"])
+
+            # extend room paid_until by 30 days (or set to 30 if empty)
+            room = payment.room
+            today = dj_tz.now().date()
+            base = room.paid_until if room.paid_until and room.paid_until > today else today
+            room.paid_until = base + timedelta(days=30)
+            room.save(update_fields=["paid_until"])
+
+    elif event["type"] == "checkout.session.expired":
+        session = event["data"]["object"]
+        metadata = session.get("metadata") or {}
+        payment_id = metadata.get("payment_id")
+        if payment_id:
+            Payment.objects.filter(id=payment_id, status="created").update(status="canceled")
+
+    return Response(status=200)
+
+
+class StripeSuccessView(APIView):
+    permission_classes = [AllowAny]
+    def get(self, request):
+        return Response({"detail": "Payment success received. (Webhook will finalize the room.)"})
+
+
+class StripeCancelView(APIView):
+    permission_classes = [AllowAny]
+    def get(self, request):
+        payment_id = request.query_params.get("payment_id")
+        if payment_id:
+            Payment.objects.filter(id=payment_id, status="created").update(status="canceled")
+        return Response({"detail": "Payment canceled."})
+
+
+
+class ReportCreateView(generics.CreateAPIView):
+    """
+    POST /api/reports/
+    Body:
+    {
+      "target_type": "room" | "review" | "message" | "user",
+      "object_id": 123,
+      "reason": "abuse",
+      "details": "…"
+    }
+    """
+    serializer_class = ReportSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    throttle_classes = [UserRateThrottle]
+
+    def perform_create(self, serializer):
+        report = serializer.save()
+        # Audit
+        try:
+            AuditLog.objects.create(
+                actor=self.request.user,
+                action="report.create",
+                object_type=report.target_type,
+                object_id=str(report.object_id),
+                meta={"reason": report.reason},
+            )
+        except Exception:
+            pass  # keep reports resilient
+
+
+class ModerationReportListView(generics.ListAPIView):
+    """
+    GET /api/moderation/reports/?status=open|in_review|resolved|rejected
+    Staff only.
+    """
+    serializer_class = ReportSerializer
+    permission_classes = [IsAdminUser]
+    pagination_class = RoomLOPagination
+
+    def get_queryset(self):
+        status_q = self.request.query_params.get("status") or "open"
+        qs = Report.objects.all().order_by("-created_at")
+        if status_q in {"open", "in_review", "resolved", "rejected"}:
+            qs = qs.filter(status=status_q)
+        return qs
+
+
+class ModerationReportUpdateView(generics.UpdateAPIView):
+    """
+    PATCH /api/moderation/reports/<id>/
+    Body (any subset):
+      { "status": "in_review" | "resolved" | "rejected",
+        "resolution_notes": "…",
+        "hide_room": true }  # optional, only applies if target is a Room
+    """
+    serializer_class = ReportSerializer
+    permission_classes = [IsAdminUser]
+    queryset = Report.objects.all()
+
+    def partial_update(self, request, *args, **kwargs):
+        report = self.get_object()
+        status_new = request.data.get("status")
+        notes = request.data.get("resolution_notes", "")
+        hide_room = bool(request.data.get("hide_room"))
+
+        # Update report fields
+        if status_new in {"in_review", "resolved", "rejected"}:
+            report.status = status_new
+        if notes:
+            report.resolution_notes = notes
+        report.handled_by = request.user
+        report.save(update_fields=["status", "resolution_notes", "handled_by", "updated_at"])
+
+        # Optional: hide the room if requested and target is a room
+        if hide_room and report.target_type == "room" and isinstance(report.target, Room):
+            if report.target.status != "hidden":
+                report.target.status = "hidden"
+                report.target.save(update_fields=["status"])
+            # Audit
+            try:
+                AuditLog.objects.create(
+                    actor=request.user,
+                    action="room.hide",
+                    object_type="room",
+                    object_id=str(report.target.pk),
+                    meta={"via_report": report.pk},
+                )
+            except Exception:
+                pass
+
+        # Audit general moderation update
+        try:
+            AuditLog.objects.create(
+                actor=request.user,
+                action="report.update",
+                object_type=report.target_type,
+                object_id=str(report.object_id),
+                meta={"status": report.status},
+            )
+        except Exception:
+            pass
+
+        serializer = self.get_serializer(report)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class RoomModerationStatusView(APIView):
+    """
+    PATCH /api/moderation/rooms/<id>/status/
+    Body: {"status": "active" | "hidden"}
+    Staff only. When set to hidden, the room disappears from all Room.objects.alive() listings.
+    """
+    permission_classes = [IsAdminUser]
+
+    def patch(self, request, pk):
+        room = get_object_or_404(Room, pk=pk)
+        status_new = (request.data.get("status") or "").strip()
+        if status_new not in {"active", "hidden"}:
+            return Response({"status": "Must be 'active' or 'hidden'."}, status=status.HTTP_400_BAD_REQUEST)
+        if room.status != status_new:
+            room.status = status_new
+            room.save(update_fields=["status"])
+            # Audit
+            try:
+                AuditLog.objects.create(
+                    actor=request.user,
+                    action="room.set_status",
+                    object_type="room",
+                    object_id=str(room.pk),
+                    meta={"status": status_new},
+                )
+            except Exception:
+                pass
+        return Response({"id": room.pk, "status": room.status}, status=status.HTTP_200_OK)
+    
+    
+class OpsStatsView(APIView):
+    """
+    GET /api/ops/stats/
+    Admin-only operational snapshot for dashboards.
+
+    Returns:
+    {
+      "listings": {...},
+      "users": {...},
+      "bookings": {...},
+      "payments": {...},
+      "messages": {...},
+      "reports": {...},
+      "categories": {...}
+    }
+    """
+    permission_classes = [IsAdminUser]
+
+    def get(self, request):
+        now = timezone.now()
+        d7  = now - timedelta(days=7)
+        d30 = now - timedelta(days=30)
+
+        # Listings
+        total_rooms     = Room.objects.count()
+        active_rooms    = Room.objects.filter(status="active", is_deleted=False).count()
+        hidden_rooms    = Room.objects.filter(status="hidden", is_deleted=False).count()
+        deleted_rooms   = Room.objects.filter(is_deleted=True).count()
+
+        # Users (basic — uses auth model via FK on your models)
+        # If you want total users, import and count from get_user_model()
+        try:
+            from django.contrib.auth import get_user_model
+            total_users = get_user_model().objects.count()
+        except Exception:
+            total_users = None
+
+        # Bookings
+        bookings_7d     = Booking.objects.filter(created_at__gte=d7).count()
+        bookings_30d    = Booking.objects.filter(created_at__gte=d30).count()
+        upcoming_viewings = Booking.objects.filter(start__gte=now, canceled_at__isnull=True).count()
+
+        # Payments (amount stored in pence; convert to GBP)
+        payments_30d_count = Payment.objects.filter(status="succeeded", created_at__gte=d30).count()
+        payments_30d_sum_p = Payment.objects.filter(status="succeeded", created_at__gte=d30).aggregate(sum_p=Sum("amount"))["sum_p"] or 0
+        payments_30d_sum_gbp = round(payments_30d_sum_p / 100.0, 2)
+
+        # Messages (lightweight)
+        messages_7d = Message.objects.filter(created_at__gte=d7).count() if hasattr(Message, "created_at") else None
+        threads_total = MessageThread.objects.count()
+
+        # Reports queue
+        reports_open      = Report.objects.filter(status="open").count() if "Report" in globals() else None
+        reports_in_review = Report.objects.filter(status="in_review").count() if "Report" in globals() else None
+
+        # Top categories by active room count
+        try:
+            top_categories = (
+                Room.objects.filter(status="active", is_deleted=False)
+                .values("category__id", "category__name")
+                .annotate(cnt=Count("id"))
+                .order_by("-cnt")[:5]
+            )
+            top_categories = [
+                {"id": r["category__id"], "name": r["category__name"], "count": r["cnt"]}
+                for r in top_categories
+            ]
+        except Exception:
+            top_categories = []
+
+        data = {
+            "listings": {
+                "total": total_rooms,
+                "active": active_rooms,
+                "hidden": hidden_rooms,
+                "deleted": deleted_rooms,
+            },
+            "users": {
+                "total": total_users,
+            },
+            "bookings": {
+                "last_7_days": bookings_7d,
+                "last_30_days": bookings_30d,
+                "upcoming_viewings": upcoming_viewings,
+            },
+            "payments": {
+                "last_30_days": {
+                    "count": payments_30d_count,
+                    "sum_gbp": payments_30d_sum_gbp,
+                }
+            },
+            "messages": {
+                "last_7_days": messages_7d,
+                "threads_total": threads_total,
+            },
+            "reports": {
+                "open": reports_open,
+                "in_review": reports_in_review,
+            },
+            "categories": {
+                "top_active": top_categories
+            }
+        }
+        return Response(data, status=status.HTTP_200_OK)
+    
