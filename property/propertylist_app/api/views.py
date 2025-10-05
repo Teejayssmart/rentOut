@@ -1,23 +1,16 @@
-import stripe
-
+import json
 from datetime import datetime, timedelta
 
-from propertylist_app.services.geo import geocode_postcode_cached
-
+import stripe
 from django.conf import settings
-from django.views.decorators.csrf import csrf_exempt
-from django.contrib.auth import authenticate
-from django.contrib.auth.models import User
+from django.contrib.auth import authenticate, get_user_model
 from django.db import transaction
-from django.db.models import Q, Count, OuterRef, Subquery,Count,Sum
-    
+from django.db.models import Q, Count, OuterRef, Subquery, Sum
 from django.shortcuts import get_object_or_404
-from django.utils import timezone as dj_tz
 from django.utils import timezone
-
+from django.views.decorators.csrf import csrf_exempt
 
 from django_filters.rest_framework import DjangoFilterBackend
-
 from rest_framework import (
     generics,
     permissions,
@@ -29,15 +22,19 @@ from rest_framework import (
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.exceptions import ValidationError
 from rest_framework.parsers import MultiPartParser, FormParser
-from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnly, AllowAny,IsAdminUser
-from rest_framework.response import Response
-from rest_framework.throttling import (
-    UserRateThrottle,
-    AnonRateThrottle,
-    ScopedRateThrottle,
+from rest_framework.permissions import (
+    IsAuthenticated,
+    IsAuthenticatedOrReadOnly,
+    AllowAny,
+    IsAdminUser,
 )
+from rest_framework.response import Response
+from rest_framework.throttling import UserRateThrottle, AnonRateThrottle, ScopedRateThrottle
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
+
+# Services
+from propertylist_app.services.geo import geocode_postcode_cached
 
 # Models
 from propertylist_app.models import (
@@ -53,18 +50,11 @@ from propertylist_app.models import (
     Booking,
     AvailabilitySlot,
     Payment,
-    IdempotencyKey,      # <-- ADDED
-    WebhookReceipt,      # <-- ADDED
+    IdempotencyKey,
+    WebhookReceipt,
     Report,
     AuditLog,
-    
 )
-
-
-
-
-
-
 
 # Validators / helpers
 from propertylist_app.validators import (
@@ -72,20 +62,14 @@ from propertylist_app.validators import (
     validate_no_booking_conflict,
     verify_webhook_signature,
     ensure_webhook_not_replayed,
-    geocode_postcode,
     haversine_miles,
     validate_radius_miles,
-    normalize_uk_postcode,
     validate_avatar_image,
-    
 )
 
-from propertylist_app.api.pagination import RoomPagination, RoomLOPagination, RoomCPagination
-from propertylist_app.api.permissions import (
-    IsAdminOrReadOnly,
-    IsReviewUserOrReadOnly,
-    IsOwnerOrReadOnly,
-)
+# API plumbing
+from propertylist_app.api.pagination import RoomLOPagination
+from propertylist_app.api.permissions import IsAdminOrReadOnly, IsReviewUserOrReadOnly, IsOwnerOrReadOnly
 from propertylist_app.api.serializers import (
     RoomSerializer,
     RoomCategorieSerializer,
@@ -100,6 +84,7 @@ from propertylist_app.api.serializers import (
 )
 from propertylist_app.api.throttling import ReviewCreateThrottle, ReviewListThrottle
 
+# Local serializers
 from .serializers import (
     RegistrationSerializer,
     LoginSerializer,
@@ -109,7 +94,9 @@ from .serializers import (
     UserProfileSerializer,
     SearchFiltersSerializer,
 )
+
 stripe.api_key = settings.STRIPE_SECRET_KEY
+
 
 # --------------------
 # Reviews
@@ -118,7 +105,7 @@ class UserReview(generics.ListAPIView):
     serializer_class = ReviewSerializer
 
     def get_queryset(self):
-        username = self.request.query_params.get("username", None)
+        username = self.request.query_params.get("username")
         return Review.objects.filter(review_user__username=username)
 
 
@@ -134,32 +121,23 @@ class ReviewCreate(generics.CreateAPIView):
         room = get_object_or_404(Room, pk=self.kwargs.get("pk"))
         user = self.request.user
 
-        # Block reviewing your own listing (robust to different owner field names)
-        owner_id = getattr(room, "property_owner_id", None)
-        if owner_id is None:
-            owner_obj = (
-                getattr(room, "property_owner", None)
-                or getattr(room, "owner", None)
-                or getattr(room, "landlord", None)
-            )
-            owner_id = getattr(owner_obj, "id", None)
+        # Prevent self-review
+        owner_id = getattr(room, "property_owner_id", None) or getattr(getattr(room, "property_owner", None), "id", None)
         if owner_id == user.id:
             raise ValidationError("You cannot review your own room.")
 
-        # One review per user per room
+        # One review per (room, user)
         if Review.objects.filter(room=room, review_user=user).exists():
             raise ValidationError("You have already reviewed this room!")
 
-        # Create the review
         review = serializer.save(room=room, review_user=user)
 
-        # Update rolling average and count on the room
-        new_rating = review.rating
+        # Rolling average update
         if room.number_rating == 0:
-            room.avg_rating = new_rating
+            room.avg_rating = review.rating
         else:
-            room.avg_rating = ((room.avg_rating * room.number_rating) + new_rating) / (room.number_rating + 1)
-        room.number_rating = room.number_rating + 1
+            room.avg_rating = ((room.avg_rating * room.number_rating) + review.rating) / (room.number_rating + 1)
+        room.number_rating += 1
         room.save(update_fields=["avg_rating", "number_rating"])
 
 
@@ -169,8 +147,7 @@ class ReviewList(generics.ListAPIView):
     filterset_fields = ["review_user__username", "active"]
 
     def get_queryset(self):
-        pk = self.kwargs["pk"]
-        return Review.objects.filter(room=pk)
+        return Review.objects.filter(room=self.kwargs["pk"])
 
 
 class ReviewDetail(generics.RetrieveUpdateDestroyAPIView):
@@ -185,18 +162,14 @@ class ReviewDetail(generics.RetrieveUpdateDestroyAPIView):
 # Categories
 # --------------------
 class RoomCategorieVS(viewsets.ModelViewSet):
-    """
-    Admin/staff can create/update/delete.
-    Non-staff can read, limited to active=True.
-    """
+    """Admin/staff can create/update/delete; others read active=True."""
     serializer_class = RoomCategorieSerializer
     permission_classes = [IsAdminOrReadOnly]
     throttle_classes = [AnonRateThrottle]
 
     def get_queryset(self):
         qs = RoomCategorie.objects.all().order_by("name")
-        user = getattr(self.request, "user", None)
-        if not (user and user.is_staff):
+        if not (getattr(self.request, "user", None) and self.request.user.is_staff):
             qs = qs.filter(active=True)
         return qs
 
@@ -209,15 +182,13 @@ class RoomCategorieAV(APIView):
         qs = RoomCategorie.objects.all().order_by("name")
         if not (request.user and request.user.is_staff):
             qs = qs.filter(active=True)
-        serializer = RoomCategorieSerializer(qs, many=True)
-        return Response(serializer.data)
+        return Response(RoomCategorieSerializer(qs, many=True).data)
 
     def post(self, request):
-        serializer = RoomCategorieSerializer(data=request.data)
-        if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        ser = RoomCategorieSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        ser.save()
+        return Response(ser.data, status=status.HTTP_201_CREATED)
 
 
 class RoomCategorieDetailAV(APIView):
@@ -226,16 +197,14 @@ class RoomCategorieDetailAV(APIView):
 
     def get(self, request, pk):
         category = get_object_or_404(RoomCategorie, pk=pk)
-        serializer = RoomCategorieSerializer(category)
-        return Response(serializer.data)
+        return Response(RoomCategorieSerializer(category).data)
 
     def put(self, request, pk):
         category = get_object_or_404(RoomCategorie, pk=pk)
-        serializer = RoomCategorieSerializer(category, data=request.data)
-        if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        ser = RoomCategorieSerializer(category, data=request.data)
+        ser.is_valid(raise_exception=True)
+        ser.save()
+        return Response(ser.data)
 
     def delete(self, request, pk):
         category = get_object_or_404(RoomCategorie, pk=pk)
@@ -259,45 +228,37 @@ class RoomAV(APIView):
     permission_classes = [IsAuthenticatedOrReadOnly]
 
     def get(self, request):
-        rooms = Room.objects.alive()
-        serializer = RoomSerializer(rooms, many=True)
-        return Response(serializer.data)
+        return Response(RoomSerializer(Room.objects.alive(), many=True).data)
 
     def post(self, request):
-        serializer = RoomSerializer(data=request.data)
-        if serializer.is_valid():
-            serializer.save(property_owner=request.user)
-            return Response(serializer.data)
-        else:
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        ser = RoomSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        ser.save(property_owner=request.user)
+        return Response(ser.data, status=status.HTTP_201_CREATED)
 
 
 class RoomDetailAV(APIView):
-    # Read for everyone; modify only owner/staff
     permission_classes = [IsOwnerOrReadOnly]
 
     def get(self, request, pk):
         room = get_object_or_404(Room.objects.alive(), pk=pk)
-        serializer = RoomSerializer(room)
-        return Response(serializer.data)
+        return Response(RoomSerializer(room).data)
 
     def put(self, request, pk):
         room = get_object_or_404(Room.objects.alive(), pk=pk)
         self.check_object_permissions(request, room)
-        serializer = RoomSerializer(room, data=request.data)
-        if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        ser = RoomSerializer(room, data=request.data)
+        ser.is_valid(raise_exception=True)
+        ser.save()
+        return Response(ser.data)
 
     def patch(self, request, pk):
         room = get_object_or_404(Room.objects.alive(), pk=pk)
         self.check_object_permissions(request, room)
-        serializer = RoomSerializer(room, data=request.data, partial=True)
-        if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        ser = RoomSerializer(room, data=request.data, partial=True)
+        ser.is_valid(raise_exception=True)
+        ser.save()
+        return Response(ser.data)
 
     def delete(self, request, pk):
         room = get_object_or_404(Room.objects.alive(), pk=pk)
@@ -307,20 +268,18 @@ class RoomDetailAV(APIView):
 
 
 class RoomSoftDeleteView(APIView):
-    """
-    POST /api/rooms/<id>/soft-delete/
-    """
+    """POST /api/rooms/<id>/soft-delete/"""
     permission_classes = [IsOwnerOrReadOnly]
 
     def post(self, request, pk):
         room = get_object_or_404(Room.objects.alive(), pk=pk)
         self.check_object_permissions(request, room)
         room.soft_delete()
-        return Response({"detail": f"Room {room.id} soft-deleted."}, status=status.HTTP_200_OK)
+        return Response({"detail": f"Room {room.id} soft-deleted."})
 
 
 # --------------------
-# Idempotent booking validation endpoint (legacy)
+# Idempotent booking validation (legacy pre-flight)
 # --------------------
 @transaction.atomic
 @api_view(["POST"])
@@ -339,23 +298,16 @@ def create_booking(request):
     start_str = request.data.get("start")
     end_str = request.data.get("end")
     if not room_id or not start_str or not end_str:
-        return Response(
-            {"detail": "room, start, and end are required."},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
+        return Response({"detail": "room, start, and end are required."}, status=status.HTTP_400_BAD_REQUEST)
 
     room = get_object_or_404(Room, pk=room_id)
-
     try:
         start_dt = datetime.fromisoformat(start_str)
         end_dt = datetime.fromisoformat(end_str)
     except Exception:
-        return Response(
-            {"detail": "start and end must be ISO 8601 datetimes."},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
+        return Response({"detail": "start and end must be ISO 8601 datetimes."}, status=status.HTTP_400_BAD_REQUEST)
 
-    Booking.objects.select_for_update().filter(room=room)
+    Booking.objects.select_for_update().filter(room=room)  # lock scope
     validate_no_booking_conflict(room, start_dt, end_dt, Booking.objects)
 
     IdempotencyKey.objects.create(
@@ -364,12 +316,11 @@ def create_booking(request):
         action="create_booking",
         request_hash=info["request_hash"],
     )
-
-    return Response({"detail": "Validated. Ready to create booking."}, status=status.HTTP_200_OK)
+    return Response({"detail": "Validated. Ready to create booking."})
 
 
 # --------------------
-# Webhooks
+# Generic webhook entry (optional)
 # --------------------
 @api_view(["POST"])
 def webhook_in(request):
@@ -381,12 +332,119 @@ def webhook_in(request):
         scheme="sha256=",
         clock_skew=300,
     )
-
     event_id = request.headers.get("X-Event-Id") or request.data.get("id")
     ensure_webhook_not_replayed(event_id, WebhookReceipt.objects)
-
     WebhookReceipt.objects.create(source="provider", event_id=event_id)
-    return Response({"ok": True}, status=status.HTTP_200_OK)
+    return Response({"ok": True})
+
+
+class ProviderWebhookView(APIView):
+    """
+    POST /api/webhooks/<provider>/incoming/
+    Verifies HMAC signature, prevents replay, logs payload, and dispatches.
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request, provider):
+        raw_body = request.body or b""
+        provider_key = (provider or "default").strip().lower()
+
+        secret = (
+            settings.WEBHOOK_SECRETS.get(provider_key)
+            or settings.WEBHOOK_SECRETS.get("default")
+            or ""
+        )
+        if not secret:
+            return Response(
+                {"detail": f"No webhook secret configured for provider '{provider_key}'."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        sig_header = request.headers.get("Stripe-Signature") or request.headers.get("X-Signature") or ""
+        try:
+            verify_webhook_signature(
+                secret=secret, payload=raw_body, signature_header=sig_header, scheme="sha256=", clock_skew=300
+            )
+        except Exception as e:
+            return Response({"detail": f"signature verification failed: {e}"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            payload = json.loads(raw_body.decode("utf-8") or "{}")
+        except Exception:
+            payload = {}
+
+        event_id = (
+            request.headers.get("X-Event-Id")
+            or (payload.get("id") if isinstance(payload, dict) else None)
+            or ""
+        )
+        if not event_id:
+            import hashlib
+            event_id = hashlib.sha256(raw_body).hexdigest()
+
+        try:
+            ensure_webhook_not_replayed(event_id, WebhookReceipt.objects)
+        except Exception:
+            return Response({"ok": True, "duplicate": True})
+
+        try:
+            hdrs = {
+                "User-Agent": request.headers.get("User-Agent"),
+                "Stripe-Signature": request.headers.get("Stripe-Signature"),
+                "X-Signature": request.headers.get("X-Signature"),
+                "X-Event-Id": request.headers.get("X-Event-Id"),
+                "Content-Type": request.headers.get("Content-Type"),
+            }
+            WebhookReceipt.objects.create(source=provider_key, event_id=event_id, payload=payload, headers=hdrs)
+        except Exception:
+            pass
+
+        if provider_key == "stripe":
+            return self._handle_stripe(payload)
+        return Response({"ok": True})
+
+    def _handle_stripe(self, payload: dict):
+        """Handles minimal Stripe events used by your app."""
+        try:
+            evt_type = payload.get("type")
+            data_obj = (payload.get("data") or {}).get("object") or {}
+        except Exception:
+            return Response({"ok": True, "note": "malformed stripe payload"})
+
+        if evt_type == "checkout.session.completed":
+            session = data_obj
+            payment_intent = session.get("payment_intent") or ""
+            metadata = session.get("metadata") or {}
+            payment_id = metadata.get("payment_id")
+
+            if payment_id:
+                try:
+                    payment = Payment.objects.select_related("room", "user").get(id=payment_id)
+                except Payment.DoesNotExist:
+                    return Response({"ok": True, "note": "payment not found"})
+
+                payment.status = "succeeded"
+                payment.stripe_payment_intent_id = payment_intent
+                payment.save(update_fields=["status", "stripe_payment_intent_id"])
+
+                room = payment.room
+                if room:
+                    today = timezone.localdate()
+                    base = room.paid_until if room.paid_until and room.paid_until > today else today
+                    room.paid_until = base + timedelta(days=30)
+                    room.save(update_fields=["paid_until"])
+
+            return Response({"ok": True})
+
+        if evt_type == "checkout.session.expired":
+            session = data_obj
+            metadata = session.get("metadata") or {}
+            payment_id = metadata.get("payment_id")
+            if payment_id:
+                Payment.objects.filter(id=payment_id, status="created").update(status="canceled")
+            return Response({"ok": True})
+
+        return Response({"ok": True, "note": f"ignored {evt_type}"})
 
 
 # --------------------
@@ -401,21 +459,15 @@ class LoginView(APIView):
     permission_classes = [permissions.AllowAny]
 
     def post(self, request):
-        serializer = LoginSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        ser = LoginSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
 
-        username = serializer.validated_data["username"]
-        password = serializer.validated_data["password"]
-
-        user = authenticate(request, username=username, password=password)
+        user = authenticate(request, username=ser.validated_data["username"], password=ser.validated_data["password"])
         if not user:
             return Response({"detail": "Invalid credentials."}, status=status.HTTP_400_BAD_REQUEST)
 
         refresh = RefreshToken.for_user(user)
-        return Response(
-            {"refresh": str(refresh), "access": str(refresh.access_token)},
-            status=status.HTTP_200_OK,
-        )
+        return Response({"refresh": str(refresh), "access": str(refresh.access_token)})
 
 
 class LogoutView(APIView):
@@ -426,19 +478,18 @@ class LogoutView(APIView):
         if not refresh:
             return Response({"detail": "Refresh token required."}, status=status.HTTP_400_BAD_REQUEST)
         try:
-            token = RefreshToken(refresh)
-            token.blacklist()
+            RefreshToken(refresh).blacklist()
         except Exception:
             return Response({"detail": "Invalid or expired refresh token."}, status=status.HTTP_400_BAD_REQUEST)
-        return Response({"detail": "Logged out."}, status=status.HTTP_200_OK)
+        return Response({"detail": "Logged out."})
 
 
 class PasswordResetRequestView(APIView):
     permission_classes = [permissions.AllowAny]
 
     def post(self, request):
-        serializer = PasswordResetRequestSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        ser = PasswordResetRequestSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
         return Response({"detail": "Password reset email would be sent"})
 
 
@@ -446,8 +497,8 @@ class PasswordResetConfirmView(APIView):
     permission_classes = [permissions.AllowAny]
 
     def post(self, request):
-        serializer = PasswordResetConfirmSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        ser = PasswordResetConfirmSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
         return Response({"detail": "Password has been reset"})
 
 
@@ -475,13 +526,13 @@ class RoomPhotoUploadView(generics.CreateAPIView):
     serializer_class = RoomImageSerializer
     parser_classes = [MultiPartParser, FormParser]
 
-    def get_room(self):
+    def _get_room(self):
         room = get_object_or_404(Room, pk=self.kwargs["pk"])
         self.check_object_permissions(self.request, room)
         return room
 
     def perform_create(self, serializer):
-        room = self.get_room()
+        room = self._get_room()
         file_obj = self.request.FILES.get("image")
         if not file_obj:
             raise ValidationError({"image": "image file is required (form-data key 'image')."})
@@ -506,6 +557,7 @@ class RoomPhotoDeleteView(generics.DestroyAPIView):
 class MyRoomsView(generics.ListAPIView):
     serializer_class = RoomSerializer
     permission_classes = [permissions.IsAuthenticated]
+    pagination_class = RoomLOPagination
 
     def get_queryset(self):
         return Room.objects.alive().filter(property_owner=self.request.user)
@@ -513,24 +565,9 @@ class MyRoomsView(generics.ListAPIView):
 
 class SearchRoomsView(generics.ListAPIView):
     """
-    GET /api/search/rooms/
-      ?q=<text>
-      &min_price=<int>
-      &max_price=<int>
-      &postcode=<UK_postcode>
-      &radius_miles=<int>       # default 10
-      &ordering=<field>[,-field]
-
-    Supported ordering:
-      - price_per_month, -price_per_month
-      - avg_rating, -avg_rating
-      - distance_miles, -distance_miles   (only when postcode is supplied)
-      - created_at, -created_at           (if your Room model has it; ignored if not)
-
-    Notes:
-      - Distance filters/order use **miles** consistently.
-      - When postcode is supplied, results are filtered to within radius and
-        a .distance_miles attribute is attached for each room (and is orderable).
+    GET /api/search/rooms/?q=&min_price=&max_price=&postcode=&radius_miles=&ordering=
+    ordering: price_per_month, -price_per_month, avg_rating, -avg_rating,
+              distance_miles, -distance_miles, created_at, -created_at
     """
     serializer_class = RoomSerializer
     permission_classes = [permissions.AllowAny]
@@ -541,35 +578,29 @@ class SearchRoomsView(generics.ListAPIView):
 
     def get_queryset(self):
         params = self.request.query_params
-        q_text      = (params.get("q") or "").strip()
-        min_price   = params.get("min_price")
-        max_price   = params.get("max_price")
-        postcode    = (params.get("postcode") or "").strip()
-        raw_radius  = params.get("radius_miles", 10)
+        q_text = (params.get("q") or "").strip()
+        min_price = params.get("min_price")
+        max_price = params.get("max_price")
+        postcode = (params.get("postcode") or "").strip()
+        raw_radius = params.get("radius_miles", 10)
 
         qs = Room.objects.alive()
 
-        # --- Text search (simple icontains over a few fields)
         if q_text:
-            qs = qs.filter(
-                Q(title__icontains=q_text)
-                | Q(description__icontains=q_text)
-                | Q(location__icontains=q_text)
-            )
+            qs = qs.filter(Q(title__icontains=q_text) | Q(description__icontains=q_text) | Q(location__icontains=q_text))
 
-        # --- Price filters
         if min_price is not None:
             try:
                 qs = qs.filter(price_per_month__gte=int(min_price))
             except Exception:
                 raise ValidationError({"min_price": "Must be an integer."})
+
         if max_price is not None:
             try:
                 qs = qs.filter(price_per_month__lte=int(max_price))
             except Exception:
                 raise ValidationError({"max_price": "Must be an integer."})
 
-        # --- Optional geo filter (miles consistent)
         self._ordered_ids = None
         self._distance_by_id = None
 
@@ -579,41 +610,30 @@ class SearchRoomsView(generics.ListAPIView):
             except ValidationError:
                 radius_miles = 10
 
-            # Geocode with caching (service)
             lat, lon = geocode_postcode_cached(postcode)
 
-            # Pre-filter rooms that have coordinates
             base_qs = qs.exclude(latitude__isnull=True).exclude(longitude__isnull=True)
 
-            # Compute distances in Python (keeps it DB-agnostic)
             distances = []
             for r in base_qs.only("id", "latitude", "longitude"):
                 d = haversine_miles(lat, lon, r.latitude, r.longitude)
                 if d <= radius_miles:
                     distances.append((r.id, d))
 
-            # Order by distance by default if postcode given (unless overridden later)
             distances.sort(key=lambda t: t[1])
             ids_in_radius = [rid for rid, _ in distances]
             self._ordered_ids = ids_in_radius
             self._distance_by_id = {rid: d for rid, d in distances}
-
             qs = qs.filter(id__in=ids_in_radius)
 
-        # --- Ordering
         ordering_param = (params.get("ordering") or "").strip()
-
-        # Default ordering
         if not ordering_param:
-            ordering_param = "-avg_rating" if not postcode else "distance_miles"
+            ordering_param = "distance_miles" if postcode else "-avg_rating"
 
-        # If distance is requested, apply ordering on the Python-side list in .list()
-        # and leave DB ordering neutral to preserve our explicit order.
         if ordering_param in {"distance_miles", "-distance_miles"} and self._ordered_ids is not None:
-            # We'll re-order in list()
+            # handled in list()
             pass
         else:
-            # Allow a safe subset of model fields for DB ordering
             allowed = {
                 "price_per_month": "price_per_month",
                 "-price_per_month": "-price_per_month",
@@ -631,41 +651,33 @@ class SearchRoomsView(generics.ListAPIView):
     def list(self, request, *args, **kwargs):
         queryset = self.get_queryset()
 
-        # If we've computed distances (when postcode provided)
         if self._distance_by_id is not None:
             room_by_id = {obj.id: obj for obj in queryset}
             ordered_objs = []
-
             for rid in (self._ordered_ids or []):
                 obj = room_by_id.get(rid)
                 if obj is not None:
                     obj.distance_miles = self._distance_by_id.get(rid)
                     ordered_objs.append(obj)
 
-            # Check if ordering wants reverse distance
             ordering_param = (request.query_params.get("ordering") or "").strip()
             if ordering_param == "-distance_miles":
                 ordered_objs.reverse()
 
             page = self.paginate_queryset(ordered_objs)
             if page is not None:
-                serializer = self.get_serializer(page, many=True)
-                return self.get_paginated_response(serializer.data)
-            serializer = self.get_serializer(ordered_objs, many=True)
-            return Response(serializer.data)
+                ser = self.get_serializer(page, many=True)
+                return self.get_paginated_response(ser.data)
+            ser = self.get_serializer(ordered_objs, many=True)
+            return Response(ser.data)
 
-        # No geo distances — fall back to default list
         return super().list(request, *args, **kwargs)
-
 
 
 class NearbyRoomsView(generics.ListAPIView):
     """
     GET /api/rooms/nearby/?postcode=<UK_postcode>&radius_miles=<int>
-
-    - Uses cached geocoding (service) and computes distances in **miles** only.
-    - Returns rooms within radius; each object gets .distance_miles attached.
-    - Supports pagination via RoomLOPagination.
+    Miles only; attaches .distance_miles to each room.
     """
     serializer_class = RoomSerializer
     permission_classes = [permissions.AllowAny]
@@ -679,14 +691,9 @@ class NearbyRoomsView(generics.ListAPIView):
         if not postcode_raw:
             raise ValidationError({"postcode": "Postcode is required."})
 
-        # Miles only, with validation
-        raw_radius = self.request.query_params.get("radius_miles", 10)
-        radius_miles = validate_radius_miles(raw_radius, max_miles=100)
-
-        # Geocode (cached)
+        radius_miles = validate_radius_miles(self.request.query_params.get("radius_miles", 10), max_miles=100)
         lat, lon = geocode_postcode_cached(postcode_raw)
 
-        # Filter to rooms with coordinates
         base_qs = Room.objects.alive().exclude(latitude__isnull=True).exclude(longitude__isnull=True)
 
         distances = []
@@ -703,7 +710,6 @@ class NearbyRoomsView(generics.ListAPIView):
 
     def list(self, request, *args, **kwargs):
         queryset = self.get_queryset()
-
         room_by_id = {obj.id: obj for obj in queryset}
         ordered_objs = []
 
@@ -715,12 +721,10 @@ class NearbyRoomsView(generics.ListAPIView):
 
         page = self.paginate_queryset(ordered_objs)
         if page is not None:
-            serializer = self.get_serializer(page, many=True)
-            return self.get_paginated_response(serializer.data)
-
-        serializer = self.get_serializer(ordered_objs, many=True)
-        return Response(serializer.data)
-
+            ser = self.get_serializer(page, many=True)
+            return self.get_paginated_response(ser.data)
+        ser = self.get_serializer(ordered_objs, many=True)
+        return Response(ser.data)
 
 
 # --------------------
@@ -740,17 +744,10 @@ class RoomSaveView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
-
-
 class RoomSaveToggleView(APIView):
     """
     POST /api/rooms/<pk>/save-toggle/
-    - First call → saves room → {"saved": true,  "saved_at": "<ISO8601>"}
-    - Second call → unsaves room → {"saved": false, "saved_at": null}
-
-    Notes:
-    - We don’t rely on a SavedRoom timestamp column. When creating, we return
-      the current time as 'saved_at'. When removing, we return null.
+    First call saves, second call unsaves.
     """
     permission_classes = [permissions.IsAuthenticated]
 
@@ -758,15 +755,9 @@ class RoomSaveToggleView(APIView):
         room = get_object_or_404(Room.objects.alive(), pk=pk)
         obj, created = SavedRoom.objects.get_or_create(user=request.user, room=room)
         if created:
-            # New save: return a user-friendly 'saved_at' timestamp
-            return Response(
-                {"saved": True, "saved_at": timezone.now().isoformat()},
-                status=status.HTTP_201_CREATED
-            )
-        # Already saved → toggle OFF
+            return Response({"saved": True, "saved_at": timezone.now().isoformat()}, status=status.HTTP_201_CREATED)
         obj.delete()
-        return Response({"saved": False, "saved_at": None}, status=status.HTTP_200_OK)
-
+        return Response({"saved": False, "saved_at": None})
 
 
 class MySavedRoomsView(generics.ListAPIView):
@@ -775,24 +766,11 @@ class MySavedRoomsView(generics.ListAPIView):
     pagination_class = RoomLOPagination
 
     def get_queryset(self):
-        """
-        Supports ?ordering=... with safe options:
-        -saved_at (default), saved_at
-        -price_per_month, price_per_month
-        -avg_rating, avg_rating
-        'saved_at' is derived from the SavedRoom id (no schema change needed).
-        """
         user = self.request.user
-
-        # Base: only rooms this user saved
         saved_qs = SavedRoom.objects.filter(user=user)
 
-        # Annotate each Room with 'saved_id' (latest SavedRoom id for this user+room)
         latest_saved_id = (
-            SavedRoom.objects
-            .filter(user=user, room=OuterRef("pk"))
-            .order_by("-id")
-            .values("id")[:1]
+            SavedRoom.objects.filter(user=user, room=OuterRef("pk")).order_by("-id").values("id")[:1]
         )
 
         qs = (
@@ -803,7 +781,6 @@ class MySavedRoomsView(generics.ListAPIView):
             .prefetch_related("reviews")
         )
 
-        # Map public 'saved_at' to internal 'saved_id'
         ordering = (self.request.query_params.get("ordering") or "-saved_at").strip()
         mapping = {
             "saved_at": "saved_id",
@@ -813,9 +790,7 @@ class MySavedRoomsView(generics.ListAPIView):
             "avg_rating": "avg_rating",
             "-avg_rating": "-avg_rating",
         }
-        qs = qs.order_by(mapping.get(ordering, "-saved_id"))
-        return qs
-
+        return qs.order_by(mapping.get(ordering, "-saved_id"))
 
     def get_serializer_context(self):
         ctx = super().get_serializer_context()
@@ -827,9 +802,7 @@ class MySavedRoomsView(generics.ListAPIView):
 # Messaging
 # --------------------
 class MessageThreadListCreateView(generics.ListCreateAPIView):
-    """
-    GET/POST /api/messages/threads/
-    """
+    """GET/POST /api/messages/threads/"""
     serializer_class = MessageThreadSerializer
     permission_classes = [permissions.IsAuthenticated]
     pagination_class = RoomLOPagination
@@ -841,14 +814,12 @@ class MessageThreadListCreateView(generics.ListCreateAPIView):
     def perform_create(self, serializer):
         participants = set(serializer.validated_data.get("participants", []))
         participants.add(self.request.user)
-
         if len(participants) != 2:
             raise ValidationError({"participants": "Threads must have exactly 2 participants (you + one other user)."})
 
         p_list = list(participants)
         existing = (
-            MessageThread.objects
-            .filter(participants=p_list[0])
+            MessageThread.objects.filter(participants=p_list[0])
             .filter(participants=p_list[1])
             .annotate(num_participants=Count("participants"))
             .filter(num_participants=2)
@@ -861,9 +832,7 @@ class MessageThreadListCreateView(generics.ListCreateAPIView):
 
 
 class MessageListCreateView(generics.ListCreateAPIView):
-    """
-    GET/POST /api/messages/threads/<thread_id>/messages/
-    """
+    """GET/POST /api/messages/threads/<thread_id>/messages/"""
     serializer_class = MessageSerializer
     permission_classes = [permissions.IsAuthenticated]
     pagination_class = RoomLOPagination
@@ -874,98 +843,60 @@ class MessageListCreateView(generics.ListCreateAPIView):
         return Message.objects.filter(thread__id=thread_id, thread__participants=self.request.user)
 
     def perform_create(self, serializer):
-        thread = get_object_or_404(
-            MessageThread.objects.filter(participants=self.request.user),
-            id=self.kwargs["thread_id"],
-        )
+        thread = get_object_or_404(MessageThread.objects.filter(participants=self.request.user), id=self.kwargs["thread_id"])
         serializer.save(thread=thread, sender=self.request.user)
 
 
 class ThreadMarkReadView(APIView):
-    """
-    POST /api/messages/threads/<thread_id>/read/
-    Marks all messages in the thread (not sent by me) as read for the current user.
-    """
+    """POST /api/messages/threads/<thread_id>/read/ — marks all inbound messages as read."""
     permission_classes = [permissions.IsAuthenticated]
     throttle_classes = [UserRateThrottle]
 
     def post(self, request, thread_id):
-        thread = get_object_or_404(
-            MessageThread.objects.filter(participants=request.user),
-            pk=thread_id
-        )
+        thread = get_object_or_404(MessageThread.objects.filter(participants=request.user), pk=thread_id)
 
-        # Messages I didn't send and haven't marked as read yet
-        to_mark = (
-            thread.messages
-            .exclude(sender=request.user)
-            .exclude(reads__user=request.user)
-        )
+        to_mark = thread.messages.exclude(sender=request.user).exclude(reads__user=request.user)
+        MessageRead.objects.bulk_create([MessageRead(message=m, user=request.user) for m in to_mark], ignore_conflicts=True)
 
-        # Bulk create read records. ignore_conflicts avoids duplicate key errors.
-        MessageRead.objects.bulk_create(
-            [MessageRead(message=m, user=request.user) for m in to_mark],
-            ignore_conflicts=True
-        )
-
-        return Response({"marked": to_mark.count()}, status=status.HTTP_200_OK)
+        return Response({"marked": to_mark.count()})
 
 
 class StartThreadFromRoomView(APIView):
     """
     POST /api/rooms/<int:room_id>/start-thread/
     Body (optional): { "body": "Hello, is this room available for viewing?" }
-
-    - Creates (or returns) a 1:1 thread between the current user and the room owner.
-    - If 'body' is provided, creates the first message in that thread from the current user.
-    - Returns the thread data.
     """
     permission_classes = [permissions.IsAuthenticated]
     throttle_classes = [UserRateThrottle]
 
     def post(self, request, room_id):
         room = get_object_or_404(Room.objects.alive(), pk=room_id)
-
         if room.property_owner == request.user:
-            return Response(
-                {"detail": "You are the owner of this room; no thread needed."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            return Response({"detail": "You are the owner of this room; no thread needed."}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Does a 1:1 thread between these two users already exist?
         existing = (
-            MessageThread.objects
-            .filter(participants=room.property_owner)
+            MessageThread.objects.filter(participants=room.property_owner)
             .filter(participants=request.user)
             .annotate(num_participants=Count("participants"))
             .filter(num_participants=2)
             .first()
         )
-
-        if existing:
-            thread = existing
-        else:
-            thread = MessageThread.objects.create()
+        thread = existing or MessageThread.objects.create()
+        if not existing:
             thread.participants.set([request.user, room.property_owner])
 
-        # Optional first message
         body = (request.data or {}).get("body", "").strip()
         if body:
             Message.objects.create(thread=thread, sender=request.user, body=body)
 
-        # Return the thread with metadata
-        serializer = MessageThreadSerializer(thread, context={"request": request})
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        return Response(MessageThreadSerializer(thread, context={"request": request}).data)
 
 
 # --------------------
-# BOOKINGS (viewing requests)
+# Bookings (viewing requests)
 # --------------------
 class BookingListCreateView(generics.ListCreateAPIView):
-    """
-    GET /api/bookings/     → list my bookings
-    POST /api/bookings/    → create a booking (slot-based preferred; manual fallback)
-    """
+    """GET my bookings / POST create."""
     serializer_class = BookingSerializer
     permission_classes = [permissions.IsAuthenticated]
     pagination_class = RoomLOPagination
@@ -975,11 +906,9 @@ class BookingListCreateView(generics.ListCreateAPIView):
         return Booking.objects.filter(user=self.request.user).order_by("-created_at")
 
     def perform_create(self, serializer):
-        # 1) SLOT-BASED BOOKING (preferred if client sends "slot")
         slot_id = self.request.data.get("slot")
         if slot_id:
             slot = get_object_or_404(AvailabilitySlot, pk=slot_id)
-
             if getattr(slot.room, "is_deleted", False):
                 raise ValidationError({"room": "Room is not available."})
             if slot.end <= timezone.now():
@@ -998,9 +927,8 @@ class BookingListCreateView(generics.ListCreateAPIView):
                     start=slot_locked.start,
                     end=slot_locked.end,
                 )
-            return  # important: stop here for slot bookings
+            return
 
-        # 2) MANUAL START/END BOOKING (fallback if no "slot" provided)
         room_id = self.request.data.get("room")
         if not room_id:
             raise ValidationError({"room": "This field is required."})
@@ -1013,11 +941,7 @@ class BookingListCreateView(generics.ListCreateAPIView):
         if start >= end:
             raise ValidationError({"end": "End must be after start."})
 
-        conflicts = (
-            Booking.objects.filter(room=room, canceled_at__isnull=True)
-            .filter(start__lt=end, end__gt=start)
-            .exists()
-        )
+        conflicts = Booking.objects.filter(room=room, canceled_at__isnull=True).filter(start__lt=end, end__gt=start).exists()
         if conflicts:
             raise ValidationError({"detail": "Selected dates clash with an existing booking."})
 
@@ -1025,22 +949,16 @@ class BookingListCreateView(generics.ListCreateAPIView):
 
 
 class BookingDetailView(generics.RetrieveAPIView):
-    """
-    GET /api/bookings/<id>/ → see my booking
-    """
+    """GET /api/bookings/<id>/ → see my booking"""
     serializer_class = BookingSerializer
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        if self.request.user.is_staff:
-            return Booking.objects.all()
-        return Booking.objects.filter(user=self.request.user)
+        return Booking.objects.all() if self.request.user.is_staff else Booking.objects.filter(user=self.request.user)
 
 
 class BookingCancelView(APIView):
-    """
-    POST /api/bookings/<id>/cancel/ → soft-cancel a booking (marks canceled_at)
-    """
+    """POST /api/bookings/<id>/cancel/ — soft-cancel a booking."""
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request, pk):
@@ -1048,20 +966,14 @@ class BookingCancelView(APIView):
         booking = get_object_or_404(qs, pk=pk)
 
         if booking.canceled_at:
-            return Response({"detail": "Booking already cancelled."}, status=status.HTTP_200_OK)
+            return Response({"detail": "Booking already cancelled."})
 
         if booking.start <= timezone.now():
-            return Response(
-                {"detail": "Cannot cancel after booking has started."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return Response({"detail": "Cannot cancel after booking has started."}, status=status.HTTP_400_BAD_REQUEST)
 
         booking.canceled_at = timezone.now()
         booking.save(update_fields=["canceled_at"])
-        return Response(
-            {"detail": "Booking cancelled.", "canceled_at": booking.canceled_at},
-            status=status.HTTP_200_OK,
-        )
+        return Response({"detail": "Booking cancelled.", "canceled_at": booking.canceled_at})
 
 
 # --------------------
@@ -1079,23 +991,14 @@ class RoomAvailabilityView(APIView):
         start_str = request.query_params.get("from")
         end_str = request.query_params.get("to")
         if not start_str or not end_str:
-            return Response(
-                {"detail": "Query params 'from' and 'to' are required (ISO 8601)."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return Response({"detail": "Query params 'from' and 'to' are required (ISO 8601)."}, status=status.HTTP_400_BAD_REQUEST)
         try:
             start = datetime.fromisoformat(start_str)
             end = datetime.fromisoformat(end_str)
         except Exception:
-            return Response(
-                {"detail": "from/to must be ISO 8601 datetimes."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return Response({"detail": "from/to must be ISO 8601 datetimes."}, status=status.HTTP_400_BAD_REQUEST)
         if start >= end:
-            return Response(
-                {"detail": "'to' must be after 'from'."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return Response({"detail": "'to' must be after 'from'."}, status=status.HTTP_400_BAD_REQUEST)
 
         conflicts_qs = (
             Booking.objects.filter(room=room, canceled_at__isnull=True)
@@ -1103,15 +1006,14 @@ class RoomAvailabilityView(APIView):
             .values("id", "start", "end")
             .order_by("start")
         )
-        conflicts = list(conflicts_qs)
-        return Response({"available": len(conflicts) == 0, "conflicts": conflicts}, status=status.HTTP_200_OK)
+        return Response({"available": not conflicts_qs.exists(), "conflicts": list(conflicts_qs)})
 
 
 class RoomAvailabilitySlotListCreateView(generics.ListCreateAPIView):
     permission_classes = [IsAuthenticated, IsOwnerOrReadOnly]
     serializer_class = AvailabilitySlotSerializer
 
-    def get_room(self):
+    def _get_room(self):
         room = get_object_or_404(Room.objects.alive(), pk=self.kwargs["pk"])
         self.check_object_permissions(self.request, room)
         return room
@@ -1121,7 +1023,7 @@ class RoomAvailabilitySlotListCreateView(generics.ListCreateAPIView):
         return room.availability_slots.order_by("start")
 
     def perform_create(self, serializer):
-        room = self.get_room()
+        room = self._get_room()
         start = serializer.validated_data.get("start")
         end = serializer.validated_data.get("end")
         if start >= end:
@@ -1164,12 +1066,10 @@ class RoomAvailabilityPublicView(generics.ListAPIView):
             qs = qs.filter(start__lt=end, end__gt=start)
 
         if only_free:
-            slot_ids = [
-                s.id
-                for s in qs
-                if Booking.objects.filter(slot=s, canceled_at__isnull=True).count() < s.max_bookings
+            available_ids = [
+                s.id for s in qs if Booking.objects.filter(slot=s, canceled_at__isnull=True).count() < s.max_bookings
             ]
-            qs = qs.filter(id__in=slot_ids)
+            qs = qs.filter(id__in=available_ids)
 
         return qs
 
@@ -1185,17 +1085,11 @@ class UserAvatarUploadView(APIView):
         profile = request.user.profile
         file_obj = self.request.FILES.get("avatar")
         if not file_obj:
-            return Response(
-                {"avatar": "File is required (form-data key 'avatar')."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return Response({"avatar": "File is required (form-data key 'avatar')."}, status=status.HTTP_400_BAD_REQUEST)
         cleaned = validate_avatar_image(file_obj)
         profile.avatar = cleaned
         profile.save(update_fields=["avatar"])
-        return Response(
-            {"avatar": profile.avatar.url if profile.avatar else None},
-            status=status.HTTP_200_OK,
-        )
+        return Response({"avatar": profile.avatar.url if profile.avatar else None})
 
 
 class ChangeEmailView(APIView):
@@ -1206,31 +1100,23 @@ class ChangeEmailView(APIView):
         new_email = (request.data.get("new_email") or "").strip()
 
         if not current_password or not new_email:
-            return Response(
-                {"detail": "current_password and new_email are required."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return Response({"detail": "current_password and new_email are required."}, status=status.HTTP_400_BAD_REQUEST)
 
         user = authenticate(request, username=request.user.username, password=current_password)
         if not user:
-            return Response(
-                {"detail": "Current password is incorrect."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return Response({"detail": "Current password is incorrect."}, status=status.HTTP_400_BAD_REQUEST)
 
-        # validate email format
         try:
             serializers.EmailField().run_validation(new_email)
         except serializers.ValidationError:
             return Response({"new_email": "Enter a valid email address."}, status=status.HTTP_400_BAD_REQUEST)
 
-        # unique email
-        if User.objects.filter(email__iexact=new_email).exclude(pk=request.user.pk).exists():
+        if get_user_model().objects.filter(email__iexact=new_email).exclude(pk=request.user.pk).exists():
             return Response({"new_email": "This email is already in use."}, status=status.HTTP_400_BAD_REQUEST)
 
         user.email = new_email
         user.save(update_fields=["email"])
-        return Response({"detail": "Email updated."}, status=status.HTTP_200_OK)
+        return Response({"detail": "Email updated."})
 
 
 class ChangePasswordView(APIView):
@@ -1242,10 +1128,7 @@ class ChangePasswordView(APIView):
         confirm_password = request.data.get("confirm_password")
 
         if not current_password or not new_password or not confirm_password:
-            return Response(
-                {"detail": "current_password, new_password, confirm_password are required."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return Response({"detail": "current_password, new_password, confirm_password are required."}, status=status.HTTP_400_BAD_REQUEST)
 
         if new_password != confirm_password:
             return Response({"confirm_password": "Passwords do not match."}, status=status.HTTP_400_BAD_REQUEST)
@@ -1264,7 +1147,7 @@ class ChangePasswordView(APIView):
 
         user.set_password(new_password)
         user.save(update_fields=["password"])
-        return Response({"detail": "Password updated. Please log in again."}, status=status.HTTP_200_OK)
+        return Response({"detail": "Password updated. Please log in again."})
 
 
 class DeactivateAccountView(APIView):
@@ -1273,39 +1156,38 @@ class DeactivateAccountView(APIView):
     def post(self, request):
         request.user.is_active = False
         request.user.save(update_fields=["is_active"])
-        return Response({"detail": "Account deactivated."}, status=status.HTTP_200_OK)
+        return Response({"detail": "Account deactivated."})
 
 
+# --------------------
+# Stripe payments (GBP stored in Payment.amount)
+# --------------------
 class CreateListingCheckoutSessionView(APIView):
     """
     POST /api/payments/checkout/rooms/<pk>/
-    Body: {}
-    Creates a £1 Stripe Checkout Session to pay the listing fee for the room.
+    Creates a £1 Stripe Checkout Session (line item in pence; Payment.amount stored in GBP).
     """
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request, pk):
         room = get_object_or_404(Room, pk=pk)
 
-        # only the owner pays for their own room
         if getattr(room, "property_owner_id", None) != request.user.id:
-            return Response({"detail": "You can only pay for your own room."},
-                            status=status.HTTP_403_FORBIDDEN)
+            return Response({"detail": "You can only pay for your own room."}, status=status.HTTP_403_FORBIDDEN)
 
-        # amount: £1.00 -> 100 pence
-        amount_pence = 100
+        amount_gbp = 1.00        # store GBP in DB
+        amount_pence = 100       # Stripe expects pence
 
-        # Create a Payment row in 'created' state
         payment = Payment.objects.create(
             user=request.user,
             room=room,
-            amount=amount_pence,
+            amount=amount_gbp,   # GBP in your model
             currency="GBP",
             status="created",
         )
 
         success_url = f"{settings.SITE_URL}/api/payments/success/?session_id={{CHECKOUT_SESSION_ID}}&payment_id={payment.id}"
-        cancel_url  = f"{settings.SITE_URL}/api/payments/cancel/?payment_id={payment.id}"
+        cancel_url = f"{settings.SITE_URL}/api/payments/cancel/?payment_id={payment.id}"
 
         session = stripe.checkout.Session.create(
             mode="payment",
@@ -1327,14 +1209,10 @@ class CreateListingCheckoutSessionView(APIView):
             },
         )
 
-        # store session id
         payment.stripe_checkout_session_id = session.id
         payment.save(update_fields=["stripe_checkout_session_id"])
 
-        return Response({
-            "sessionId": session.id,
-            "publishableKey": settings.STRIPE_PUBLISHABLE_KEY
-        }, status=status.HTTP_200_OK)
+        return Response({"sessionId": session.id, "publishableKey": settings.STRIPE_PUBLISHABLE_KEY})
 
 
 @csrf_exempt
@@ -1346,14 +1224,10 @@ def stripe_webhook(request):
 
     try:
         event = stripe.Webhook.construct_event(
-            payload=payload,
-            sig_header=sig_header,
-            secret=settings.STRIPE_WEBHOOK_SECRET,
+            payload=payload, sig_header=sig_header, secret=settings.STRIPE_WEBHOOK_SECRET
         )
-    except ValueError:
-        return Response(status=400)  # invalid payload
-    except stripe.error.SignatureVerificationError:
-        return Response(status=400)  # invalid signature
+    except (ValueError, stripe.error.SignatureVerificationError):
+        return Response(status=400)
 
     if event["type"] == "checkout.session.completed":
         session = event["data"]["object"]
@@ -1367,17 +1241,16 @@ def stripe_webhook(request):
             except Payment.DoesNotExist:
                 return Response(status=200)
 
-            # mark payment succeeded
             payment.status = "succeeded"
             payment.stripe_payment_intent_id = payment_intent or ""
             payment.save(update_fields=["status", "stripe_payment_intent_id"])
 
-            # extend room paid_until by 30 days (or set to 30 if empty)
             room = payment.room
-            today = dj_tz.now().date()
-            base = room.paid_until if room.paid_until and room.paid_until > today else today
-            room.paid_until = base + timedelta(days=30)
-            room.save(update_fields=["paid_until"])
+            if room:
+                today = timezone.now().date()
+                base = room.paid_until if room.paid_until and room.paid_until > today else today
+                room.paid_until = base + timedelta(days=30)
+                room.save(update_fields=["paid_until"])
 
     elif event["type"] == "checkout.session.expired":
         session = event["data"]["object"]
@@ -1391,12 +1264,14 @@ def stripe_webhook(request):
 
 class StripeSuccessView(APIView):
     permission_classes = [AllowAny]
+
     def get(self, request):
-        return Response({"detail": "Payment success received. (Webhook will finalize the room.)"})
+        return Response({"detail": "Payment success received. (Webhook will finalise the room.)"})
 
 
 class StripeCancelView(APIView):
     permission_classes = [AllowAny]
+
     def get(self, request):
         payment_id = request.query_params.get("payment_id")
         if payment_id:
@@ -1404,17 +1279,14 @@ class StripeCancelView(APIView):
         return Response({"detail": "Payment canceled."})
 
 
-
+# --------------------
+# Reports / Moderation
+# --------------------
 class ReportCreateView(generics.CreateAPIView):
     """
     POST /api/reports/
     Body:
-    {
-      "target_type": "room" | "review" | "message" | "user",
-      "object_id": 123,
-      "reason": "abuse",
-      "details": "…"
-    }
+      {"target_type": "room"|"review"|"message"|"user", "object_id": 123, "reason": "abuse", "details": "…"}
     """
     serializer_class = ReportSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -1422,24 +1294,20 @@ class ReportCreateView(generics.CreateAPIView):
 
     def perform_create(self, serializer):
         report = serializer.save()
-        # Audit
+        # Audit (align with AuditLog model fields)
         try:
             AuditLog.objects.create(
-                actor=self.request.user,
+                user=self.request.user,
                 action="report.create",
-                object_type=report.target_type,
-                object_id=str(report.object_id),
-                meta={"reason": report.reason},
+                ip_address=getattr(self.request, "META", {}).get("REMOTE_ADDR"),
+                extra_data={"target_type": report.target_type, "object_id": report.object_id, "reason": report.reason},
             )
         except Exception:
-            pass  # keep reports resilient
+            pass
 
 
 class ModerationReportListView(generics.ListAPIView):
-    """
-    GET /api/moderation/reports/?status=open|in_review|resolved|rejected
-    Staff only.
-    """
+    """GET /api/moderation/reports/?status=open|in_review|resolved|rejected — staff only."""
     serializer_class = ReportSerializer
     permission_classes = [IsAdminUser]
     pagination_class = RoomLOPagination
@@ -1455,10 +1323,7 @@ class ModerationReportListView(generics.ListAPIView):
 class ModerationReportUpdateView(generics.UpdateAPIView):
     """
     PATCH /api/moderation/reports/<id>/
-    Body (any subset):
-      { "status": "in_review" | "resolved" | "rejected",
-        "resolution_notes": "…",
-        "hide_room": true }  # optional, only applies if target is a Room
+    Body (any subset): {"status": "...", "resolution_notes": "...", "hide_room": true}
     """
     serializer_class = ReportSerializer
     permission_classes = [IsAdminUser]
@@ -1470,7 +1335,6 @@ class ModerationReportUpdateView(generics.UpdateAPIView):
         notes = request.data.get("resolution_notes", "")
         hide_room = bool(request.data.get("hide_room"))
 
-        # Update report fields
         if status_new in {"in_review", "resolved", "rejected"}:
             report.status = status_new
         if notes:
@@ -1478,44 +1342,37 @@ class ModerationReportUpdateView(generics.UpdateAPIView):
         report.handled_by = request.user
         report.save(update_fields=["status", "resolution_notes", "handled_by", "updated_at"])
 
-        # Optional: hide the room if requested and target is a room
         if hide_room and report.target_type == "room" and isinstance(report.target, Room):
             if report.target.status != "hidden":
                 report.target.status = "hidden"
                 report.target.save(update_fields=["status"])
-            # Audit
             try:
                 AuditLog.objects.create(
-                    actor=request.user,
+                    user=request.user,
                     action="room.hide",
-                    object_type="room",
-                    object_id=str(report.target.pk),
-                    meta={"via_report": report.pk},
+                    ip_address=getattr(request, "META", {}).get("REMOTE_ADDR"),
+                    extra_data={"via_report": report.pk, "room_id": report.target.pk},
                 )
             except Exception:
                 pass
 
-        # Audit general moderation update
         try:
             AuditLog.objects.create(
-                actor=request.user,
+                user=request.user,
                 action="report.update",
-                object_type=report.target_type,
-                object_id=str(report.object_id),
-                meta={"status": report.status},
+                ip_address=getattr(request, "META", {}).get("REMOTE_ADDR"),
+                extra_data={"status": report.status, "target_type": report.target_type, "object_id": report.object_id},
             )
         except Exception:
             pass
 
-        serializer = self.get_serializer(report)
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        return Response(self.get_serializer(report).data)
 
 
 class RoomModerationStatusView(APIView):
     """
     PATCH /api/moderation/rooms/<id>/status/
-    Body: {"status": "active" | "hidden"}
-    Staff only. When set to hidden, the room disappears from all Room.objects.alive() listings.
+    Body: {"status": "active"|"hidden"} — staff only.
     """
     permission_classes = [IsAdminUser]
 
@@ -1527,76 +1384,60 @@ class RoomModerationStatusView(APIView):
         if room.status != status_new:
             room.status = status_new
             room.save(update_fields=["status"])
-            # Audit
             try:
                 AuditLog.objects.create(
-                    actor=request.user,
+                    user=request.user,
                     action="room.set_status",
-                    object_type="room",
-                    object_id=str(room.pk),
-                    meta={"status": status_new},
+                    ip_address=getattr(request, "META", {}).get("REMOTE_ADDR"),
+                    extra_data={"room_id": room.pk, "status": status_new},
                 )
             except Exception:
                 pass
-        return Response({"id": room.pk, "status": room.status}, status=status.HTTP_200_OK)
-    
-    
+        return Response({"id": room.pk, "status": room.status})
+
+
+# --------------------
+# Ops snapshot
+# --------------------
 class OpsStatsView(APIView):
     """
-    GET /api/ops/stats/
-    Admin-only operational snapshot for dashboards.
-
-    Returns:
-    {
-      "listings": {...},
-      "users": {...},
-      "bookings": {...},
-      "payments": {...},
-      "messages": {...},
-      "reports": {...},
-      "categories": {...}
-    }
+    GET /api/ops/stats/ — admin-only operational snapshot.
+    Amounts reported in **GBP** (Payment.amount is stored in GBP).
     """
     permission_classes = [IsAdminUser]
 
     def get(self, request):
         now = timezone.now()
-        d7  = now - timedelta(days=7)
+        d7 = now - timedelta(days=7)
         d30 = now - timedelta(days=30)
 
-        # Listings
-        total_rooms     = Room.objects.count()
-        active_rooms    = Room.objects.filter(status="active", is_deleted=False).count()
-        hidden_rooms    = Room.objects.filter(status="hidden", is_deleted=False).count()
-        deleted_rooms   = Room.objects.filter(is_deleted=True).count()
+        total_rooms = Room.objects.count()
+        active_rooms = Room.objects.filter(status="active", is_deleted=False).count()
+        hidden_rooms = Room.objects.filter(status="hidden", is_deleted=False).count()
+        deleted_rooms = Room.objects.filter(is_deleted=True).count()
 
-        # Users (basic — uses auth model via FK on your models)
-        # If you want total users, import and count from get_user_model()
         try:
-            from django.contrib.auth import get_user_model
             total_users = get_user_model().objects.count()
         except Exception:
             total_users = None
 
-        # Bookings
-        bookings_7d     = Booking.objects.filter(created_at__gte=d7).count()
-        bookings_30d    = Booking.objects.filter(created_at__gte=d30).count()
+        bookings_7d = Booking.objects.filter(created_at__gte=d7).count()
+        bookings_30d = Booking.objects.filter(created_at__gte=d30).count()
         upcoming_viewings = Booking.objects.filter(start__gte=now, canceled_at__isnull=True).count()
 
-        # Payments (amount stored in pence; convert to GBP)
+        # Payment.amount stored in GBP, so no /100 conversion here.
         payments_30d_count = Payment.objects.filter(status="succeeded", created_at__gte=d30).count()
-        payments_30d_sum_p = Payment.objects.filter(status="succeeded", created_at__gte=d30).aggregate(sum_p=Sum("amount"))["sum_p"] or 0
-        payments_30d_sum_gbp = round(payments_30d_sum_p / 100.0, 2)
+        payments_30d_sum_gbp = float(
+            Payment.objects.filter(status="succeeded", created_at__gte=d30).aggregate(sum_amt=Sum("amount"))["sum_amt"]
+            or 0
+        )
 
-        # Messages (lightweight)
-        messages_7d = Message.objects.filter(created_at__gte=d7).count() if hasattr(Message, "created_at") else None
+        messages_7d = Message.objects.filter(created_at__gte=d7).count()
         threads_total = MessageThread.objects.count()
 
-        # Reports queue
-        reports_open      = Report.objects.filter(status="open").count() if "Report" in globals() else None
-        reports_in_review = Report.objects.filter(status="in_review").count() if "Report" in globals() else None
+        reports_open = Report.objects.filter(status="open").count()
+        reports_in_review = Report.objects.filter(status="in_review").count()
 
-        # Top categories by active room count
         try:
             top_categories = (
                 Room.objects.filter(status="active", is_deleted=False)
@@ -1604,45 +1445,17 @@ class OpsStatsView(APIView):
                 .annotate(cnt=Count("id"))
                 .order_by("-cnt")[:5]
             )
-            top_categories = [
-                {"id": r["category__id"], "name": r["category__name"], "count": r["cnt"]}
-                for r in top_categories
-            ]
+            top_categories = [{"id": r["category__id"], "name": r["category__name"], "count": r["cnt"]} for r in top_categories]
         except Exception:
             top_categories = []
 
         data = {
-            "listings": {
-                "total": total_rooms,
-                "active": active_rooms,
-                "hidden": hidden_rooms,
-                "deleted": deleted_rooms,
-            },
-            "users": {
-                "total": total_users,
-            },
-            "bookings": {
-                "last_7_days": bookings_7d,
-                "last_30_days": bookings_30d,
-                "upcoming_viewings": upcoming_viewings,
-            },
-            "payments": {
-                "last_30_days": {
-                    "count": payments_30d_count,
-                    "sum_gbp": payments_30d_sum_gbp,
-                }
-            },
-            "messages": {
-                "last_7_days": messages_7d,
-                "threads_total": threads_total,
-            },
-            "reports": {
-                "open": reports_open,
-                "in_review": reports_in_review,
-            },
-            "categories": {
-                "top_active": top_categories
-            }
+            "listings": {"total": total_rooms, "active": active_rooms, "hidden": hidden_rooms, "deleted": deleted_rooms},
+            "users": {"total": total_users},
+            "bookings": {"last_7_days": bookings_7d, "last_30_days": bookings_30d, "upcoming_viewings": upcoming_viewings},
+            "payments": {"last_30_days": {"count": payments_30d_count, "sum_gbp": round(payments_30d_sum_gbp, 2)}},
+            "messages": {"last_7_days": messages_7d, "threads_total": threads_total},
+            "reports": {"open": reports_open, "in_review": reports_in_review},
+            "categories": {"top_active": top_categories},
         }
-        return Response(data, status=status.HTTP_200_OK)
-    
+        return Response(data)

@@ -265,6 +265,9 @@ class WebhookReceipt(models.Model):
     source = models.CharField(max_length=50, db_index=True)  # e.g. "provider"
     event_id = models.CharField(max_length=255, unique=True) # used for replay protection
     received_at = models.DateTimeField(auto_now_add=True)
+    payload = models.JSONField(null=True, blank=True)   # full parsed JSON payload
+    headers = models.JSONField(null=True, blank=True)   # selected headers for audit
+    received_at = models.DateTimeField(auto_now_add=True)
 
 
 class SavedRoom(models.Model):

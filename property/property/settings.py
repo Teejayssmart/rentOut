@@ -225,3 +225,16 @@ USE_TZ = True
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
 
+
+# --- Webhook secrets (read from environment) ---
+# Example env vars:
+#   WEBHOOK_SECRET=dev_default_secret
+#   STRIPE_WEBHOOK_SECRET=whsec_xxx
+
+
+WEBHOOK_SECRETS = {
+    "default": os.environ.get("WEBHOOK_SECRET", ""),           # fallback for unknown providers
+    "stripe":  os.environ.get("STRIPE_WEBHOOK_SECRET", ""),    # Stripe specific
+}
+#Later, set the variables in your OS or .env (but don’t commit secrets).
+
