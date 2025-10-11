@@ -1,8 +1,14 @@
+
+app_name = "api"
+
 from django.conf import settings
 from django.conf.urls.static import static
 from django.urls import path, include
 
+
 from rest_framework.routers import DefaultRouter
+
+
 
 from propertylist_app.api.views import (
     # Rooms & Categories
@@ -135,6 +141,9 @@ urlpatterns = [
     path("moderation/reports/<int:pk>/",     ModerationReportUpdateView.as_view(), name="moderation-report-update"),
     path("moderation/rooms/<int:pk>/status/", RoomModerationStatusView.as_view(),  name="moderation-room-status"),
     path("ops/stats/",                       OpsStatsView.as_view(),             name="ops-stats"),
+    
+    
+   
 ]
 
 # Serve media in development only

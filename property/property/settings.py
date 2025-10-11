@@ -64,6 +64,8 @@ INSTALLED_APPS = [
 
     "django_filters",
     "corsheaders",
+    
+    'drf_spectacular',
 ]
 
     
@@ -187,8 +189,22 @@ REST_FRAMEWORK = {
     "DEFAULT_RENDERER_CLASSES": (
         "rest_framework.renderers.JSONRenderer",
     ),
+    
+    "DEFAULT_VERSIONING_CLASS": "rest_framework.versioning.URLPathVersioning",
+    "DEFAULT_VERSION": "v1",
+    "ALLOWED_VERSIONS": ["v1", "v2"],
+    "VERSION_PARAM": "version",
+    
+    # Use Spectacular to generate the OpenAPI schema
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
 }
 
+SPECTACULAR_SETTINGS = {
+    "TITLE": "RentOut API",
+    "DESCRIPTION": "SpareRoom-style listings, bookings, chat, payments, and moderation.",
+    "VERSION": "1.0.0",
+    "SERVE_INCLUDE_SCHEMA": False,  # keep schema at /api/schema/
+}
 
 
 SIMPLE_JWT = {
@@ -215,7 +231,7 @@ EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
 DEFAULT_FROM_EMAIL = "no-reply@rentout.local"
 
 
-ALLOWED_HOSTS = ["localhost", "127.0.0.1"]
+ALLOWED_HOSTS = ["127.0.0.1", "localhost", ".ngrok-free.dev", ".ngrok-free.app", ".ngrok.io"]
 LANGUAGE_CODE = "en-gb"
 TIME_ZONE = "Europe/London"
 USE_I18N = True
