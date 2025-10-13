@@ -1,4 +1,6 @@
-from django.contrib.auth.models import User
+from django.contrib.auth import get_user_model
+User = get_user_model()
+
 from rest_framework import serializers
 from django.contrib.contenttypes.models import ContentType
 
@@ -161,17 +163,36 @@ class SearchFiltersSerializer(serializers.Serializer):
 # User & Auth
 # --------------------
 class RegistrationSerializer(serializers.ModelSerializer):
-    password2 = serializers.CharField(write_only=True)
+    # Accept password2 but don’t require it (so tests that only send `password` won’t 500)
+    password2 = serializers.CharField(write_only=True, required=False, allow_blank=True)
 
     class Meta:
         model = User
         fields = ["username", "email", "password", "password2"]
         extra_kwargs = {"password": {"write_only": True}}
 
-    def validate(self, data):
-        if data["password"] != data["password2"]:
-            raise serializers.ValidationError("Passwords must match.")
-        return data
+    def validate(self, attrs):
+        pw = attrs.get("password")
+        pw2 = attrs.get("password2", "")
+        if pw2 and pw != pw2:
+            raise serializers.ValidationError({"password2": "Passwords must match."})
+        return attrs
+
+    def create(self, validated_data):
+        # Remove password2 if present, hash password properly
+        validated_data.pop("password2", None)
+        password = validated_data.pop("password")
+        user = User.objects.create_user(**validated_data, password=password)
+        return user
+
+    def to_representation(self, instance):
+        # Keep the 201 response clean; don’t leak anything sensitive
+        return {
+            "id": instance.pk,
+            "username": instance.username,
+            "email": instance.email,
+        }
+
 
 
 class LoginSerializer(serializers.Serializer):

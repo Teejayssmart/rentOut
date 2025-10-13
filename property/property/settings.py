@@ -172,6 +172,7 @@ REST_FRAMEWORK = {
     ),
     "DEFAULT_FILTER_BACKENDS": (
         "django_filters.rest_framework.DjangoFilterBackend",
+         "rest_framework.filters.OrderingFilter",
     ),
     "DEFAULT_THROTTLE_CLASSES": (
         "rest_framework.throttling.AnonRateThrottle",
@@ -197,6 +198,10 @@ REST_FRAMEWORK = {
     
     # Use Spectacular to generate the OpenAPI schema
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+    
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+    "EXCEPTION_HANDLER": "propertylist_app.api.exceptions.custom_exception_handler",
+
 }
 
 SPECTACULAR_SETTINGS = {

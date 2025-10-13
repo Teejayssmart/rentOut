@@ -69,6 +69,8 @@ from propertylist_app.validators import (
 
 # API plumbing
 from propertylist_app.api.pagination import RoomLOPagination
+# (Moved these imports out of class bodies so DRF actually sees them)
+from propertylist_app.api.pagination import RoomPagination, RoomCPagination
 from propertylist_app.api.permissions import IsAdminOrReadOnly, IsReviewUserOrReadOnly, IsOwnerOrReadOnly
 from propertylist_app.api.serializers import (
     RoomSerializer,
@@ -235,6 +237,7 @@ class RoomAV(APIView):
         ser.is_valid(raise_exception=True)
         ser.save(property_owner=request.user)
         return Response(ser.data, status=status.HTTP_201_CREATED)
+    # NOTE: pagination/order settings on APIView are ignored by DRF; use RoomListGV for that.
 
 
 class RoomDetailAV(APIView):
@@ -835,8 +838,13 @@ class MessageListCreateView(generics.ListCreateAPIView):
     """GET/POST /api/messages/threads/<thread_id>/messages/"""
     serializer_class = MessageSerializer
     permission_classes = [permissions.IsAuthenticated]
-    pagination_class = RoomLOPagination
+    # Use cursor pagination for smooth scrolling (import at top)
+    pagination_class = RoomCPagination
     throttle_classes = [UserRateThrottle]
+
+    # Sorting: newest activity first
+    ordering_fields = ["updated", "created", "id"]
+    ordering = ["-updated"]
 
     def get_queryset(self):
         thread_id = self.kwargs["thread_id"]
@@ -901,6 +909,10 @@ class BookingListCreateView(generics.ListCreateAPIView):
     permission_classes = [permissions.IsAuthenticated]
     pagination_class = RoomLOPagination
     throttle_classes = [UserRateThrottle]
+
+    # Enable ordering via query param (?ordering=-created_at or ?ordering=start)
+    ordering_fields = ["created_at", "start"]
+    ordering = ["-created_at"]
 
     def get_queryset(self):
         return Booking.objects.filter(user=self.request.user).order_by("-created_at")
