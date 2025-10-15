@@ -20,7 +20,7 @@ from rest_framework import (
     serializers,  # for EmailField validation
 )
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import ValidationError, Throttled
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.permissions import (
     IsAuthenticated,
@@ -35,6 +35,11 @@ from rest_framework_simplejwt.tokens import RefreshToken
 
 # Services
 from propertylist_app.services.geo import geocode_postcode_cached
+
+from propertylist_app.services.security import (
+    is_locked_out, register_login_failure, clear_login_failures
+)
+from propertylist_app.services.captcha import verify_captcha
 
 # Models
 from propertylist_app.models import (
@@ -68,9 +73,7 @@ from propertylist_app.validators import (
 )
 
 # API plumbing
-from propertylist_app.api.pagination import RoomLOPagination
-# (Moved these imports out of class bodies so DRF actually sees them)
-from propertylist_app.api.pagination import RoomPagination, RoomCPagination
+from propertylist_app.api.pagination import RoomLOPagination, RoomCPagination
 from propertylist_app.api.permissions import IsAdminOrReadOnly, IsReviewUserOrReadOnly, IsOwnerOrReadOnly
 from propertylist_app.api.serializers import (
     RoomSerializer,
@@ -84,7 +87,18 @@ from propertylist_app.api.serializers import (
     PaymentSerializer,
     ReportSerializer,
 )
-from propertylist_app.api.throttling import ReviewCreateThrottle, ReviewListThrottle
+from propertylist_app.api.throttling import (
+    ReviewCreateThrottle,
+    ReviewListThrottle,
+    LoginScopedThrottle,
+    RegisterScopedThrottle,
+    PasswordResetScopedThrottle,
+    PasswordResetConfirmScopedThrottle,
+    ReportCreateScopedThrottle,
+    MessagingScopedThrottle,
+    RegisterAnonThrottle,   # anon/IP throttle for registration
+    MessageUserThrottle,    # user throttle for per-user messaging
+)
 
 # Local serializers
 from .serializers import (
@@ -456,21 +470,54 @@ class ProviderWebhookView(APIView):
 class RegistrationView(generics.CreateAPIView):
     serializer_class = RegistrationSerializer
     permission_classes = [permissions.AllowAny]
+    # Use our explicit anon throttle (IP-based) so test 3rd call gets 429.
+    throttle_classes = [RegisterAnonThrottle]
+
+    def create(self, request, *args, **kwargs):
+        # Throttling handled by DRF via RegisterAnonThrottle
+        if getattr(settings, "ENABLE_CAPTCHA", False):
+            token = (request.data.get("captcha_token") or "").strip()
+            if not verify_captcha(token, request.META.get("REMOTE_ADDR", "")):
+                return Response({"detail": "CAPTCHA verification failed."}, status=status.HTTP_400_BAD_REQUEST)
+        return super().create(request, *args, **kwargs)
 
 
 class LoginView(APIView):
     permission_classes = [permissions.AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "login"
 
     def post(self, request):
+        if settings.ENABLE_CAPTCHA:
+            token = (request.data.get("captcha_token") or "").strip()
+            if not verify_captcha(token, request.META.get("REMOTE_ADDR", "")):
+                return Response({"detail": "CAPTCHA verification failed."}, status=status.HTTP_400_BAD_REQUEST)
+
         ser = LoginSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
 
-        user = authenticate(request, username=ser.validated_data["username"], password=ser.validated_data["password"])
-        if not user:
-            return Response({"detail": "Invalid credentials."}, status=status.HTTP_400_BAD_REQUEST)
+        username = ser.validated_data["username"]
+        password = ser.validated_data["password"]
+        ip = request.META.get("REMOTE_ADDR", "")
 
-        refresh = RefreshToken.for_user(user)
-        return Response({"refresh": str(refresh), "access": str(refresh.access_token)})
+        # Try to authenticate first
+        user = authenticate(request, username=username, password=password)
+        if user:
+            # Success → clear any failures/lockout and issue tokens
+            clear_login_failures(ip, username)
+            refresh = RefreshToken.for_user(user)
+            return Response(
+                {"refresh": str(refresh), "access": str(refresh.access_token)},
+                status=status.HTTP_200_OK,
+            )
+
+        # Failed auth → only now check lockout and record failure
+        if is_locked_out(ip, username):
+            return Response({"detail": "Too many failed attempts. Try again later."},
+                            status=status.HTTP_429_TOO_MANY_REQUESTS)
+
+        register_login_failure(ip, username)
+        return Response({"detail": "Invalid credentials."}, status=status.HTTP_400_BAD_REQUEST)
 
 
 class LogoutView(APIView):
@@ -489,8 +536,14 @@ class LogoutView(APIView):
 
 class PasswordResetRequestView(APIView):
     permission_classes = [permissions.AllowAny]
+    throttle_classes = [PasswordResetScopedThrottle]
 
     def post(self, request):
+        if settings.ENABLE_CAPTCHA:
+            token = (request.data.get("captcha_token") or "").strip()
+            if not verify_captcha(token, request.META.get("REMOTE_ADDR")):
+                return Response({"detail": "CAPTCHA verification failed."}, status=status.HTTP_400_BAD_REQUEST)
+
         ser = PasswordResetRequestSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
         return Response({"detail": "Password reset email would be sent"})
@@ -498,6 +551,7 @@ class PasswordResetRequestView(APIView):
 
 class PasswordResetConfirmView(APIView):
     permission_classes = [permissions.AllowAny]
+    throttle_classes = [PasswordResetConfirmScopedThrottle]
 
     def post(self, request):
         ser = PasswordResetConfirmSerializer(data=request.data)
@@ -809,7 +863,7 @@ class MessageThreadListCreateView(generics.ListCreateAPIView):
     serializer_class = MessageThreadSerializer
     permission_classes = [permissions.IsAuthenticated]
     pagination_class = RoomLOPagination
-    throttle_classes = [UserRateThrottle]
+    throttle_classes = [UserRateThrottle, MessagingScopedThrottle]
 
     def get_queryset(self):
         return MessageThread.objects.filter(participants=self.request.user).prefetch_related("participants")
@@ -835,14 +889,11 @@ class MessageThreadListCreateView(generics.ListCreateAPIView):
 
 
 class MessageListCreateView(generics.ListCreateAPIView):
-    """GET/POST /api/messages/threads/<thread_id>/messages/"""
     serializer_class = MessageSerializer
     permission_classes = [permissions.IsAuthenticated]
-    # Use cursor pagination for smooth scrolling (import at top)
     pagination_class = RoomCPagination
-    throttle_classes = [UserRateThrottle]
-
-    # Sorting: newest activity first
+    # Use explicit per-user throttle so the 3rd call returns 429
+    throttle_classes = [MessageUserThrottle]
     ordering_fields = ["updated", "created", "id"]
     ordering = ["-updated"]
 
@@ -851,7 +902,10 @@ class MessageListCreateView(generics.ListCreateAPIView):
         return Message.objects.filter(thread__id=thread_id, thread__participants=self.request.user)
 
     def perform_create(self, serializer):
-        thread = get_object_or_404(MessageThread.objects.filter(participants=self.request.user), id=self.kwargs["thread_id"])
+        thread = get_object_or_404(
+            MessageThread.objects.filter(participants=self.request.user),
+            id=self.kwargs["thread_id"]
+        )
         serializer.save(thread=thread, sender=self.request.user)
 
 
@@ -1302,9 +1356,14 @@ class ReportCreateView(generics.CreateAPIView):
     """
     serializer_class = ReportSerializer
     permission_classes = [permissions.IsAuthenticated]
-    throttle_classes = [UserRateThrottle]
+    throttle_classes = [ReportCreateScopedThrottle]
+    throttle_scope = "report-create"
 
     def perform_create(self, serializer):
+        if settings.ENABLE_CAPTCHA:
+            token = (self.request.data.get("captcha_token") or "").strip()
+            if not verify_captcha(token, self.request.META.get("REMOTE_ADDR")):
+                raise ValidationError({"captcha_token": "CAPTCHA verification failed."})
         report = serializer.save()
         # Audit (align with AuditLog model fields)
         try:

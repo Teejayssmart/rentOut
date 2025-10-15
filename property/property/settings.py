@@ -15,9 +15,6 @@ from datetime import timedelta
 import os
 from dotenv import load_dotenv
 
-
-
-
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -26,7 +23,6 @@ load_dotenv(BASE_DIR / ".env")
 
 # Cache TTL for geocode results (seconds)
 GEO_CACHE_TTL_SECONDS = 60 * 60 * 24 * 7  # 7 days
-
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
@@ -44,11 +40,9 @@ STRIPE_PUBLISHABLE_KEY = os.getenv("STRIPE_PUBLISHABLE_KEY", "")
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
 SITE_URL = os.getenv("SITE_URL", "http://127.0.0.1:8000")
 
-
 # Application definition
 
 INSTALLED_APPS = [
-    
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -67,9 +61,6 @@ INSTALLED_APPS = [
     
     'drf_spectacular',
 ]
-
-    
-
 
 MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",
@@ -101,7 +92,6 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'property.wsgi.application'
 
-
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
@@ -111,7 +101,6 @@ DATABASES = {
         'NAME': BASE_DIR / 'db.sqlite3',
     }
 }
-
 
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
@@ -131,7 +120,6 @@ AUTH_PASSWORD_VALIDATORS = [
     },
 ]
 
-
 # Internationalization
 # https://docs.djangoproject.com/en/5.2/topics/i18n/
 
@@ -139,11 +127,9 @@ LANGUAGE_CODE = 'en-uk'
 
 TIME_ZONE = "Europe/London"
 
-
 USE_I18N = True
 
 USE_TZ = True
-
 
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
@@ -153,15 +139,10 @@ STATIC_URL = 'static/'
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
-
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
-
-# REST_FRAMEWORK = {
-
-# }
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
@@ -172,36 +153,47 @@ REST_FRAMEWORK = {
     ),
     "DEFAULT_FILTER_BACKENDS": (
         "django_filters.rest_framework.DjangoFilterBackend",
-         "rest_framework.filters.OrderingFilter",
+        "rest_framework.filters.OrderingFilter",
     ),
     "DEFAULT_THROTTLE_CLASSES": (
         "rest_framework.throttling.AnonRateThrottle",
         "rest_framework.throttling.UserRateThrottle",
+        "rest_framework.throttling.ScopedRateThrottle",
     ),
     "DEFAULT_THROTTLE_RATES": {
-        "anon": "5/day",
-        "user": "10/day",
-        "review-create": "1/day",
-        "review-list": "10/day",
-        "review-detail": "2/day",
+        # global
+        "anon": "50/hour",
+        "user": "200/hour",
+
+        # fine-grained endpoint scopes (ScopedRateThrottle)
+        "login": "10/hour",               # POST /auth/login/  (plus custom lockout below)
+        "register": "5/hour",             # POST /auth/register/
+        "password-reset": "5/hour",       # POST /auth/password-reset/
+        "password-reset-confirm": "10/hour",
+        "report-create": "20/hour",       # POST /reports/
+        "review-create": "10/hour",
+        "review-list": "200/hour",
+        "review-detail": "100/hour",
+        "messaging": "120/hour",          # threads/messages POST
+        "register_anon": "2/hour",   # anon registration: allow 2 per hour → 3rd call = 429
+        "message_user": "2/hour",
     },
+    
+    
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.LimitOffsetPagination",
     "PAGE_SIZE": 20,
     "DEFAULT_RENDERER_CLASSES": (
         "rest_framework.renderers.JSONRenderer",
     ),
-    
     "DEFAULT_VERSIONING_CLASS": "rest_framework.versioning.URLPathVersioning",
     "DEFAULT_VERSION": "v1",
     "ALLOWED_VERSIONS": ["v1", "v2"],
     "VERSION_PARAM": "version",
-    
+
     # Use Spectacular to generate the OpenAPI schema
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
-    
-    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
-    "EXCEPTION_HANDLER": "propertylist_app.api.exceptions.custom_exception_handler",
 
+    "EXCEPTION_HANDLER": "propertylist_app.api.exceptions.custom_exception_handler",
 }
 
 SPECTACULAR_SETTINGS = {
@@ -211,7 +203,6 @@ SPECTACULAR_SETTINGS = {
     "SERVE_INCLUDE_SCHEMA": False,  # keep schema at /api/schema/
 }
 
-
 SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(minutes=15),
     "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
@@ -220,6 +211,17 @@ SIMPLE_JWT = {
     "AUTH_HEADER_TYPES": ("Bearer",),
 }
 
+# --- Security/Abuse controls ---
+# Toggle CAPTCHA for sensitive endpoints (login/register/password-reset, report)
+ENABLE_CAPTCHA = os.getenv("ENABLE_CAPTCHA", "false").lower() in {"1", "true", "yes"}
+
+# Choose "recaptcha" or "hcaptcha" if you wire a real provider later.
+CAPTCHA_PROVIDER = os.getenv("CAPTCHA_PROVIDER", "recaptcha")
+CAPTCHA_SECRET   = os.getenv("CAPTCHA_SECRET", "")   # e.g., reCAPTCHA secret key
+
+# Login attempt lockout (independent of DRF throttling)
+LOGIN_FAIL_LIMIT = int(os.getenv("LOGIN_FAIL_LIMIT", "5"))              # after 5 failed attempts
+LOGIN_LOCKOUT_SECONDS = int(os.getenv("LOGIN_LOCKOUT_SECONDS", "900"))  # 15 minutes
 
 # allow only the origins you actually use
 CORS_ALLOWED_ORIGINS = [
@@ -231,10 +233,8 @@ CSRF_TRUSTED_ORIGINS = [
     "http://127.0.0.1:3000",
 ]
 
-
 EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
 DEFAULT_FROM_EMAIL = "no-reply@rentout.local"
-
 
 ALLOWED_HOSTS = ["127.0.0.1", "localhost", ".ngrok-free.dev", ".ngrok-free.app", ".ngrok.io"]
 LANGUAGE_CODE = "en-gb"
@@ -242,20 +242,26 @@ TIME_ZONE = "Europe/London"
 USE_I18N = True
 USE_TZ = True
 
-
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
-
 
 # --- Webhook secrets (read from environment) ---
 # Example env vars:
 #   WEBHOOK_SECRET=dev_default_secret
 #   STRIPE_WEBHOOK_SECRET=whsec_xxx
 
-
 WEBHOOK_SECRETS = {
     "default": os.environ.get("WEBHOOK_SECRET", ""),           # fallback for unknown providers
     "stripe":  os.environ.get("STRIPE_WEBHOOK_SECRET", ""),    # Stripe specific
 }
-#Later, set the variables in your OS or .env (but don’t commit secrets).
+# Later, set the variables in your OS or .env (but don’t commit secrets).
+
+
+# settings.py (add this)
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+        "LOCATION": "throttle-cache",
+    }
+}
 

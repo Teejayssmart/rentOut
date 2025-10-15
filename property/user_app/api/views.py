@@ -9,6 +9,9 @@ from user_app.api.serializers import RegistrationSerializer
 from user_app import models
 
 
+from rest_framework import filters  # if not already imported
+from propertylist_app.api.pagination import RoomPagination, RoomCPagination, RoomLOPagination
+
 @api_view(['POST',])
 def logout_view(request):
    
