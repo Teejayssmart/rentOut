@@ -1,21 +1,22 @@
-from django.db import models
-from django.core.validators import MinValueValidator, MaxValueValidator
-from django.contrib.auth.models import User
-from django.utils import timezone
-from django.utils.text import slugify  # ⟵ add near your other imports
-from django.core.exceptions import ValidationError
-from django.db.models.functions import Lower  # fix: needed for UniqueConstraint on Lower()
-from django.db.models import Q, F
+from datetime import date
 from decimal import Decimal
 
-from django.contrib.contenttypes.models import ContentType
-from django.contrib.contenttypes.fields import GenericForeignKey
 from django.conf import settings
+from django.contrib.auth.models import User
+from django.contrib.contenttypes.fields import GenericForeignKey
+from django.contrib.contenttypes.models import ContentType
+from django.core.exceptions import ValidationError
+from django.core.validators import MinValueValidator, MaxValueValidator
+from django.db import models
+from django.db.models import Q, F, CheckConstraint
+from django.db.models.functions import Lower
+from django.utils import timezone
+from django.utils.text import slugify
 
 
-
-
-
+# ---------------------------
+# Soft-delete base + queryset
+# ---------------------------
 class SoftDeleteQuerySet(models.QuerySet):
     def alive(self):
         qs = self.filter(is_deleted=False)
@@ -25,12 +26,10 @@ class SoftDeleteQuerySet(models.QuerySet):
             if "status" in field_names:
                 qs = qs.filter(status="active")
         except Exception:
-            # Be defensive: if anything odd happens, fall back to is_deleted only
             pass
         return qs
 
-
-    def dead(self):    
+    def dead(self):
         return self.filter(is_deleted=True)
 
 
@@ -53,24 +52,30 @@ class SoftDeleteModel(models.Model):
         self.save(update_fields=["is_deleted", "deleted_at"])
 
 
-
-
+# -------------
+# RoomCategorie
+# -------------
 class RoomCategorie(models.Model):
-    key = models.CharField(max_length=30, unique=True)
+    key = models.CharField(max_length=30, unique=True, blank=True, default="")
     name = models.CharField(max_length=30)
-    about = models.TextField(max_length=150)
-    website = models.URLField(max_length=100)
-
-    # NEW
+    about = models.TextField(max_length=150, blank=True, default="")
+    website = models.URLField(max_length=100, blank=True, default="")
     slug = models.SlugField(max_length=40, unique=True, null=True, blank=True, db_index=True)
-
     active = models.BooleanField(default=True, db_index=True)
 
-    def __str__(self):
-        return self.name
-
     def save(self, *args, **kwargs):
-        # auto-generate slug from name if not provided
+        # --- key: required unique; derive from name if empty ---
+        if not (self.key or "").strip():
+            base = slugify(self.name) or "category"
+            candidate = base[:30]  # enforce max_length
+            i = 2
+            while RoomCategorie.objects.filter(key=candidate).exclude(pk=self.pk).exists():
+                suffix = f"-{i}"
+                candidate = (base[: (30 - len(suffix))] + suffix)
+                i += 1
+            self.key = candidate
+
+        # --- slug: keep it unique as well ---
         if not self.slug:
             base = slugify(self.name) or slugify(self.key)
             candidate = base
@@ -79,18 +84,23 @@ class RoomCategorie(models.Model):
                 candidate = f"{base}-{i}"
                 i += 1
             self.slug = candidate
+
         super().save(*args, **kwargs)
 
+    def __str__(self):
+        return self.name
 
 
-
+# ----
+# Room
+# ----
 class Room(SoftDeleteModel):
     title = models.CharField(max_length=200)
     description = models.TextField()
     price_per_month = models.DecimalField(max_digits=8, decimal_places=2)
     location = models.CharField(max_length=255)
     category = models.ForeignKey(RoomCategorie, on_delete=models.CASCADE, related_name="room_info")
-    available_from = models.DateField()
+    available_from = models.DateField(default=date.today)
     is_available = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -98,25 +108,21 @@ class Room(SoftDeleteModel):
     furnished = models.BooleanField(default=False)
     bills_included = models.BooleanField(default=False)
     property_owner = models.ForeignKey(User, on_delete=models.CASCADE, related_name="rooms")
-    image = models.ImageField(upload_to='room_images/', null=True, blank=True)
-    number_of_bedrooms = models.IntegerField()
-    number_of_bathrooms = models.IntegerField()
-    property_type = models.CharField(max_length=100, choices=[
-        ('flat', 'Flat'),
-        ('house', 'House'),
-        ('studio', 'Studio'),
-    ])
+    image = models.ImageField(upload_to="room_images/", null=True, blank=True)
+    number_of_bedrooms = models.IntegerField(default=1)
+    number_of_bathrooms = models.IntegerField(default=1)
+    property_type = models.CharField(
+        max_length=100,
+        choices=[("flat", "Flat"), ("house", "House"), ("studio", "Studio")],
+    )
     parking_available = models.BooleanField(default=False)
     avg_rating = models.FloatField(default=0)
     number_rating = models.IntegerField(default=0)
     latitude = models.FloatField(null=True, blank=True)
     longitude = models.FloatField(null=True, blank=True)
     paid_until = models.DateField(null=True, blank=True)  # listing is paid/active until this date
-    STATUS_CHOICES = (("active", "Active"),("hidden", "Hidden"),)
+    STATUS_CHOICES = (("active", "Active"), ("hidden", "Hidden"))
     status = models.CharField(max_length=16, choices=STATUS_CHOICES, default="active")
-
-
-    
 
     def clean(self):
         super().clean()
@@ -127,9 +133,9 @@ class Room(SoftDeleteModel):
         constraints = [
             # enforce uniqueness of LOWER(title) **only** for non-deleted rows
             models.UniqueConstraint(
-                Lower('title'),
-                condition=models.Q(is_deleted=False),
-                name='uq_room_title_lower_alive',
+                Lower("title"),
+                condition=Q(is_deleted=False),
+                name="uq_room_title_lower_alive",
             ),
         ]
 
@@ -137,6 +143,9 @@ class Room(SoftDeleteModel):
         return self.title
 
 
+# ------
+# Review
+# ------
 class Review(models.Model):
     review_user = models.ForeignKey(User, on_delete=models.CASCADE)
     rating = models.PositiveIntegerField(validators=[MinValueValidator(1), MaxValueValidator(5)])
@@ -149,7 +158,6 @@ class Review(models.Model):
     class Meta:
         ordering = ["-created"]
         constraints = [
-            # one review per (room, user)
             models.UniqueConstraint(fields=["room", "review_user"], name="uq_review_once_per_room"),
         ]
         indexes = [
@@ -161,17 +169,20 @@ class Review(models.Model):
         return f"{self.rating} | {self.room.title} | {self.review_user}"
 
 
-
+# -----------
+# UserProfile
+# -----------
 class UserProfile(models.Model):
-    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='profile')
-    # E.164 numbers are up to 15 digits after '+'
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="profile")
     phone = models.CharField(max_length=15, unique=True, null=True, blank=True)
-    
 
     def __str__(self):
         return f"{self.user.username} profile"
 
 
+# --------
+# AuditLog
+# --------
 class AuditLog(models.Model):
     user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
     action = models.CharField(max_length=200)
@@ -183,11 +194,9 @@ class AuditLog(models.Model):
         return f"{self.timestamp} - {self.user} - {self.action}"
 
 
-
-
-
-
-
+# ---------------
+# IdempotencyKey
+# ---------------
 class IdempotencyKey(models.Model):
     user_id = models.IntegerField(db_index=True)
     key = models.CharField(max_length=200, db_index=True)
@@ -199,54 +208,43 @@ class IdempotencyKey(models.Model):
         unique_together = ("user_id", "key", "action")
 
 
+# ----------
+# RoomImage
+# ----------
 class RoomImage(models.Model):
-    room = models.ForeignKey('Room', on_delete=models.PROTECT) 
-    image = models.ImageField(upload_to='room_images/', null=True, blank=True)
+    room = models.ForeignKey("Room", on_delete=models.PROTECT)
+    image = models.ImageField(upload_to="room_images/", null=True, blank=True)
     uploaded_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
         return f"Photo {self.id} for {self.room.title}"
-    
-# imports at the top of models.py (make sure these two exist)
-from django.db import models
 
 
+# -----------------
+# AvailabilitySlot
+# -----------------
 class AvailabilitySlot(models.Model):
-    room = models.ForeignKey(
-        "Room",
-        related_name="availability_slots",
-        on_delete=models.CASCADE,
-    )
+    room = models.ForeignKey("Room", related_name="availability_slots", on_delete=models.CASCADE)
     start = models.DateTimeField()
     end = models.DateTimeField()
     max_bookings = models.PositiveIntegerField(default=1)
-
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         ordering = ("start",)
         constraints = [
-            # end must be strictly after start
-            models.CheckConstraint(
-                check=Q(end__gt=F("start")),
-                name="slot_end_after_start",
-            ),
-            # capacity must be >= 1
-            models.CheckConstraint(
-                check=Q(max_bookings__gte=1),
-                name="slot_max_bookings_gte_1",
-            ),
-            # avoid duplicate identical slots for the same room
-            models.UniqueConstraint(
-                fields=["room", "start", "end"],
-                name="unique_slot_room_start_end",
-            ),
+            CheckConstraint(check=Q(end__gt=F("start")), name="slot_end_after_start"),
+            CheckConstraint(check=Q(max_bookings__gte=1), name="slot_max_bookings_gte_1"),
+            models.UniqueConstraint(fields=["room", "start", "end"], name="unique_slot_room_start_end"),
         ]
 
     def __str__(self):
         return f"{self.room} | {self.start:%Y-%m-%d %H:%M} → {self.end:%Y-%m-%d %H:%M} (cap {self.max_bookings})"
 
 
+# -------
+# Booking
+# -------
 class Booking(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="bookings")
     room = models.ForeignKey(Room, on_delete=models.CASCADE, related_name="bookings")
@@ -257,19 +255,23 @@ class Booking(models.Model):
     canceled_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
-        indexes = [
-            models.Index(fields=["room", "start", "end"]),
-        ]
+        indexes = [models.Index(fields=["room", "start", "end"])]
 
+
+# ---------------
+# WebhookReceipt
+# ---------------
 class WebhookReceipt(models.Model):
-    source = models.CharField(max_length=50, db_index=True)  # e.g. "provider"
-    event_id = models.CharField(max_length=255, unique=True) # used for replay protection
+    source = models.CharField(max_length=50, db_index=True)   # e.g. "provider"
+    event_id = models.CharField(max_length=255, unique=True)  # used for replay protection
     received_at = models.DateTimeField(auto_now_add=True)
-    payload = models.JSONField(null=True, blank=True)   # full parsed JSON payload
-    headers = models.JSONField(null=True, blank=True)   # selected headers for audit
-    received_at = models.DateTimeField(auto_now_add=True)
+    payload = models.JSONField(null=True, blank=True)         # full parsed JSON payload
+    headers = models.JSONField(null=True, blank=True)         # selected headers for audit
 
 
+# ---------
+# SavedRoom
+# ---------
 class SavedRoom(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="saved_rooms_links")
     room = models.ForeignKey("Room", on_delete=models.CASCADE, related_name="saved_by_links")
@@ -282,61 +284,66 @@ class SavedRoom(models.Model):
             models.Index(fields=["room"]),
         ]
 
-   
     def __str__(self):
         return f"{getattr(self.user, 'username', 'user')} → {getattr(self, 'room_id', '∅')}"
-    
-    
-    
+
+
+# -------------
+# MessageThread
+# -------------
 class MessageThread(models.Model):
     participants = models.ManyToManyField(User, related_name="message_threads")
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
         users = ", ".join(self.participants.values_list("username", flat=True)[:2])
-        return f"Thread {self.id} ({users}…)" 
+        return f"Thread {self.id} ({users}…)"
 
 
+# -------
+# Message
+# -------
 class Message(models.Model):
     thread = models.ForeignKey(MessageThread, on_delete=models.CASCADE, related_name="messages")
     sender = models.ForeignKey(User, on_delete=models.CASCADE, related_name="sent_messages")
     body = models.TextField()
-    created_at = models.DateTimeField(auto_now_add=True)
+    created = models.DateTimeField(auto_now_add=True, db_index=True)  # ← name is "created"
 
     class Meta:
-        ordering = ["created_at"]
+        ordering = ["created"]
         indexes = [
-            models.Index(fields=["thread", "created_at"]),
+            models.Index(fields=["thread", "created"]),
         ]
-        
+
+
+
 class MessageRead(models.Model):
-    """
-    Records that a given user has read a specific message.
-    """
+    """Records that a given user has read a specific message."""
     message = models.ForeignKey("Message", on_delete=models.CASCADE, related_name="reads")
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="message_reads")
     read_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         unique_together = ("message", "user")
-        indexes = [
-            models.Index(fields=["user", "message"]),
-        ]
+        indexes = [models.Index(fields=["user", "message"])]
 
     def __str__(self):
         return f"Read m#{self.message_id} by {self.user_id} at {self.read_at:%Y-%m-%d %H:%M:%S}"
 
 
+# -------
+# Payment
+# -------
 class Payment(models.Model):
     class Provider(models.TextChoices):
         STRIPE = "stripe", "Stripe"
 
     class Status(models.TextChoices):
         REQUIRES_PAYMENT = "requires_payment_method", "Requires payment"
-        REQUIRES_ACTION  = "requires_action", "Requires action"
-        PROCESSING       = "processing", "Processing"
-        SUCCEEDED        = "succeeded", "Succeeded"
-        CANCELED         = "canceled", "Canceled"
+        REQUIRES_ACTION = "requires_action", "Requires action"
+        PROCESSING = "processing", "Processing"
+        SUCCEEDED = "succeeded", "Succeeded"
+        CANCELED = "canceled", "Canceled"
 
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="payments")
     room = models.ForeignKey("Room", on_delete=models.SET_NULL, null=True, blank=True, related_name="payments")
@@ -345,7 +352,6 @@ class Payment(models.Model):
     amount = models.DecimalField(max_digits=9, decimal_places=2, default=Decimal("0.00"))
     currency = models.CharField(max_length=10, default="GBP")
 
-    # Stripe-specific references (store at least one of these)
     stripe_payment_intent_id = models.CharField(max_length=200, blank=True, default="")
     stripe_checkout_session_id = models.CharField(max_length=200, blank=True, default="")
 
@@ -354,7 +360,6 @@ class Payment(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
-    # optional: for quick lookups / housekeeping
     class Meta:
         indexes = [
             models.Index(fields=["user", "created_at"]),
@@ -366,9 +371,13 @@ class Payment(models.Model):
     def __str__(self):
         who = getattr(self.user, "username", self.user_id)
         return f"Payment {self.id} {self.amount} {self.currency} by {who} [{self.status}]"
-    
-    
-    
+
+
+# ----------------
+# GDPR / Privacy
+# ----------------
+
+# --- Reports / Moderation ---
 class Report(models.Model):
     """
     Generic reports for moderation (Room, Review, Message, User, etc).
@@ -386,19 +395,28 @@ class Report(models.Model):
         ("rejected", "Rejected"),
     )
 
-    reporter = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="reports")
+    reporter = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="reports",
+    )
     target_type = models.CharField(max_length=16, choices=TARGET_CHOICES)
+
     # Generic relation
     content_type = models.ForeignKey(ContentType, on_delete=models.CASCADE)
     object_id = models.PositiveIntegerField()
     target = GenericForeignKey("content_type", "object_id")
 
-    reason = models.CharField(max_length=64)           # e.g., "spam", "abuse", "scam", "inaccurate", "other"
+    reason = models.CharField(max_length=64)   # e.g., "spam", "abuse", "scam", "inaccurate", "other"
     details = models.TextField(blank=True)
 
     status = models.CharField(max_length=16, choices=STATUS_CHOICES, default="open")
     handled_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="handled_reports"
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="handled_reports",
     )
     resolution_notes = models.TextField(blank=True)
 
@@ -414,6 +432,24 @@ class Report(models.Model):
 
     def __str__(self):
         return f"Report #{self.pk} {self.target_type}:{self.object_id} ({self.status})"
-    
 
 
+class DataExport(models.Model):
+    """Tracks user data exports and where the ZIP is stored (under MEDIA_ROOT)."""
+    STATUS_CHOICES = (("queued", "queued"), ("processing", "processing"), ("ready", "ready"), ("failed", "failed"))
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="data_exports")
+    created_at = models.DateTimeField(auto_now_add=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="queued")
+    file_path = models.CharField(max_length=512, blank=True, default="")  # media-relative path
+    expires_at = models.DateTimeField(null=True, blank=True)
+    error = models.TextField(blank=True, default="")
+
+    def is_expired(self):
+        return bool(self.expires_at and timezone.now() >= self.expires_at)
+
+
+class GDPRTombstone(models.Model):
+    """Minimal marker that a user was anonymised/erased (store NO PII)."""
+    user_id_hash = models.CharField(max_length=128)
+    anonymised_at = models.DateTimeField(auto_now_add=True)
+    note = models.CharField(max_length=255, blank=True, default="")

@@ -265,3 +265,9 @@ CACHES = {
     }
 }
 
+# --- GDPR policy knobs ---
+GDPR_RETENTION = {
+    "export_link_days": 7,   # Expire export links after 7 days
+}
+GDPR_HASH_SALT = os.getenv("GDPR_HASH_SALT", "change-this-in-prod")
+

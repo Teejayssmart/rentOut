@@ -201,16 +201,16 @@ class MessageThreadAdmin(admin.ModelAdmin):
 
 @admin.register(Message)
 class MessageAdmin(admin.ModelAdmin):
-    list_display = ("id", "thread", "sender", "short_body", "created_at")
-    list_filter = ("sender", "thread")
-    search_fields = ("sender__username", "body")
-    readonly_fields = ("created_at",)
+    list_display = ("id", "thread", "sender", "short_body", "created")
+    readonly_fields = ("created",)
+    search_fields = ("body", "sender__username", "thread__id")
+    list_select_related = ("thread", "sender")
+    ordering = ("-created",)
 
     @admin.display(description="Body")
     def short_body(self, obj):
         text = obj.body or ""
         return (text[:60] + "…") if len(text) > 60 else text
-    
     
 @admin.register(AvailabilitySlot)
 class AvailabilitySlotAdmin(admin.ModelAdmin):

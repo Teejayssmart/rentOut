@@ -52,6 +52,9 @@ from propertylist_app.api.views import (
     # Reports / Moderation / Ops
     ReportCreateView, ModerationReportListView, ModerationReportUpdateView,
     RoomModerationStatusView, OpsStatsView,
+    
+    # --- GDPR / Privacy ---
+    DataExportStartView, DataExportLatestView, AccountDeletePreviewView, AccountDeleteConfirmView
 )
 
 router = DefaultRouter()
@@ -142,9 +145,16 @@ urlpatterns = [
     path("moderation/rooms/<int:pk>/status/", RoomModerationStatusView.as_view(),  name="moderation-room-status"),
     path("ops/stats/",                       OpsStatsView.as_view(),             name="ops-stats"),
     
+    # --- Privacy / GDPR ---
+    path("users/me/export/",           DataExportStartView.as_view(),     name="me-export-start"),
+    path("users/me/export/latest/",    DataExportLatestView.as_view(),    name="me-export-latest"),
+    path("users/me/delete/preview/",   AccountDeletePreviewView.as_view(), name="me-delete-preview"),
+    path("users/me/delete/confirm/",   AccountDeleteConfirmView.as_view(), name="me-delete-confirm"),
+]
+    
     
    
-]
+
 
 # Serve media in development only
 if settings.DEBUG:

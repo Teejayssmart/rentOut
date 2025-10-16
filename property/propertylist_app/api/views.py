@@ -19,6 +19,7 @@ from rest_framework import (
     viewsets,
     serializers,  # for EmailField validation
 )
+
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.exceptions import ValidationError, Throttled
 from rest_framework.parsers import MultiPartParser, FormParser
@@ -59,6 +60,7 @@ from propertylist_app.models import (
     WebhookReceipt,
     Report,
     AuditLog,
+    DataExport,
 )
 
 # Validators / helpers
@@ -86,6 +88,8 @@ from propertylist_app.api.serializers import (
     AvailabilitySlotSerializer,
     PaymentSerializer,
     ReportSerializer,
+    GDPRExportStartSerializer,
+    GDPRDeleteConfirmSerializer
 )
 from propertylist_app.api.throttling import (
     ReviewCreateThrottle,
@@ -99,6 +103,8 @@ from propertylist_app.api.throttling import (
     RegisterAnonThrottle,   # anon/IP throttle for registration
     MessageUserThrottle,    # user throttle for per-user messaging
 )
+
+from propertylist_app.services.gdpr import build_export_zip, preview_erasure, perform_erasure
 
 # Local serializers
 from .serializers import (
@@ -895,7 +901,7 @@ class MessageListCreateView(generics.ListCreateAPIView):
     # Use explicit per-user throttle so the 3rd call returns 429
     throttle_classes = [MessageUserThrottle]
     ordering_fields = ["updated", "created", "id"]
-    ordering = ["-updated"]
+    ordering = ["-created"]
 
     def get_queryset(self):
         thread_id = self.kwargs["thread_id"]
@@ -1530,3 +1536,88 @@ class OpsStatsView(APIView):
             "categories": {"top_active": top_categories},
         }
         return Response(data)
+
+
+# --- GDPR / Privacy ---
+
+class DataExportStartView(APIView):
+    """
+    POST /api/users/me/export/
+    Body: {"confirm": true}
+    Builds a ZIP of the user’s data and returns a time-limited link.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        ser = GDPRExportStartSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+
+        export = DataExport.objects.create(user=request.user, status="processing")
+        try:
+            rel_path = build_export_zip(request.user, export)
+        except Exception as e:
+            export.status = "failed"
+            export.error = str(e)
+            export.save(update_fields=["status", "error"])
+            return Response({"detail": "Failed to build export."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        url = request.build_absolute_uri((settings.MEDIA_URL or "/media/") + rel_path)
+        return Response({"status": export.status, "download_url": url, "expires_at": export.expires_at}, status=201)
+
+
+class DataExportLatestView(APIView):
+    """
+    GET /api/users/me/export/latest/
+    Return the latest non-expired export link.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        export = DataExport.objects.filter(user=request.user, status="ready").order_by("-created_at").first()
+        if not export or export.is_expired():
+            return Response({"detail": "No active export."}, status=404)
+        url = request.build_absolute_uri((settings.MEDIA_URL or "/media/") + export.file_path)
+        return Response({"download_url": url, "expires_at": export.expires_at})
+
+
+class AccountDeletePreviewView(APIView):
+    """
+    GET /api/users/me/delete/preview/
+    Shows counts of records that will be anonymised/retained.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        return Response(preview_erasure(request.user))
+
+
+class AccountDeleteConfirmView(APIView):
+    """
+    POST /api/users/me/delete/confirm/
+    Body: {"confirm": true, "idempotency_key": "...optional..."}
+    Performs GDPR erasure and deactivates the account.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        ser = GDPRDeleteConfirmSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        if not ser.validated_data["confirm"]:
+            return Response({"detail": "Confirmation required."}, status=400)
+
+        try:
+            perform_erasure(request.user)
+        except Exception as e:
+            return Response({"detail": f"Erasure failed: {e}"}, status=500)
+
+        try:
+            AuditLog.objects.create(
+                user=None,
+                action="gdpr.erase",
+                ip_address=request.META.get("REMOTE_ADDR"),
+                extra_data={}
+            )
+        except Exception:
+            pass
+
+        return Response({"detail": "Your personal data has been erased and your account deactivated."})

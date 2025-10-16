@@ -24,7 +24,9 @@ urlpatterns = [
     path("admin/", admin.site.urls),
 
     # Your main API (rooms, reviews, bookings, etc.)
-    path("api/", include("propertylist_app.api.urls")),
+    #path("api/", include("propertylist_app.api.urls")),
+    path("api/", include(("propertylist_app.api.urls", "api"), namespace="api")),
+
 
     #  JWT-only auth routes
     path("api/auth/token/", TokenObtainPairView.as_view(), name="token_obtain_pair"),

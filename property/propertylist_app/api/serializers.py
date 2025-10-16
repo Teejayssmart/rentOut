@@ -243,8 +243,8 @@ class MessageSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Message
-        fields = ["id", "thread", "sender", "body", "created_at"]
-        read_only_fields = ["thread", "sender", "created_at"]
+        fields = ["id", "thread", "sender", "body", "created"]
+        read_only_fields = ["thread", "sender", "created"]
 
 
 class MessageThreadSerializer(serializers.ModelSerializer):
@@ -257,7 +257,7 @@ class MessageThreadSerializer(serializers.ModelSerializer):
         fields = ["id", "participants", "created_at", "last_message", "unread_count"]
 
     def get_last_message(self, obj):
-        msg = obj.messages.order_by("-created_at").first()
+        msg = obj.messages.order_by("-created").first()
         return MessageSerializer(msg).data if msg else None
 
     def get_unread_count(self, obj):
@@ -334,3 +334,12 @@ class ReportSerializer(serializers.ModelSerializer):
         validated_data["content_type"] = ContentType.objects.get_for_model(model)
         validated_data["reporter"] = self.context["request"].user
         return super().create(validated_data)
+
+
+# --- GDPR ---
+class GDPRExportStartSerializer(serializers.Serializer):
+    confirm = serializers.BooleanField(required=True)
+
+class GDPRDeleteConfirmSerializer(serializers.Serializer):
+    confirm = serializers.BooleanField(required=True)
+    idempotency_key = serializers.CharField(required=False, allow_blank=True, max_length=64)
