@@ -10,6 +10,7 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 
+
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import (
     generics,
@@ -61,6 +62,7 @@ from propertylist_app.models import (
     Report,
     AuditLog,
     DataExport,
+    Notification,
 )
 
 # Validators / helpers
@@ -89,7 +91,8 @@ from propertylist_app.api.serializers import (
     PaymentSerializer,
     ReportSerializer,
     GDPRExportStartSerializer,
-    GDPRDeleteConfirmSerializer
+    GDPRDeleteConfirmSerializer,
+    NotificationSerializer,
 )
 from propertylist_app.api.throttling import (
     ReviewCreateThrottle,
@@ -146,11 +149,11 @@ class ReviewCreate(generics.CreateAPIView):
         # Prevent self-review
         owner_id = getattr(room, "property_owner_id", None) or getattr(getattr(room, "property_owner", None), "id", None)
         if owner_id == user.id:
-            raise ValidationError("You cannot review your own room.")
+            raise serializers.ValidationError({"detail": "You cannot review your own room."})
 
         # One review per (room, user)
         if Review.objects.filter(room=room, review_user=user).exists():
-            raise ValidationError("You have already reviewed this room!")
+             raise serializers.ValidationError({"detail": "You have already reviewed this room!"})
 
         review = serializer.save(room=room, review_user=user)
 
@@ -669,7 +672,8 @@ class SearchRoomsView(generics.ListAPIView):
 
         if postcode:
             try:
-                radius_miles = validate_radius_miles(raw_radius, max_miles=100)
+               radius_miles = validate_radius_miles(raw_radius, max_miles=500)
+
             except ValidationError:
                 radius_miles = 10
 
@@ -754,7 +758,9 @@ class NearbyRoomsView(generics.ListAPIView):
         if not postcode_raw:
             raise ValidationError({"postcode": "Postcode is required."})
 
-        radius_miles = validate_radius_miles(self.request.query_params.get("radius_miles", 10), max_miles=100)
+        radius_miles = validate_radius_miles(self.request.query_params.get("radius_miles", 10), max_miles=500)
+
+        
         lat, lon = geocode_postcode_cached(postcode_raw)
 
         base_qs = Room.objects.alive().exclude(latitude__isnull=True).exclude(longitude__isnull=True)
@@ -1476,6 +1482,8 @@ class RoomModerationStatusView(APIView):
 # --------------------
 # Ops snapshot
 # --------------------
+
+
 class OpsStatsView(APIView):
     """
     GET /api/ops/stats/ — admin-only operational snapshot.
@@ -1488,49 +1496,96 @@ class OpsStatsView(APIView):
         d7 = now - timedelta(days=7)
         d30 = now - timedelta(days=30)
 
-        total_rooms = Room.objects.count()
-        active_rooms = Room.objects.filter(status="active", is_deleted=False).count()
-        hidden_rooms = Room.objects.filter(status="hidden", is_deleted=False).count()
-        deleted_rooms = Room.objects.filter(is_deleted=True).count()
+        def _safe_count(qs):
+            try:
+                return int(qs.count())
+            except Exception:
+                return 0
+
+        # Defaults so we never 500
+        total_rooms = active_rooms = hidden_rooms = deleted_rooms = 0
+        total_users = None
+        bookings_7d = bookings_30d = upcoming_viewings = 0
+        payments_30d_count = 0
+        payments_30d_sum_gbp = 0.0
+        messages_7d = threads_total = 0
+        reports_open = reports_in_review = 0
+        top_categories = []
 
         try:
-            total_users = get_user_model().objects.count()
-        except Exception:
-            total_users = None
+            # Listings
+            total_rooms  = _safe_count(Room.objects.all())
+            active_rooms = _safe_count(Room.objects.filter(status="active", is_deleted=False))
+            hidden_rooms = _safe_count(Room.objects.filter(status="hidden", is_deleted=False))
+            deleted_rooms = _safe_count(Room.objects.filter(is_deleted=True))
 
-        bookings_7d = Booking.objects.filter(created_at__gte=d7).count()
-        bookings_30d = Booking.objects.filter(created_at__gte=d30).count()
-        upcoming_viewings = Booking.objects.filter(start__gte=now, canceled_at__isnull=True).count()
+            # Users
+            try:
+                total_users = int(get_user_model().objects.count())
+            except Exception:
+                total_users = None
 
-        # Payment.amount stored in GBP, so no /100 conversion here.
-        payments_30d_count = Payment.objects.filter(status="succeeded", created_at__gte=d30).count()
-        payments_30d_sum_gbp = float(
-            Payment.objects.filter(status="succeeded", created_at__gte=d30).aggregate(sum_amt=Sum("amount"))["sum_amt"]
-            or 0
-        )
+            # Bookings
+            bookings_7d = _safe_count(Booking.objects.filter(created_at__gte=d7))
+            bookings_30d = _safe_count(Booking.objects.filter(created_at__gte=d30))
+            upcoming_viewings = _safe_count(Booking.objects.filter(start__gte=now, canceled_at__isnull=True))
 
-        messages_7d = Message.objects.filter(created_at__gte=d7).count()
-        threads_total = MessageThread.objects.count()
-
-        reports_open = Report.objects.filter(status="open").count()
-        reports_in_review = Report.objects.filter(status="in_review").count()
-
-        try:
-            top_categories = (
-                Room.objects.filter(status="active", is_deleted=False)
-                .values("category__id", "category__name")
-                .annotate(cnt=Count("id"))
-                .order_by("-cnt")[:5]
+            # Payments (GBP stored in Payment.amount)
+            agg = Payment.objects.filter(status="succeeded", created_at__gte=d30).aggregate(
+                sum_amt=Sum("amount"), cnt=Count("id")
             )
-            top_categories = [{"id": r["category__id"], "name": r["category__name"], "count": r["cnt"]} for r in top_categories]
+            payments_30d_count = int(agg.get("cnt") or 0)
+            try:
+                payments_30d_sum_gbp = round(float(agg.get("sum_amt") or 0), 2)
+            except Exception:
+                payments_30d_sum_gbp = 0.0
+
+            # Messages
+            messages_7d = _safe_count(Message.objects.filter(created_at__gte=d7))
+            threads_total = _safe_count(MessageThread.objects.all())
+
+            # Reports
+            reports_open = _safe_count(Report.objects.filter(status="open"))
+            reports_in_review = _safe_count(Report.objects.filter(status="in_review"))
+
+            # Top categories for active, non-deleted rooms
+            try:
+                top_qs = (
+                    Room.objects.filter(status="active", is_deleted=False)
+                    .values("category__id", "category__name")
+                    .annotate(cnt=Count("id"))
+                    .order_by("-cnt")[:5]
+                )
+                top_categories = [
+                    {
+                        "id": r.get("category__id"),
+                        "name": r.get("category__name"),
+                        "count": int(r.get("cnt") or 0),
+                    }
+                    for r in top_qs
+                ]
+            except Exception:
+                top_categories = []
         except Exception:
-            top_categories = []
+            # Last-resort guard: if anything above blows up, we still return a valid payload.
+            pass
 
         data = {
-            "listings": {"total": total_rooms, "active": active_rooms, "hidden": hidden_rooms, "deleted": deleted_rooms},
+            "listings": {
+                "total": total_rooms,
+                "active": active_rooms,
+                "hidden": hidden_rooms,
+                "deleted": deleted_rooms,
+            },
             "users": {"total": total_users},
-            "bookings": {"last_7_days": bookings_7d, "last_30_days": bookings_30d, "upcoming_viewings": upcoming_viewings},
-            "payments": {"last_30_days": {"count": payments_30d_count, "sum_gbp": round(payments_30d_sum_gbp, 2)}},
+            "bookings": {
+                "last_7_days": bookings_7d,
+                "last_30_days": bookings_30d,
+                "upcoming_viewings": upcoming_viewings,
+            },
+            "payments": {
+                "last_30_days": {"count": payments_30d_count, "sum_gbp": payments_30d_sum_gbp}
+            },
             "messages": {"last_7_days": messages_7d, "threads_total": threads_total},
             "reports": {"open": reports_open, "in_review": reports_in_review},
             "categories": {"top_active": top_categories},
@@ -1621,3 +1676,43 @@ class AccountDeleteConfirmView(APIView):
             pass
 
         return Response({"detail": "Your personal data has been erased and your account deactivated."})
+    
+    
+    
+    
+class NotificationListView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        """
+        List current user's notifications, unread first then newest.
+        """
+        qs = Notification.objects.filter(user=request.user).order_by("is_read", "-created_at")
+        data = NotificationSerializer(qs, many=True).data
+        return Response(data, status=status.HTTP_200_OK)
+
+
+class NotificationMarkReadView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, pk: int):
+        """
+        Mark a single notification as read.
+        """
+        notif = get_object_or_404(Notification, pk=pk, user=request.user)
+        if not notif.is_read:
+            notif.is_read = True
+            notif.save(update_fields=["is_read"])
+        return Response({"ok": True}, status=status.HTTP_200_OK)
+
+
+class NotificationMarkAllReadView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        """
+        Mark all of the user's notifications as read.
+        """
+        Notification.objects.filter(user=request.user, is_read=False).update(is_read=True)
+        return Response({"ok": True}, status=status.HTTP_200_OK)
+

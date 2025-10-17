@@ -7,7 +7,7 @@ from django.contrib.contenttypes.models import ContentType
 from propertylist_app.models import (
     Room, RoomCategorie, Review, UserProfile, RoomImage,
     SavedRoom, MessageThread, Message, Booking,
-    AvailabilitySlot, Payment, Report
+    AvailabilitySlot, Payment, Report, Notification,
 )
 
 from propertylist_app.validators import (
@@ -30,6 +30,9 @@ class ReviewSerializer(serializers.ModelSerializer):
     class Meta:
         model = Review
         fields = "__all__"
+        # Room comes from URL (view), user comes from request; don't require them in POST body
+        read_only_fields = ["room", "review_user"]
+
 
 
 # --------------------
@@ -274,6 +277,12 @@ class BookingSerializer(serializers.ModelSerializer):
         model = Booking
         fields = ["id", "room", "slot", "room_title", "start", "end", "created_at", "canceled_at"]
         read_only_fields = ["created_at", "canceled_at"]
+        extra_kwargs = {
+            "room":  {"required": False},
+            "slot":  {"required": False},
+            "start": {"required": False},
+            "end":   {"required": False},
+        }
 
 
 class AvailabilitySlotSerializer(serializers.ModelSerializer):
@@ -297,6 +306,18 @@ class PaymentSerializer(serializers.ModelSerializer):
             "status", "created_at"
         ]
         read_only_fields = fields
+        
+        
+class NotificationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Notification
+        fields = [
+            "id", "type", "title", "body",
+            "thread", "message",
+            "is_read", "created_at",
+        ]
+        read_only_fields = fields
+        
 
 
 class ReportSerializer(serializers.ModelSerializer):

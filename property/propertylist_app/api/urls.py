@@ -54,7 +54,11 @@ from propertylist_app.api.views import (
     RoomModerationStatusView, OpsStatsView,
     
     # --- GDPR / Privacy ---
-    DataExportStartView, DataExportLatestView, AccountDeletePreviewView, AccountDeleteConfirmView
+    DataExportStartView, DataExportLatestView, AccountDeletePreviewView, AccountDeleteConfirmView,
+    
+    # Notifications
+    NotificationListView, NotificationMarkReadView, NotificationMarkAllReadView,
+
 )
 
 router = DefaultRouter()
@@ -150,6 +154,12 @@ urlpatterns = [
     path("users/me/export/latest/",    DataExportLatestView.as_view(),    name="me-export-latest"),
     path("users/me/delete/preview/",   AccountDeletePreviewView.as_view(), name="me-delete-preview"),
     path("users/me/delete/confirm/",   AccountDeleteConfirmView.as_view(), name="me-delete-confirm"),
+    
+        # --- Notifications ---
+    path("notifications/",                         NotificationListView.as_view(),         name="notifications-list"),
+    path("notifications/<int:pk>/read/",           NotificationMarkReadView.as_view(),     name="notification-mark-read"),
+    path("notifications/read/all/",                NotificationMarkAllReadView.as_view(),  name="notifications-mark-all-read"),
+
 ]
     
     
