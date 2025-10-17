@@ -175,6 +175,7 @@ class Review(models.Model):
 class UserProfile(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="profile")
     phone = models.CharField(max_length=15, unique=True, null=True, blank=True)
+    avatar = models.ImageField(upload_to="avatars/", null=True, blank=True)
 
     def __str__(self):
         return f"{self.user.username} profile"
@@ -211,14 +212,27 @@ class IdempotencyKey(models.Model):
 # ----------
 # RoomImage
 # ----------
+
+class RoomImageQuerySet(models.QuerySet):
+    def approved(self):
+        return self.filter(status="approved")
+
 class RoomImage(models.Model):
     room = models.ForeignKey("Room", on_delete=models.PROTECT)
     image = models.ImageField(upload_to="room_images/", null=True, blank=True)
     uploaded_at = models.DateTimeField(auto_now_add=True)
+    
+    
+    # NEW: moderation status
+    status = models.CharField(
+        max_length=16,
+        choices=[("pending", "Pending"), ("approved", "Approved"), ("rejected", "Rejected")],
+        default="pending",
+        db_index=True,
+    )
 
-    def __str__(self):
-        return f"Photo {self.id} for {self.room.title}"
-
+    # NEW: queryset with approved()
+    objects = RoomImageQuerySet.as_manager()
 
 # -----------------
 # AvailabilitySlot

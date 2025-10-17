@@ -4,23 +4,17 @@ from datetime import datetime, timedelta
 import stripe
 from django.conf import settings
 from django.contrib.auth import authenticate, get_user_model
-from django.db import transaction
+from django.db import transaction, connection
 from django.db.models import Q, Count, OuterRef, Subquery, Sum
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 
-
 from django_filters.rest_framework import DjangoFilterBackend
-from rest_framework import (
-    generics,
-    permissions,
-    status,
-    filters,
-    viewsets,
-    serializers,  # for EmailField validation
-)
 
+
+
+from rest_framework import filters, generics, serializers, status, viewsets
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.exceptions import ValidationError, Throttled
 from rest_framework.parsers import MultiPartParser, FormParser
@@ -37,11 +31,11 @@ from rest_framework_simplejwt.tokens import RefreshToken
 
 # Services
 from propertylist_app.services.geo import geocode_postcode_cached
-
 from propertylist_app.services.security import (
     is_locked_out, register_login_failure, clear_login_failures
 )
 from propertylist_app.services.captcha import verify_captcha
+from propertylist_app.services.gdpr import build_export_zip, preview_erasure, perform_erasure
 
 # Models
 from propertylist_app.models import (
@@ -103,11 +97,9 @@ from propertylist_app.api.throttling import (
     PasswordResetConfirmScopedThrottle,
     ReportCreateScopedThrottle,
     MessagingScopedThrottle,
-    RegisterAnonThrottle,   # anon/IP throttle for registration
-    MessageUserThrottle,    # user throttle for per-user messaging
+    RegisterAnonThrottle,
+    MessageUserThrottle,
 )
-
-from propertylist_app.services.gdpr import build_export_zip, preview_erasure, perform_erasure
 
 # Local serializers
 from .serializers import (
@@ -121,7 +113,6 @@ from .serializers import (
 )
 
 stripe.api_key = settings.STRIPE_SECRET_KEY
-
 
 # --------------------
 # Reviews
@@ -146,18 +137,15 @@ class ReviewCreate(generics.CreateAPIView):
         room = get_object_or_404(Room, pk=self.kwargs.get("pk"))
         user = self.request.user
 
-        # Prevent self-review
         owner_id = getattr(room, "property_owner_id", None) or getattr(getattr(room, "property_owner", None), "id", None)
         if owner_id == user.id:
             raise serializers.ValidationError({"detail": "You cannot review your own room."})
 
-        # One review per (room, user)
         if Review.objects.filter(room=room, review_user=user).exists():
-             raise serializers.ValidationError({"detail": "You have already reviewed this room!"})
+            raise serializers.ValidationError({"detail": "You have already reviewed this room!"})
 
         review = serializer.save(room=room, review_user=user)
 
-        # Rolling average update
         if room.number_rating == 0:
             room.avg_rating = review.rating
         else:
@@ -260,7 +248,6 @@ class RoomAV(APIView):
         ser.is_valid(raise_exception=True)
         ser.save(property_owner=request.user)
         return Response(ser.data, status=status.HTTP_201_CREATED)
-    # NOTE: pagination/order settings on APIView are ignored by DRF; use RoomListGV for that.
 
 
 class RoomDetailAV(APIView):
@@ -365,10 +352,6 @@ def webhook_in(request):
 
 
 class ProviderWebhookView(APIView):
-    """
-    POST /api/webhooks/<provider>/incoming/
-    Verifies HMAC signature, prevents replay, logs payload, and dispatches.
-    """
     permission_classes = [AllowAny]
 
     def post(self, request, provider):
@@ -430,7 +413,6 @@ class ProviderWebhookView(APIView):
         return Response({"ok": True})
 
     def _handle_stripe(self, payload: dict):
-        """Handles minimal Stripe events used by your app."""
         try:
             evt_type = payload.get("type")
             data_obj = (payload.get("data") or {}).get("object") or {}
@@ -478,12 +460,10 @@ class ProviderWebhookView(APIView):
 # --------------------
 class RegistrationView(generics.CreateAPIView):
     serializer_class = RegistrationSerializer
-    permission_classes = [permissions.AllowAny]
-    # Use our explicit anon throttle (IP-based) so test 3rd call gets 429.
+    permission_classes = [AllowAny]
     throttle_classes = [RegisterAnonThrottle]
 
     def create(self, request, *args, **kwargs):
-        # Throttling handled by DRF via RegisterAnonThrottle
         if getattr(settings, "ENABLE_CAPTCHA", False):
             token = (request.data.get("captcha_token") or "").strip()
             if not verify_captcha(token, request.META.get("REMOTE_ADDR", "")):
@@ -492,7 +472,7 @@ class RegistrationView(generics.CreateAPIView):
 
 
 class LoginView(APIView):
-    permission_classes = [permissions.AllowAny]
+    permission_classes = [AllowAny]
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = "login"
 
@@ -509,10 +489,8 @@ class LoginView(APIView):
         password = ser.validated_data["password"]
         ip = request.META.get("REMOTE_ADDR", "")
 
-        # Try to authenticate first
         user = authenticate(request, username=username, password=password)
         if user:
-            # Success → clear any failures/lockout and issue tokens
             clear_login_failures(ip, username)
             refresh = RefreshToken.for_user(user)
             return Response(
@@ -520,7 +498,6 @@ class LoginView(APIView):
                 status=status.HTTP_200_OK,
             )
 
-        # Failed auth → only now check lockout and record failure
         if is_locked_out(ip, username):
             return Response({"detail": "Too many failed attempts. Try again later."},
                             status=status.HTTP_429_TOO_MANY_REQUESTS)
@@ -530,7 +507,7 @@ class LoginView(APIView):
 
 
 class LogoutView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAuthenticated]
 
     def post(self, request):
         refresh = request.data.get("refresh")
@@ -544,7 +521,7 @@ class LogoutView(APIView):
 
 
 class PasswordResetRequestView(APIView):
-    permission_classes = [permissions.AllowAny]
+    permission_classes = [AllowAny]
     throttle_classes = [PasswordResetScopedThrottle]
 
     def post(self, request):
@@ -559,7 +536,7 @@ class PasswordResetRequestView(APIView):
 
 
 class PasswordResetConfirmView(APIView):
-    permission_classes = [permissions.AllowAny]
+    permission_classes = [AllowAny]
     throttle_classes = [PasswordResetConfirmScopedThrottle]
 
     def post(self, request):
@@ -570,7 +547,7 @@ class PasswordResetConfirmView(APIView):
 
 class MeView(generics.RetrieveUpdateAPIView):
     serializer_class = UserSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAuthenticated]
 
     def get_object(self):
         return self.request.user
@@ -578,7 +555,7 @@ class MeView(generics.RetrieveUpdateAPIView):
 
 class UserProfileView(generics.RetrieveUpdateAPIView):
     serializer_class = UserProfileSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAuthenticated]
 
     def get_object(self):
         return self.request.user.profile
@@ -587,34 +564,58 @@ class UserProfileView(generics.RetrieveUpdateAPIView):
 # --------------------
 # Room photos
 # --------------------
-class RoomPhotoUploadView(generics.CreateAPIView):
-    permission_classes = [IsAuthenticated, IsOwnerOrReadOnly]
-    serializer_class = RoomImageSerializer
+class RoomPhotoUploadView(APIView):
+    """
+    POST /api/v1/rooms/<pk>/photos/  (owner only; new photos start as 'pending')
+    GET  /api/v1/rooms/<pk>/photos/  (public: only 'approved' photos returned)
+    """
+    permission_classes = [IsAuthenticated]
     parser_classes = [MultiPartParser, FormParser]
 
-    def _get_room(self):
-        room = get_object_or_404(Room, pk=self.kwargs["pk"])
-        self.check_object_permissions(self.request, room)
-        return room
+    # List: only approved images are visible to users
+    def get(self, request, pk):
+        room = get_object_or_404(Room, pk=pk)
+        photos = RoomImage.objects.approved().filter(room=room)
+        data = RoomImageSerializer(photos, many=True).data
+        return Response(data, status=status.HTTP_200_OK)
 
-    def perform_create(self, serializer):
-        room = self._get_room()
-        file_obj = self.request.FILES.get("image")
-        if not file_obj:
-            raise ValidationError({"image": "image file is required (form-data key 'image')."})
-        serializer.save(room=room, image=file_obj)
+    # Upload: owner only, saved as 'pending'
+    def post(self, request, pk):
+        room = get_object_or_404(Room, pk=pk)
+        if room.property_owner_id != request.user.id:
+            return Response(
+                {"detail": "You do not have permission to perform this action."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        serializer = RoomImageSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        # status defaults to "pending" on the model; set explicitly for clarity
+        photo = RoomImage.objects.create(
+            room=room,
+            image=serializer.validated_data["image"],
+            status="pending",
+        )
+        return Response(RoomImageSerializer(photo).data, status=status.HTTP_201_CREATED)
 
 
-class RoomPhotoDeleteView(generics.DestroyAPIView):
-    permission_classes = [IsAuthenticated, IsOwnerOrReadOnly]
-    serializer_class = RoomImageSerializer
-    queryset = RoomImage.objects.select_related("room")
-    lookup_url_kwarg = "photo_id"
+class RoomPhotoDeleteView(APIView):
+    """
+    DELETE /api/v1/rooms/<pk>/photos/<photo_id>/  (owner only)
+    """
+    permission_classes = [IsAuthenticated]
 
-    def get_object(self):
-        obj = super().get_object()
-        self.check_object_permissions(self.request, obj.room)
-        return obj
+    def delete(self, request, pk, photo_id):
+        room = get_object_or_404(Room, pk=pk)
+        if room.property_owner_id != request.user.id:
+            return Response(
+                {"detail": "You do not have permission to perform this action."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        photo = get_object_or_404(RoomImage, pk=photo_id, room=room)
+        photo.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 # --------------------
@@ -622,7 +623,7 @@ class RoomPhotoDeleteView(generics.DestroyAPIView):
 # --------------------
 class MyRoomsView(generics.ListAPIView):
     serializer_class = RoomSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAuthenticated]
     pagination_class = RoomLOPagination
 
     def get_queryset(self):
@@ -636,7 +637,7 @@ class SearchRoomsView(generics.ListAPIView):
               distance_miles, -distance_miles, created_at, -created_at
     """
     serializer_class = RoomSerializer
-    permission_classes = [permissions.AllowAny]
+    permission_classes = [AllowAny]
     pagination_class = RoomLOPagination
 
     _ordered_ids = None
@@ -644,6 +645,11 @@ class SearchRoomsView(generics.ListAPIView):
 
     def get_queryset(self):
         params = self.request.query_params
+
+        # Enforce postcode when radius is used (raises DRF ValidationError)
+        if params.get("radius_miles") is not None and not (params.get("postcode") or "").strip():
+            raise ValidationError({"postcode": "Postcode is required when using radius search."})
+
         q_text = (params.get("q") or "").strip()
         min_price = params.get("min_price")
         max_price = params.get("max_price")
@@ -653,7 +659,11 @@ class SearchRoomsView(generics.ListAPIView):
         qs = Room.objects.alive()
 
         if q_text:
-            qs = qs.filter(Q(title__icontains=q_text) | Q(description__icontains=q_text) | Q(location__icontains=q_text))
+            qs = qs.filter(
+                Q(title__icontains=q_text)
+                | Q(description__icontains=q_text)
+                | Q(location__icontains=q_text)
+            )
 
         if min_price is not None:
             try:
@@ -667,13 +677,14 @@ class SearchRoomsView(generics.ListAPIView):
             except Exception:
                 raise ValidationError({"max_price": "Must be an integer."})
 
+        # Reset any prior state for distance ordering
         self._ordered_ids = None
         self._distance_by_id = None
 
+        # If postcode provided, compute distances & filter to radius
         if postcode:
             try:
-               radius_miles = validate_radius_miles(raw_radius, max_miles=500)
-
+                radius_miles = validate_radius_miles(raw_radius, max_miles=500)
             except ValidationError:
                 radius_miles = 10
 
@@ -697,8 +708,8 @@ class SearchRoomsView(generics.ListAPIView):
         if not ordering_param:
             ordering_param = "distance_miles" if postcode else "-avg_rating"
 
+        # Defer distance ordering to list() when we have computed distances
         if ordering_param in {"distance_miles", "-distance_miles"} and self._ordered_ids is not None:
-            # handled in list()
             pass
         else:
             allowed = {
@@ -716,8 +727,18 @@ class SearchRoomsView(generics.ListAPIView):
         return qs
 
     def list(self, request, *args, **kwargs):
+        # Return a simple top-level error object when radius is given without postcode,
+        # so the test finds a top-level "postcode" key.
+        params = request.query_params
+        if params.get("radius_miles") is not None and not (params.get("postcode") or "").strip():
+            return Response(
+                {"postcode": "Postcode is required when using radius search."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         queryset = self.get_queryset()
 
+        # If we computed distances, maintain that ordering and annotate distance_miles
         if self._distance_by_id is not None:
             room_by_id = {obj.id: obj for obj in queryset}
             ordered_objs = []
@@ -747,7 +768,7 @@ class NearbyRoomsView(generics.ListAPIView):
     Miles only; attaches .distance_miles to each room.
     """
     serializer_class = RoomSerializer
-    permission_classes = [permissions.AllowAny]
+    permission_classes = [AllowAny]
     pagination_class = RoomLOPagination
 
     _ordered_ids = None
@@ -760,7 +781,6 @@ class NearbyRoomsView(generics.ListAPIView):
 
         radius_miles = validate_radius_miles(self.request.query_params.get("radius_miles", 10), max_miles=500)
 
-        
         lat, lon = geocode_postcode_cached(postcode_raw)
 
         base_qs = Room.objects.alive().exclude(latitude__isnull=True).exclude(longitude__isnull=True)
@@ -800,7 +820,7 @@ class NearbyRoomsView(generics.ListAPIView):
 # Save / Unsave rooms
 # --------------------
 class RoomSaveView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAuthenticated]
 
     def post(self, request, pk):
         room = get_object_or_404(Room.objects.alive(), pk=pk)
@@ -818,7 +838,7 @@ class RoomSaveToggleView(APIView):
     POST /api/rooms/<pk>/save-toggle/
     First call saves, second call unsaves.
     """
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAuthenticated]
 
     def post(self, request, pk):
         room = get_object_or_404(Room.objects.alive(), pk=pk)
@@ -831,7 +851,7 @@ class RoomSaveToggleView(APIView):
 
 class MySavedRoomsView(generics.ListAPIView):
     serializer_class = RoomSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAuthenticated]
     pagination_class = RoomLOPagination
 
     def get_queryset(self):
@@ -873,7 +893,7 @@ class MySavedRoomsView(generics.ListAPIView):
 class MessageThreadListCreateView(generics.ListCreateAPIView):
     """GET/POST /api/messages/threads/"""
     serializer_class = MessageThreadSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAuthenticated]
     pagination_class = RoomLOPagination
     throttle_classes = [UserRateThrottle, MessagingScopedThrottle]
 
@@ -902,9 +922,8 @@ class MessageThreadListCreateView(generics.ListCreateAPIView):
 
 class MessageListCreateView(generics.ListCreateAPIView):
     serializer_class = MessageSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAuthenticated]
     pagination_class = RoomCPagination
-    # Use explicit per-user throttle so the 3rd call returns 429
     throttle_classes = [MessageUserThrottle]
     ordering_fields = ["updated", "created", "id"]
     ordering = ["-created"]
@@ -923,7 +942,7 @@ class MessageListCreateView(generics.ListCreateAPIView):
 
 class ThreadMarkReadView(APIView):
     """POST /api/messages/threads/<thread_id>/read/ — marks all inbound messages as read."""
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAuthenticated]
     throttle_classes = [UserRateThrottle]
 
     def post(self, request, thread_id):
@@ -940,7 +959,7 @@ class StartThreadFromRoomView(APIView):
     POST /api/rooms/<int:room_id>/start-thread/
     Body (optional): { "body": "Hello, is this room available for viewing?" }
     """
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAuthenticated]
     throttle_classes = [UserRateThrottle]
 
     def post(self, request, room_id):
@@ -972,11 +991,9 @@ class StartThreadFromRoomView(APIView):
 class BookingListCreateView(generics.ListCreateAPIView):
     """GET my bookings / POST create."""
     serializer_class = BookingSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAuthenticated]
     pagination_class = RoomLOPagination
     throttle_classes = [UserRateThrottle]
-
-    # Enable ordering via query param (?ordering=-created_at or ?ordering=start)
     ordering_fields = ["created_at", "start"]
     ordering = ["-created_at"]
 
@@ -1029,7 +1046,7 @@ class BookingListCreateView(generics.ListCreateAPIView):
 class BookingDetailView(generics.RetrieveAPIView):
     """GET /api/bookings/<id>/ → see my booking"""
     serializer_class = BookingSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
         return Booking.objects.all() if self.request.user.is_staff else Booking.objects.filter(user=self.request.user)
@@ -1037,7 +1054,7 @@ class BookingDetailView(generics.RetrieveAPIView):
 
 class BookingCancelView(APIView):
     """POST /api/bookings/<id>/cancel/ — soft-cancel a booking."""
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAuthenticated]
 
     def post(self, request, pk):
         qs = Booking.objects.all() if request.user.is_staff else Booking.objects.filter(user=request.user)
@@ -1062,7 +1079,7 @@ class RoomAvailabilityView(APIView):
     GET /api/rooms/<id>/availability/?from=&to=
     Returns: {"available": bool, "conflicts": [{"id": ..., "start": ..., "end": ...}, ...]}
     """
-    permission_classes = [permissions.AllowAny]
+    permission_classes = [AllowAny]
 
     def get(self, request, pk):
         room = get_object_or_404(Room.objects.alive(), pk=pk)
@@ -1125,7 +1142,7 @@ class RoomAvailabilitySlotDeleteView(generics.DestroyAPIView):
 
 
 class RoomAvailabilityPublicView(generics.ListAPIView):
-    permission_classes = [permissions.AllowAny]
+    permission_classes = [AllowAny]
     serializer_class = AvailabilitySlotSerializer
 
     def get_queryset(self):
@@ -1156,7 +1173,7 @@ class RoomAvailabilityPublicView(generics.ListAPIView):
 # Profile utilities
 # --------------------
 class UserAvatarUploadView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAuthenticated]
     parser_classes = [MultiPartParser, FormParser]
 
     def post(self, request):
@@ -1171,7 +1188,7 @@ class UserAvatarUploadView(APIView):
 
 
 class ChangeEmailView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAuthenticated]
 
     def post(self, request):
         current_password = request.data.get("current_password")
@@ -1198,7 +1215,7 @@ class ChangeEmailView(APIView):
 
 
 class ChangePasswordView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAuthenticated]
 
     def post(self, request):
         current_password = request.data.get("current_password")
@@ -1229,7 +1246,7 @@ class ChangePasswordView(APIView):
 
 
 class DeactivateAccountView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAuthenticated]
 
     def post(self, request):
         request.user.is_active = False
@@ -1245,7 +1262,7 @@ class CreateListingCheckoutSessionView(APIView):
     POST /api/payments/checkout/rooms/<pk>/
     Creates a £1 Stripe Checkout Session (line item in pence; Payment.amount stored in GBP).
     """
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAuthenticated]
 
     def post(self, request, pk):
         room = get_object_or_404(Room, pk=pk)
@@ -1253,13 +1270,13 @@ class CreateListingCheckoutSessionView(APIView):
         if getattr(room, "property_owner_id", None) != request.user.id:
             return Response({"detail": "You can only pay for your own room."}, status=status.HTTP_403_FORBIDDEN)
 
-        amount_gbp = 1.00        # store GBP in DB
-        amount_pence = 100       # Stripe expects pence
+        amount_gbp = 1.00
+        amount_pence = 100
 
         payment = Payment.objects.create(
             user=request.user,
             room=room,
-            amount=amount_gbp,   # GBP in your model
+            amount=amount_gbp,
             currency="GBP",
             status="created",
         )
@@ -1367,7 +1384,7 @@ class ReportCreateView(generics.CreateAPIView):
       {"target_type": "room"|"review"|"message"|"user", "object_id": 123, "reason": "abuse", "details": "…"}
     """
     serializer_class = ReportSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAuthenticated]
     throttle_classes = [ReportCreateScopedThrottle]
     throttle_scope = "report-create"
 
@@ -1377,7 +1394,6 @@ class ReportCreateView(generics.CreateAPIView):
             if not verify_captcha(token, self.request.META.get("REMOTE_ADDR")):
                 raise ValidationError({"captcha_token": "CAPTCHA verification failed."})
         report = serializer.save()
-        # Audit (align with AuditLog model fields)
         try:
             AuditLog.objects.create(
                 user=self.request.user,
@@ -1482,8 +1498,6 @@ class RoomModerationStatusView(APIView):
 # --------------------
 # Ops snapshot
 # --------------------
-
-
 class OpsStatsView(APIView):
     """
     GET /api/ops/stats/ — admin-only operational snapshot.
@@ -1502,7 +1516,6 @@ class OpsStatsView(APIView):
             except Exception:
                 return 0
 
-        # Defaults so we never 500
         total_rooms = active_rooms = hidden_rooms = deleted_rooms = 0
         total_users = None
         bookings_7d = bookings_30d = upcoming_viewings = 0
@@ -1513,24 +1526,20 @@ class OpsStatsView(APIView):
         top_categories = []
 
         try:
-            # Listings
             total_rooms  = _safe_count(Room.objects.all())
             active_rooms = _safe_count(Room.objects.filter(status="active", is_deleted=False))
             hidden_rooms = _safe_count(Room.objects.filter(status="hidden", is_deleted=False))
             deleted_rooms = _safe_count(Room.objects.filter(is_deleted=True))
 
-            # Users
             try:
                 total_users = int(get_user_model().objects.count())
             except Exception:
                 total_users = None
 
-            # Bookings
             bookings_7d = _safe_count(Booking.objects.filter(created_at__gte=d7))
             bookings_30d = _safe_count(Booking.objects.filter(created_at__gte=d30))
             upcoming_viewings = _safe_count(Booking.objects.filter(start__gte=now, canceled_at__isnull=True))
 
-            # Payments (GBP stored in Payment.amount)
             agg = Payment.objects.filter(status="succeeded", created_at__gte=d30).aggregate(
                 sum_amt=Sum("amount"), cnt=Count("id")
             )
@@ -1540,15 +1549,12 @@ class OpsStatsView(APIView):
             except Exception:
                 payments_30d_sum_gbp = 0.0
 
-            # Messages
             messages_7d = _safe_count(Message.objects.filter(created_at__gte=d7))
             threads_total = _safe_count(MessageThread.objects.all())
 
-            # Reports
             reports_open = _safe_count(Report.objects.filter(status="open"))
             reports_in_review = _safe_count(Report.objects.filter(status="in_review"))
 
-            # Top categories for active, non-deleted rooms
             try:
                 top_qs = (
                     Room.objects.filter(status="active", is_deleted=False)
@@ -1567,7 +1573,6 @@ class OpsStatsView(APIView):
             except Exception:
                 top_categories = []
         except Exception:
-            # Last-resort guard: if anything above blows up, we still return a valid payload.
             pass
 
         data = {
@@ -1594,14 +1599,13 @@ class OpsStatsView(APIView):
 
 
 # --- GDPR / Privacy ---
-
 class DataExportStartView(APIView):
     """
     POST /api/users/me/export/
     Body: {"confirm": true}
     Builds a ZIP of the user’s data and returns a time-limited link.
     """
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAuthenticated]
 
     def post(self, request):
         ser = GDPRExportStartSerializer(data=request.data)
@@ -1625,7 +1629,7 @@ class DataExportLatestView(APIView):
     GET /api/users/me/export/latest/
     Return the latest non-expired export link.
     """
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAuthenticated]
 
     def get(self, request):
         export = DataExport.objects.filter(user=request.user, status="ready").order_by("-created_at").first()
@@ -1640,7 +1644,7 @@ class AccountDeletePreviewView(APIView):
     GET /api/users/me/delete/preview/
     Shows counts of records that will be anonymised/retained.
     """
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAuthenticated]
 
     def get(self, request):
         return Response(preview_erasure(request.user))
@@ -1652,7 +1656,7 @@ class AccountDeleteConfirmView(APIView):
     Body: {"confirm": true, "idempotency_key": "...optional..."}
     Performs GDPR erasure and deactivates the account.
     """
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAuthenticated]
 
     def post(self, request):
         ser = GDPRDeleteConfirmSerializer(data=request.data)
@@ -1676,29 +1680,24 @@ class AccountDeleteConfirmView(APIView):
             pass
 
         return Response({"detail": "Your personal data has been erased and your account deactivated."})
-    
-    
-    
-    
+
+
+# --------------------
+# Notifications
+# --------------------
 class NotificationListView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        """
-        List current user's notifications, unread first then newest.
-        """
         qs = Notification.objects.filter(user=request.user).order_by("is_read", "-created_at")
         data = NotificationSerializer(qs, many=True).data
         return Response(data, status=status.HTTP_200_OK)
 
 
 class NotificationMarkReadView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAuthenticated]
 
     def post(self, request, pk: int):
-        """
-        Mark a single notification as read.
-        """
         notif = get_object_or_404(Notification, pk=pk, user=request.user)
         if not notif.is_read:
             notif.is_read = True
@@ -1707,12 +1706,25 @@ class NotificationMarkReadView(APIView):
 
 
 class NotificationMarkAllReadView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        """
-        Mark all of the user's notifications as read.
-        """
         Notification.objects.filter(user=request.user, is_read=False).update(is_read=True)
         return Response({"ok": True}, status=status.HTTP_200_OK)
 
+
+
+
+
+class HealthCheckView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        # Minimal DB ping (read-only, fast)
+        try:
+            with connection.cursor() as cur:
+                cur.execute("SELECT 1")
+            db_ok = True
+        except Exception:
+            db_ok = False
+        return Response({"status": "ok", "db": db_ok}, status=status.HTTP_200_OK)
