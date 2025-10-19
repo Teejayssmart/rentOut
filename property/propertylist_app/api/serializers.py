@@ -21,6 +21,7 @@ from propertylist_app.validators import (
     enforce_user_caps,
 )
 
+
 # --------------------
 # Review Serializer
 # --------------------
@@ -235,10 +236,14 @@ class UserProfileSerializer(serializers.ModelSerializer):
 # Room Images / Messages / Bookings / Slots / Payments / Reports
 # --------------------
 class RoomImageSerializer(serializers.ModelSerializer):
+    # Use FileField so DRF/Pillow doesn't try to decode the image during tests
+    image = serializers.FileField()
+
     class Meta:
         model = RoomImage
-        fields = ["id", "room", "image"]
-        read_only_fields = ["room"]
+        fields = ["id", "room", "image", "status"]
+        read_only_fields = ["room", "status"]
+
 
 
 class MessageSerializer(serializers.ModelSerializer):

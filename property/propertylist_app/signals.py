@@ -5,6 +5,8 @@ from .models import Message, Notification, MessageThread
 
 from .models import Review, Room
 
+from propertylist_app.tasks import task_send_new_message_email
+
 def _recalc_room_rating(room: Room):
     agg = Review.objects.filter(room=room, active=True).aggregate(
         avg=Avg("rating"),
@@ -45,3 +47,9 @@ def message_created_create_notifications(sender, instance: Message, created, **k
         ))
     if notifs:
         Notification.objects.bulk_create(notifs, ignore_conflicts=True)
+
+
+@receiver(post_save, sender=Message)
+def on_message_created(sender, instance: Message, created: bool, **kwargs):
+    if created:
+        task_send_new_message_email.delay(instance.id)

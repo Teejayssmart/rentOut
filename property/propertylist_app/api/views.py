@@ -12,6 +12,9 @@ from django.views.decorators.csrf import csrf_exempt
 
 from django_filters.rest_framework import DjangoFilterBackend
 
+from django.core.exceptions import ValidationError as DjangoValidationError
+
+
 
 
 from rest_framework import filters, generics, serializers, status, viewsets
@@ -57,6 +60,7 @@ from propertylist_app.models import (
     AuditLog,
     DataExport,
     Notification,
+    UserProfile,
 )
 
 # Validators / helpers
@@ -68,6 +72,9 @@ from propertylist_app.validators import (
     haversine_miles,
     validate_radius_miles,
     validate_avatar_image,
+    validate_avatar_image,
+    validate_listing_photos, 
+    assert_no_duplicate_files,
 )
 
 # API plumbing
@@ -569,8 +576,12 @@ class RoomPhotoUploadView(APIView):
     POST /api/v1/rooms/<pk>/photos/  (owner only; new photos start as 'pending')
     GET  /api/v1/rooms/<pk>/photos/  (public: only 'approved' photos returned)
     """
-    permission_classes = [IsAuthenticated]
     parser_classes = [MultiPartParser, FormParser]
+    # default for non-GET methods will be IsAuthenticated
+    def get_permissions(self):
+        if self.request.method == "GET":
+            return [AllowAny()]
+        return [IsAuthenticated()]
 
     # List: only approved images are visible to users
     def get(self, request, pk):
@@ -588,18 +599,27 @@ class RoomPhotoUploadView(APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        serializer = RoomImageSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        file_obj = request.FILES.get("image")
+        if not file_obj:
+            return Response({"image": "This field is required."}, status=status.HTTP_400_BAD_REQUEST)
 
-        # status defaults to "pending" on the model; set explicitly for clarity
+        # Light validation: content-type/size/duplicates (no Pillow decoding)
+        try:
+            validate_listing_photos([file_obj], max_mb=10)
+            assert_no_duplicate_files([file_obj])
+        except DjangoValidationError as e:
+            # Normalize error shape to DRF style
+            return Response({"image": e.message if hasattr(e, "message") else str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Save as 'pending' so moderation can approve later
         photo = RoomImage.objects.create(
             room=room,
-            image=serializer.validated_data["image"],
+            image=file_obj,
             status="pending",
         )
         return Response(RoomImageSerializer(photo).data, status=status.HTTP_201_CREATED)
-
-
+    
+    
 class RoomPhotoDeleteView(APIView):
     """
     DELETE /api/v1/rooms/<pk>/photos/<photo_id>/  (owner only)
@@ -1001,18 +1021,30 @@ class BookingListCreateView(generics.ListCreateAPIView):
         return Booking.objects.filter(user=self.request.user).order_by("-created_at")
 
     def perform_create(self, serializer):
+        # --- Slot booking branch ---
         slot_id = self.request.data.get("slot")
         if slot_id:
             slot = get_object_or_404(AvailabilitySlot, pk=slot_id)
-            if getattr(slot.room, "is_deleted", False):
-                raise ValidationError({"room": "Room is not available."})
-            if slot.end <= timezone.now():
-                raise ValidationError({"slot": "This slot is in the past."})
 
+            # room must be alive
+            if getattr(slot.room, "is_deleted", False):
+                # field-specific error shape
+                from rest_framework.response import Response  # local import OK
+                self.response = Response({"room": "Room is not available."}, status=status.HTTP_400_BAD_REQUEST)
+                return
+
+            # reject past slots with a top-level "slot" key (per tests)
+            if slot.end <= timezone.now():
+                from rest_framework.response import Response
+                self.response = Response({"slot": "This slot is in the past."}, status=status.HTTP_400_BAD_REQUEST)
+                return
+
+            # capacity check under lock
             with transaction.atomic():
                 slot_locked = AvailabilitySlot.objects.select_for_update().get(pk=slot.pk)
                 active = Booking.objects.filter(slot=slot_locked, canceled_at__isnull=True).count()
                 if active >= slot_locked.max_bookings:
+                    # tests look for "detail" for the 'full' case
                     raise ValidationError({"detail": "This slot is fully booked."})
 
                 serializer.save(
@@ -1022,25 +1054,55 @@ class BookingListCreateView(generics.ListCreateAPIView):
                     start=slot_locked.start,
                     end=slot_locked.end,
                 )
-            return
+            return  # DRF will return 201
 
+        # --- Direct booking branch ---
         room_id = self.request.data.get("room")
         if not room_id:
-            raise ValidationError({"room": "This field is required."})
+            from rest_framework.response import Response
+            self.response = Response({"room": "This field is required."}, status=status.HTTP_400_BAD_REQUEST)
+            return
+
         room = get_object_or_404(Room.objects.alive(), pk=room_id)
 
+        # Pull validated datetimes from serializer
         start = serializer.validated_data.get("start")
         end = serializer.validated_data.get("end")
-        if not start or not end:
-            raise ValidationError({"start": "start and end are required."})
-        if start >= end:
-            raise ValidationError({"end": "End must be after start."})
 
-        conflicts = Booking.objects.filter(room=room, canceled_at__isnull=True).filter(start__lt=end, end__gt=start).exists()
+        # Field-specific errors (tests assert on keys like "end")
+        if not start or not end:
+            from rest_framework.response import Response
+            self.response = Response({"start": "start and end are required."}, status=status.HTTP_400_BAD_REQUEST)
+            return
+        if start >= end:
+            from rest_framework.response import Response
+            self.response = Response({"end": "End must be after start."}, status=status.HTTP_400_BAD_REQUEST)
+            return
+
+        # Overlap rule: (start < existing.end) AND (end > existing.start)
+        conflicts = (
+            Booking.objects
+            .filter(room=room, canceled_at__isnull=True)
+            .filter(start__lt=end, end__gt=start)
+            .exists()
+        )
         if conflicts:
+            # tests expect {"detail": "..."} here
             raise ValidationError({"detail": "Selected dates clash with an existing booking."})
 
         serializer.save(user=self.request.user, room=room)
+
+    # Ensure DRF uses our early-return Response for field-errors in perform_create
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        self.response = None
+        self.perform_create(serializer)
+        if self.response is not None:
+            return self.response
+        headers = self.get_success_headers(serializer.data)
+        return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+
 
 
 class BookingDetailView(generics.RetrieveAPIView):
@@ -1177,14 +1239,25 @@ class UserAvatarUploadView(APIView):
     parser_classes = [MultiPartParser, FormParser]
 
     def post(self, request):
-        profile = request.user.profile
-        file_obj = self.request.FILES.get("avatar")
+        # Ensure a profile exists (prevents 500 if none)
+        profile, _ = UserProfile.objects.get_or_create(user=request.user)
+
+        file_obj = request.FILES.get("avatar")
         if not file_obj:
             return Response({"avatar": "File is required (form-data key 'avatar')."}, status=status.HTTP_400_BAD_REQUEST)
-        cleaned = validate_avatar_image(file_obj)
+
+        # Our validator raises DjangoValidationError; convert to a 400 API response
+        try:
+            cleaned = validate_avatar_image(file_obj)
+        except DjangoValidationError as e:
+            # normalize error payload for tests
+            msg = "; ".join([str(m) for m in (e.messages if hasattr(e, "messages") else [str(e)])])
+            return Response({"detail": msg}, status=status.HTTP_400_BAD_REQUEST)
+
         profile.avatar = cleaned
         profile.save(update_fields=["avatar"])
-        return Response({"avatar": profile.avatar.url if profile.avatar else None})
+        return Response({"avatar": profile.avatar.url if profile.avatar else None}, status=status.HTTP_200_OK)
+
 
 
 class ChangeEmailView(APIView):

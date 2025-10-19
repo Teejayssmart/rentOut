@@ -271,3 +271,9 @@ GDPR_RETENTION = {
 }
 GDPR_HASH_SALT = os.getenv("GDPR_HASH_SALT", "change-this-in-prod")
 
+# Celery (example; tune for your environment)
+CELERY_BROKER_URL = "redis://localhost:6379/0"
+CELERY_RESULT_BACKEND = "redis://localhost:6379/1"
+CELERY_TASK_ALWAYS_EAGER = False  # True only in certain tests if you want synchronous behavior
+CELERY_TASK_TIME_LIMIT = 60
+CELERY_TASK_SOFT_TIME_LIMIT = 45
