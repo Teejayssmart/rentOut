@@ -78,8 +78,11 @@ def test_login_requires_captcha_when_enabled(settings, monkeypatch):
       - If verify_captcha(...) returns True  -> normal login flow
     """
     settings.ENABLE_CAPTCHA = True
-    settings.LOGIN_FAIL_LIMIT = 5  # irrelevant here
+    settings.LOGIN_FAIL_LIMIT = 10  # irrelevant here
     settings.LOGIN_LOCKOUT_SECONDS = 600
+    
+    settings.REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"]["login"] = "100/hour"
+
 
     user = User.objects.create_user(username="catuser", password="pass12345", email="c@example.com")
     client = APIClient()

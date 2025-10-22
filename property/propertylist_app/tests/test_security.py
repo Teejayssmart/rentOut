@@ -5,6 +5,7 @@ from django.contrib.auth import get_user_model
 from django.test import override_settings
 from rest_framework.test import APITestCase, APIClient
 from rest_framework import status
+from django.core.cache import cache
 
 User = get_user_model()
 
@@ -45,6 +46,7 @@ def _auth_headers(ip="127.0.0.10"):
 )
 class TestLoginLockout(APITestCase):
     def setUp(self):
+        cache.clear()
         self.client = APIClient()
         self.user = User.objects.create_user(
             username="lockuser", email="lock@example.com", password="goodpass123"

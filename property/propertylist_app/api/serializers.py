@@ -166,8 +166,8 @@ class SearchFiltersSerializer(serializers.Serializer):
 # --------------------
 # User & Auth
 # --------------------
+# In property/propertylist_app/api/serializers.py
 class RegistrationSerializer(serializers.ModelSerializer):
-    # Accept password2 but don’t require it (so tests that only send `password` won’t 500)
     password2 = serializers.CharField(write_only=True, required=False, allow_blank=True)
 
     class Meta:
@@ -186,17 +186,15 @@ class RegistrationSerializer(serializers.ModelSerializer):
         # Remove password2 if present, hash password properly
         validated_data.pop("password2", None)
         password = validated_data.pop("password")
-        user = User.objects.create_user(**validated_data, password=password)
+        user = User.objects.create_user(**validated_data, password=password)  # ← Uses create_user to hash password
         return user
 
     def to_representation(self, instance):
-        # Keep the 201 response clean; don’t leak anything sensitive
         return {
             "id": instance.pk,
             "username": instance.username,
             "email": instance.email,
         }
-
 
 
 class LoginSerializer(serializers.Serializer):

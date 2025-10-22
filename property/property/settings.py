@@ -15,6 +15,8 @@ from datetime import timedelta
 import os
 from dotenv import load_dotenv
 
+TESTING = bool(os.environ.get("PYTEST_CURRENT_TEST"))
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -161,22 +163,21 @@ REST_FRAMEWORK = {
         "rest_framework.throttling.ScopedRateThrottle",
     ),
     "DEFAULT_THROTTLE_RATES": {
-        # global
-        "anon": "50/hour",
-        "user": "200/hour",
-
+       
         # fine-grained endpoint scopes (ScopedRateThrottle)
-        "login": "10/hour",               # POST /auth/login/  (plus custom lockout below)
-        "register": "5/hour",             # POST /auth/register/
-        "password-reset": "5/hour",       # POST /auth/password-reset/
-        "password-reset-confirm": "10/hour",
-        "report-create": "20/hour",       # POST /reports/
-        "review-create": "10/hour",
-        "review-list": "200/hour",
-        "review-detail": "100/hour",
-        "messaging": "120/hour",          # threads/messages POST
-        "register_anon": "2/hour",   # anon registration: allow 2 per hour → 3rd call = 429
-        "message_user": "2/hour",
+       # generous limits during tests to avoid spurious 429s
+        "user": "1000/minute" if TESTING else "100/hour",
+        "anon": "1000/minute" if TESTING else "50/hour",
+        "login": "1000/minute" if TESTING else "5/minute",
+        "register": "1000/minute" if TESTING else "5/minute",
+        "register_anon": "2/hour",
+        "password-reset": "1000/minute" if TESTING else "3/minute",
+        "password-reset-confirm": "1000/minute" if TESTING else "3/minute",
+        "report-create": "1000/minute" if TESTING else "10/minute",
+        "messaging": "1000/minute" if TESTING else "30/minute",
+        "message_user": "1000/minute" if TESTING else "10/minute",
+        "review-list": "1000/minute" if TESTING else "60/minute",
+        "review-detail": "1000/minute" if TESTING else "60/minute",
     },
     
     

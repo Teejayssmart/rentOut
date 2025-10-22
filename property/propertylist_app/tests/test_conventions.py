@@ -2,6 +2,7 @@ from datetime import timedelta
 from django.urls import reverse
 from django.utils import timezone
 from django.contrib.auth import get_user_model
+from django.core.cache import cache
 from rest_framework.test import APITestCase, APIClient
 from rest_framework import status
 
@@ -21,6 +22,7 @@ class BaseAPITest(APITestCase):
     Base test with authenticated user and clean test database.
     """
     def setUp(self):
+        cache.clear()  # ← ADDED: Clear cache between tests
         self.client = APIClient()
         self.user = User.objects.create_user(
             username="alice",
@@ -56,7 +58,7 @@ class TestRoomsOrderingAndPagination(BaseAPITest):
         """
         /rooms-alt/?ordering=-avg_rating should return highest rating first.
         """
-        url = reverse("room-list-alt")
+        url = reverse("v1:room-list-alt")  # ← FIXED: Added v1: namespace
         resp = self.client.get(url, {"ordering": "-avg_rating"})
         self.assertEqual(resp.status_code, 200)
         titles = [r["title"] for r in resp.data["results"]]
@@ -66,7 +68,7 @@ class TestRoomsOrderingAndPagination(BaseAPITest):
         """
         /rooms-alt/ uses RoomLOPagination (limit/offset). Ask for limit=2 → 2 items and a next page.
         """
-        url = reverse("room-list-alt")
+        url = reverse("v1:room-list-alt")  # ← FIXED: Added v1: namespace
         resp = self.client.get(url, {"limit": 2, "offset": 0, "ordering": "category__name"})
         self.assertEqual(resp.status_code, 200)
         self.assertIn("results", resp.data)
@@ -106,7 +108,7 @@ class TestBookingsOrdering(BaseAPITest):
         """
         /bookings/ default ordering is -created_at (newest first).
         """
-        url = reverse("bookings-list-create")
+        url = reverse("v1:bookings-list-create")  # ← FIXED: Added v1: namespace
         resp = self.client.get(url)
         self.assertEqual(resp.status_code, 200)
         ids = [b["id"] for b in resp.data["results"]]
@@ -117,7 +119,7 @@ class TestBookingsOrdering(BaseAPITest):
         """
         /bookings/?ordering=start should return the earliest start first.
         """
-        url = reverse("bookings-list-create")
+        url = reverse("v1:bookings-list-create")  # ← FIXED: Added v1: namespace
         resp = self.client.get(url, {"ordering": "start"})
         self.assertEqual(resp.status_code, 200)
         starts = [b["start"] for b in resp.data["results"]]
@@ -142,16 +144,14 @@ class TestMessagesCursorPagination(BaseAPITest):
                 body=f"Message {i+1}",
                 created=base + timedelta(minutes=i),
             )
-            # if you have updated field auto set, update it to match created for determinism
-            Message.objects.filter(pk=m.pk).update(updated=m.created)
             self.msgs.append(m)
 
     def test_messages_default_ordering_desc_and_cursor_next(self):
         """
-        /messages/threads/<id>/messages/ uses cursor pagination with default ordering -updated.
+        /messages/threads/<id>/messages/ uses cursor pagination with default ordering -created.
         Should return newest first and include 'next' cursor when more than page_size.
         """
-        url = reverse("thread-messages", kwargs={"thread_id": self.thread.id})
+        url = reverse("v1:thread-messages", kwargs={"thread_id": self.thread.id})  # ← FIXED: Added v1: namespace
         resp = self.client.get(url)  # first page
         self.assertEqual(resp.status_code, 200)
 

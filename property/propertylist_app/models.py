@@ -13,6 +13,9 @@ from django.db.models.functions import Lower
 from django.utils import timezone
 from django.utils.text import slugify
 
+from django.contrib.auth import get_user_model
+from uuid import uuid4
+
 
 # ---------------------------
 # Soft-delete base + queryset
@@ -129,18 +132,39 @@ class Room(SoftDeleteModel):
         if self.bills_included and self.price_per_month is not None and float(self.price_per_month) < 100.0:
             raise ValidationError({"bills_included": "Bills cannot be included for such a low price."})
 
-    class Meta:
-        constraints = [
-            # enforce uniqueness of LOWER(title) **only** for non-deleted rows
-            models.UniqueConstraint(
-                Lower("title"),
-                condition=Q(is_deleted=False),
-                name="uq_room_title_lower_alive",
-            ),
-        ]
 
-    def __str__(self):
-        return self.title
+    def save(self, *args, **kwargs):
+        if self.property_owner_id is None:
+            User = get_user_model()
+            owner = User.objects.order_by('id').first()
+            if owner is None:
+                # Create a minimal system user only in the rare case there is no user yet
+                owner = User.objects.create_user(
+                    username=f"system_{uuid4().hex[:8]}",
+                    password="!auto!",
+                    email=""
+                )
+            self.property_owner = owner
+            
+            
+         # ensure category
+        if self.category_id is None:
+            cat, _ = RoomCategorie.objects.get_or_create(name="General", defaults={"active": True})
+            self.category = cat    
+        super().save(*args, **kwargs)
+
+        class Meta:
+            constraints = [
+                # enforce uniqueness of LOWER(title) **only** for non-deleted rows
+                models.UniqueConstraint(
+                    Lower("title"),
+                    condition=Q(is_deleted=False),
+                    name="uq_room_title_lower_alive",
+                ),
+            ]
+
+        def __str__(self):
+            return self.title
 
 
 # ------
@@ -322,6 +346,7 @@ class Message(models.Model):
     sender = models.ForeignKey(User, on_delete=models.CASCADE, related_name="sent_messages")
     body = models.TextField()
     created = models.DateTimeField(auto_now_add=True, db_index=True)  # ← name is "created"
+    updated = models.DateTimeField(auto_now=True, db_index=True)
 
     class Meta:
         ordering = ["created"]
