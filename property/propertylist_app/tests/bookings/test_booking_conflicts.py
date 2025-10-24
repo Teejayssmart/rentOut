@@ -64,7 +64,20 @@ def test_direct_booking_conflict_and_boundaries():
     bad_end   = (base + timedelta(days=1)).isoformat()  # equal
     r4 = client.post(url, {"room": room.id, "start": bad_start, "end": bad_end}, format="json")
     assert r4.status_code == 400
-    assert "end" in r4.data  # from perform_create() -> {"end": "End must be after start."}
+    err = r4.data
+
+    # safely extract error message
+    msg = None
+    if "end" in err.get("field_errors", {}):
+        msg = err["field_errors"]["end"][0]
+    elif "end" in err.get("details", {}):
+        msg = str(err["details"]["end"])
+
+    # confirm we got some message text
+    assert msg is not None, f"Expected 'end' error, got {err}"
+    assert "End must be after start." in msg
+
+
 
 
 @pytest.mark.django_db
@@ -112,4 +125,15 @@ def test_slot_booking_capacity_and_past_slot():
 
     r3 = c2.post(url, {"slot": past_slot.id}, format="json")
     assert r3.status_code == 400
-    assert "slot" in r3.data  # "This slot is in the past."
+    err = r3.data
+
+    msg = None
+    if "slot" in err.get("field_errors", {}):
+        msg = err["field_errors"]["slot"][0]
+    elif "slot" in err.get("details", {}):
+        msg = str(err["details"]["slot"])
+
+    assert msg is not None, f"Expected 'slot' error, got {err}"
+    assert "This slot is in the past." in msg
+
+

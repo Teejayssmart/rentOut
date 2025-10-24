@@ -118,6 +118,7 @@ def test_deactivate_account_and_login_fails():
     assert r.status_code == 200
 
     # Try to log in again -> should fail
+    
     login_url = reverse("v1:auth-login")
     c2 = APIClient()
     r_login = c2.post(login_url, {"username": "deact", "password": "pass123"}, format="json")

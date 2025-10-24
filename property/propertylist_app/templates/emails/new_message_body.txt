@@ -1,0 +1,7 @@
+You have a new message in your RentOut inbox.
+
+From: {{ sender_username }}
+Message:
+{{ body }}
+
+Log in to reply.

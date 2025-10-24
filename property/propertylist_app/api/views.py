@@ -14,9 +14,6 @@ from django_filters.rest_framework import DjangoFilterBackend
 
 from django.core.exceptions import ValidationError as DjangoValidationError
 
-
-
-
 from rest_framework import filters, generics, serializers, status, viewsets
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.exceptions import ValidationError, Throttled
@@ -141,25 +138,33 @@ class ReviewCreate(generics.CreateAPIView):
         return Review.objects.all()
 
     def perform_create(self, serializer):
-        room = get_object_or_404(Room.objects.select_related('property_owner'), pk=self.kwargs.get("pk"))
+        room_pk = self.kwargs.get("pk")
+        room = get_object_or_404(Room, pk=room_pk)
         user = self.request.user
 
-        # Compare the user objects directly
-        if room.property_owner == user:
-            raise serializers.ValidationError({"detail": "You cannot review your own room."})
+        # 1) Block owner reviewing own room
+        if getattr(room, "property_owner_id", None) == user.id:
+            raise ValidationError({"detail": "You cannot review your own room."})
 
+        # 2) Block duplicates BEFORE saving
         if Review.objects.filter(room=room, review_user=user).exists():
-            raise serializers.ValidationError({"detail": "You have already reviewed this room!"})
+            raise ValidationError({"detail": "You have already reviewed this room!"})
 
-        review = serializer.save(room=room, review_user=user)
+        # 3) Save once
+        review = serializer.save(review_user=user, room=room)
 
-        if room.number_rating == 0:
-            room.avg_rating = review.rating
-        else:
-            room.avg_rating = ((room.avg_rating * room.number_rating) + review.rating) / (room.number_rating + 1)
-        room.number_rating += 1
+        # 4) Update rolling average safely
+        current_count = int(getattr(room, "number_rating", 0) or 0)
+        current_avg = float(getattr(room, "avg_rating", 0) or 0.0)
+        new_count = current_count + 1
+        room.avg_rating = (
+            ((current_avg * current_count) + review.rating) / new_count
+            if new_count > 0 else float(review.rating)
+        )
+        room.number_rating = new_count
         room.save(update_fields=["avg_rating", "number_rating"])
 
+        
 class ReviewList(generics.ListAPIView):
     serializer_class = ReviewSerializer
     filter_backends = [DjangoFilterBackend]
@@ -626,15 +631,25 @@ class RoomPhotoDeleteView(APIView):
     permission_classes = [IsAuthenticated]
 
     def delete(self, request, pk, photo_id):
+        # Must be an actual instance
         room = get_object_or_404(Room, pk=pk)
-        if room.property_owner_id != request.user.id:
+
+        # Robust owner-id extraction (works even if FK not loaded or None)
+        owner_id = (
+            getattr(room, "property_owner_id", None)
+            or getattr(getattr(room, "property_owner", None), "id", None)
+        )
+
+        if owner_id != request.user.id:
             return Response(
                 {"detail": "You do not have permission to perform this action."},
                 status=status.HTTP_403_FORBIDDEN,
             )
+
         photo = get_object_or_404(RoomImage, pk=photo_id, room=room)
         photo.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
 
 
 # --------------------
@@ -906,8 +921,6 @@ class MySavedRoomsView(generics.ListAPIView):
         return ctx
 
 
-
-
 # Messaging
 # --------------------
 class MessageThreadListCreateView(generics.ListCreateAPIView):
@@ -942,12 +955,11 @@ class MessageThreadListCreateView(generics.ListCreateAPIView):
         thread.participants.set(participants)
 
 
-
 class MessageListCreateView(generics.ListCreateAPIView):
     serializer_class = MessageSerializer
     permission_classes = [IsAuthenticated]
     pagination_class = RoomCPagination
-    #throttle_classes = [MessageUserThrottle]
+    throttle_classes = [MessageUserThrottle]  # ← UNCOMMENTED
     ordering_fields = ["updated", "created", "id"]
     ordering = ["-created"]
 
@@ -963,8 +975,6 @@ class MessageListCreateView(generics.ListCreateAPIView):
         serializer.save(thread=thread, sender=self.request.user)
 
 
-
-    
 class ThreadMarkReadView(APIView):
     """POST /api/messages/threads/<thread_id>/read/ — marks all inbound messages as read."""
     permission_classes = [IsAuthenticated]
@@ -978,7 +988,7 @@ class ThreadMarkReadView(APIView):
         MessageRead.objects.bulk_create([MessageRead(message=m, user=request.user) for m in to_mark], ignore_conflicts=True)
 
         return Response({"marked": to_mark.count()})
-    
+
 
 class StartThreadFromRoomView(APIView):
     """
@@ -1012,73 +1022,59 @@ class StartThreadFromRoomView(APIView):
         return Response(MessageThreadSerializer(thread, context={"request": request}).data)
 
 
-
 class BookingListCreateView(generics.ListCreateAPIView):
-    """GET my bookings; POST create a booking."""
+    """GET my bookings / POST create (slot OR direct)."""
     serializer_class = BookingSerializer
     permission_classes = [IsAuthenticated]
     pagination_class = RoomLOPagination
     throttle_classes = [UserRateThrottle]
-    ordering_fields = ["created_at", "start"]
+    # >>> Added to enable ?ordering=... on this endpoint <<<
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
+    ordering_fields = ["start", "end", "created_at", "id"]
     ordering = ["-created_at"]
 
     def get_queryset(self):
         return Booking.objects.filter(user=self.request.user).order_by("-created_at")
 
-    def create(self, request, *args, **kwargs):
-        data = request.data or {}
-
-        # --- Slot booking branch ---
-        slot_id = data.get("slot")
+    def perform_create(self, serializer):
+        slot_id = self.request.data.get("slot")
         if slot_id:
             slot = get_object_or_404(AvailabilitySlot, pk=slot_id)
 
-            # Room must be alive
             if getattr(slot.room, "is_deleted", False):
-                return Response({"room": "Room is not available."}, status=status.HTTP_400_BAD_REQUEST)
+                raise ValidationError({"room": "Room is not available."})
 
-            # Past slot → top-level "slot" key
             if slot.end <= timezone.now():
-                return Response({"slot": "This slot is in the past."}, status=status.HTTP_400_BAD_REQUEST)
+                raise ValidationError({"slot": "This slot is in the past."})
 
-            # Capacity check under lock
             with transaction.atomic():
-                s = AvailabilitySlot.objects.select_for_update().get(pk=slot.pk)
-                active = Booking.objects.filter(slot=s, canceled_at__isnull=True).count()
-                if active >= s.max_bookings:
-                    # tests check for "detail"
-                    return Response({"detail": "This slot is fully booked."}, status=status.HTTP_400_BAD_REQUEST)
+                slot_locked = AvailabilitySlot.objects.select_for_update().get(pk=slot.pk)
+                active = Booking.objects.filter(slot=slot_locked, canceled_at__isnull=True).count()
+                if active >= slot_locked.max_bookings:
+                    raise ValidationError({"detail": "This slot is fully booked."})
 
-                booking = Booking.objects.create(
-                    user=request.user,
-                    room=s.room,
-                    slot=s,
-                    start=s.start,
-                    end=s.end,
+                serializer.save(
+                    user=self.request.user,
+                    room=slot_locked.room,
+                    slot=slot_locked,
+                    start=slot_locked.start,
+                    end=slot_locked.end,
                 )
-            ser = self.get_serializer(booking)
-            headers = self.get_success_headers(ser.data)
-            return Response(ser.data, status=status.HTTP_201_CREATED, headers=headers)
+            return
 
-        # --- Direct booking branch ---
-        room_id = data.get("room")
+        room_id = self.request.data.get("room")
         if not room_id:
-            return Response({"room": "This field is required."}, status=status.HTTP_400_BAD_REQUEST)
+            raise ValidationError({"room": "This field is required."})
         room = get_object_or_404(Room.objects.alive(), pk=room_id)
 
-        ser = self.get_serializer(data=data)
-        ser.is_valid(raise_exception=False)
+        start = serializer.validated_data.get("start")
+        end = serializer.validated_data.get("end")
 
-        start = ser.validated_data.get("start")
-        end = ser.validated_data.get("end")
-
-        # tests want top-level keys
         if not start or not end:
-            return Response({"start": "start and end are required."}, status=status.HTTP_400_BAD_REQUEST)
+            raise ValidationError({"start": "start and end are required."})
         if start >= end:
-            return Response({"end": "End must be after start."}, status=status.HTTP_400_BAD_REQUEST)
+            raise ValidationError({"end": "End must be after start."})
 
-        # Overlap rule
         conflicts = (
             Booking.objects
             .filter(room=room, canceled_at__isnull=True)
@@ -1086,24 +1082,9 @@ class BookingListCreateView(generics.ListCreateAPIView):
             .exists()
         )
         if conflicts:
-            return Response({"detail": "Selected dates clash with an existing booking."}, status=status.HTTP_400_BAD_REQUEST)
+            raise ValidationError({"detail": "Selected dates clash with an existing booking."})
 
-        booking = ser.save(user=request.user, room=room)
-        out = self.get_serializer(booking)
-        headers = self.get_success_headers(out.data)
-        return Response(out.data, status=status.HTTP_201_CREATED, headers=headers)
-
-    # # Ensure DRF uses our early-return Response for field-errors in perform_create
-    # def create(self, request, *args, **kwargs):
-    #     serializer = self.get_serializer(data=request.data)
-    #     serializer.is_valid(raise_exception=True)
-    #     self.response = None
-    #     self.perform_create(serializer)
-    #     if self.response is not None:
-    #         return self.response
-    #     headers = self.get_success_headers(serializer.data)
-    #     return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
-
+        serializer.save(user=self.request.user, room=room)
 
 
 class BookingDetailView(generics.RetrieveAPIView):
@@ -1258,7 +1239,6 @@ class UserAvatarUploadView(APIView):
         profile.avatar = cleaned
         profile.save(update_fields=["avatar"])
         return Response({"avatar": profile.avatar.url if profile.avatar else None}, status=status.HTTP_200_OK)
-
 
 
 class ChangeEmailView(APIView):
@@ -1785,9 +1765,6 @@ class NotificationMarkAllReadView(APIView):
     def post(self, request):
         Notification.objects.filter(user=request.user, is_read=False).update(is_read=True)
         return Response({"ok": True}, status=status.HTTP_200_OK)
-
-
-
 
 
 class HealthCheckView(APIView):

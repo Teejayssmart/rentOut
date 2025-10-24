@@ -136,26 +136,25 @@ class Room(SoftDeleteModel):
     def save(self, *args, **kwargs):
         if self.property_owner_id is None:
             User = get_user_model()
-            owner = User.objects.order_by('id').first()
+            owner = User.objects.order_by("id").first()
             if owner is None:
-                # Create a minimal system user only in the rare case there is no user yet
                 owner = User.objects.create_user(
                     username=f"system_{uuid4().hex[:8]}",
                     password="!auto!",
                     email=""
                 )
             self.property_owner = owner
-            
-            
-         # ensure category
+
         if self.category_id is None:
-            cat, _ = RoomCategorie.objects.get_or_create(name="General", defaults={"active": True})
-            self.category = cat    
+            cat, _ = RoomCategorie.objects.get_or_create(
+                name="General", defaults={"key": "general", "slug": "general", "active": True}
+            )
+            self.category = cat
+
         super().save(*args, **kwargs)
 
         class Meta:
             constraints = [
-                # enforce uniqueness of LOWER(title) **only** for non-deleted rows
                 models.UniqueConstraint(
                     Lower("title"),
                     condition=Q(is_deleted=False),
@@ -345,14 +344,16 @@ class Message(models.Model):
     thread = models.ForeignKey(MessageThread, on_delete=models.CASCADE, related_name="messages")
     sender = models.ForeignKey(User, on_delete=models.CASCADE, related_name="sent_messages")
     body = models.TextField()
-    created = models.DateTimeField(auto_now_add=True, db_index=True)  # ← name is "created"
-    updated = models.DateTimeField(auto_now=True, db_index=True)
+    created = models.DateTimeField(auto_now_add=True, db_index=True)  # existing
+    updated = models.DateTimeField(auto_now=True, db_index=True)      # NEW
 
     class Meta:
         ordering = ["created"]
         indexes = [
             models.Index(fields=["thread", "created"]),
+            models.Index(fields=["thread", "updated"]),  # NEW helpful index
         ]
+
 
 
 

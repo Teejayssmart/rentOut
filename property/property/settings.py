@@ -147,38 +147,36 @@ MEDIA_ROOT = BASE_DIR / 'media'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 REST_FRAMEWORK = {
-    "DEFAULT_AUTHENTICATION_CLASSES": (
+    "DEFAULT_AUTHENTICATION_CLASSES": [
         "rest_framework_simplejwt.authentication.JWTAuthentication",
-    ),
-    "DEFAULT_PERMISSION_CLASSES": (
-        "rest_framework.permissions.IsAuthenticatedOrReadOnly",
-    ),
-    "DEFAULT_FILTER_BACKENDS": (
-        "django_filters.rest_framework.DjangoFilterBackend",
-        "rest_framework.filters.OrderingFilter",
-    ),
-    "DEFAULT_THROTTLE_CLASSES": (
-        "rest_framework.throttling.AnonRateThrottle",
+    ],
+    "DEFAULT_PERMISSION_CLASSES": [
+        "rest_framework.permissions.AllowAny",
+    ],
+    "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.LimitOffsetPagination",
+    "PAGE_SIZE": 10,
+
+    "DEFAULT_THROTTLE_CLASSES": [
         "rest_framework.throttling.UserRateThrottle",
+        "rest_framework.throttling.AnonRateThrottle",
         "rest_framework.throttling.ScopedRateThrottle",
-    ),
+    ],
     "DEFAULT_THROTTLE_RATES": {
-       
-        # fine-grained endpoint scopes (ScopedRateThrottle)
-       # generous limits during tests to avoid spurious 429s
-        "user": "1000/minute" if TESTING else "100/hour",
-        "anon": "1000/minute" if TESTING else "50/hour",
-        "login": "1000/minute" if TESTING else "5/minute",
-        "register": "1000/minute" if TESTING else "5/minute",
-        "register_anon": "2/hour",
-        "password-reset": "1000/minute" if TESTING else "3/minute",
-        "password-reset-confirm": "1000/minute" if TESTING else "3/minute",
-        "report-create": "1000/minute" if TESTING else "10/minute",
-        "messaging": "1000/minute" if TESTING else "30/minute",
-        "message_user": "1000/minute" if TESTING else "10/minute",
-        "review-list": "1000/minute" if TESTING else "60/minute",
-        "review-detail": "1000/minute" if TESTING else "60/minute",
+        "user": "1000/day",
+        "anon": "1000/day",
+        "login": "100/hour" if not TESTING else "10000/hour",
+        "register_anon": "20/hour" if not TESTING else "10000/hour",
+        "message_user": "2/hour",
+        "messaging": "100/hour" if not TESTING else "10000/hour",
+        "review-detail": "100/hour" if not TESTING else "10000/hour",
+        "report-create": "10/hour" if not TESTING else "10000/hour",
+        "password-reset": "10/hour" if not TESTING else "10000/hour",
+        "password-reset-confirm": "10/hour" if not TESTING else "10000/hour",
     },
+    "DEFAULT_FILTER_BACKENDS": [
+        "django_filters.rest_framework.DjangoFilterBackend",
+        "rest_framework.filters.OrderingFilter",  # ← add this
+    ],
     
     
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.LimitOffsetPagination",
