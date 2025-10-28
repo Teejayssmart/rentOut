@@ -63,3 +63,17 @@ SITE_URL = "http://testserver"
 
 # Keep test DB speedy
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+
+# ---- Celery: run tasks eagerly in tests; no external broker needed ----
+# Celery 5 reads lowercase keys; some libs still look for the CELERY_* variants,
+# so we set BOTH to be safe.
+broker_url = "memory://"
+result_backend = "cache+memory://"
+task_always_eager = True
+task_eager_propagates = True
+
+CELERY_BROKER_URL = broker_url
+CELERY_RESULT_BACKEND = result_backend
+CELERY_TASK_ALWAYS_EAGER = task_always_eager
+CELERY_TASK_EAGER_PROPAGATES = task_eager_propagates

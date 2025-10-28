@@ -14,6 +14,7 @@ from pathlib import Path
 from datetime import timedelta
 import os
 from dotenv import load_dotenv
+from celery.schedules import crontab
 
 TESTING = bool(os.environ.get("PYTEST_CURRENT_TEST"))
 
@@ -62,6 +63,9 @@ INSTALLED_APPS = [
     "corsheaders",
     
     'drf_spectacular',
+    "notifications.apps.NotificationsConfig",
+  
+    
 ]
 
 MIDDLEWARE = [
@@ -161,17 +165,33 @@ REST_FRAMEWORK = {
         "rest_framework.throttling.AnonRateThrottle",
         "rest_framework.throttling.ScopedRateThrottle",
     ],
-    "DEFAULT_THROTTLE_RATES": {
-        "user": "1000/day",
-        "anon": "1000/day",
-        "login": "100/hour" if not TESTING else "10000/hour",
-        "register_anon": "20/hour" if not TESTING else "10000/hour",
-        "message_user": "2/hour",
-        "messaging": "100/hour" if not TESTING else "10000/hour",
-        "review-detail": "100/hour" if not TESTING else "10000/hour",
-        "report-create": "10/hour" if not TESTING else "10000/hour",
-        "password-reset": "10/hour" if not TESTING else "10000/hour",
-        "password-reset-confirm": "10/hour" if not TESTING else "10000/hour",
+    # "DEFAULT_THROTTLE_RATES": {
+    #     "user": "1000/day",
+    #     "anon": "1000/day",
+    #     "login": "100/hour" if not TESTING else "10000/hour",
+    #     "register_anon": "20/hour" if not TESTING else "10000/hour",
+    #     "message_user": "2/hour",
+    #     "messaging": "100/hour" if not TESTING else "10000/hour",
+    #     "review-detail": "100/hour" if not TESTING else "10000/hour",
+    #     "report-create": "10/hour" if not TESTING else "10000/hour",
+    #     "password-reset": "10/hour" if not TESTING else "10000/hour",
+    #     "password-reset-confirm": "10/hour" if not TESTING else "10000/hour",
+    # },
+    
+     "DEFAULT_THROTTLE_RATES": {
+        "user": "10000/hour",
+        "anon": "10000/hour",
+        "login": "10000/hour",
+        "register": "10000/hour",
+        "register_anon": "10000/hour",
+        "message_user": "10000/hour",
+        "messaging": "10000/hour",
+        "review-create": "10000/hour",
+        "review-detail": "10000/hour",
+        "password-reset": "10000/hour",
+        "password-reset-confirm": "10000/hour",
+        "report-create": "10000/hour",
+        "moderation": "10000/hour",
     },
     "DEFAULT_FILTER_BACKENDS": [
         "django_filters.rest_framework.DjangoFilterBackend",
@@ -241,8 +261,51 @@ TIME_ZONE = "Europe/London"
 USE_I18N = True
 USE_TZ = True
 
+# --- Media config  ---
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
+
+#  MEDIA POLICY (used by validators)
+MAX_IMAGE_BYTES = int(os.getenv("MAX_IMAGE_BYTES", str(5 * 1024 * 1024)))  # 5 MB
+ALLOWED_IMAGE_FORMATS = {"JPEG", "JPG", "PNG", "WEBP"}  # Pillow formats
+MAX_IMAGE_PIXELS = int(os.getenv("MAX_IMAGE_PIXELS", "40000000"))  # 40 MP safety fuse
+
+
+# --- Toggle S3 in production via env ---
+USE_S3 = os.getenv("USE_S3", "false").lower() in {"1", "true", "yes"}
+
+# OPTIONAL S3 STORAGE (enable with USE_S3=true in .env)
+USE_S3 = os.getenv("USE_S3", "false").lower() in {"1", "true", "yes"}
+
+if USE_S3:
+    INSTALLED_APPS += ["storages"]  # requires django-storages
+    DEFAULT_FILE_STORAGE = "storages.backends.s3boto3.S3Boto3Storage"
+
+    AWS_STORAGE_BUCKET_NAME = os.getenv("AWS_STORAGE_BUCKET_NAME", "")
+    AWS_S3_REGION_NAME = os.getenv("AWS_S3_REGION_NAME", "eu-west-2")
+    AWS_S3_SIGNATURE_VERSION = "s3v4"
+    AWS_S3_ADDRESSING_STYLE = "virtual"
+    AWS_S3_FILE_OVERWRITE = False
+    AWS_DEFAULT_ACL = None
+
+    # Signed URLs for private media (avatars/exports)
+    AWS_QUERYSTRING_AUTH = True
+    AWS_QUERYSTRING_EXPIRE = int(os.getenv("AWS_QUERYSTRING_EXPIRE", "900"))  # 15 minutes
+
+    AWS_S3_OBJECT_PARAMETERS = {
+        "ServerSideEncryption": "AES256",
+        "CacheControl": "max-age=86400, s-maxage=86400",
+    }
+
+    # Optional: if using CloudFront or custom domain
+    AWS_S3_CUSTOM_DOMAIN = os.getenv("AWS_S3_CUSTOM_DOMAIN", "")
+
+
+# --- Media policy knobs used by validators ---
+MAX_IMAGE_BYTES = int(os.getenv("MAX_IMAGE_BYTES", str(5 * 1024 * 1024)))  # 5MB
+ALLOWED_IMAGE_FORMATS = {"JPEG", "JPG", "PNG", "WEBP"}  # Pillow formats (JPG treated as JPEG)
+MAX_IMAGE_PIXELS = int(os.getenv("MAX_IMAGE_PIXELS", "40000000"))  # 40 MP safety fuse
+
 
 # --- Webhook secrets (read from environment) ---
 # Example env vars:
@@ -276,3 +339,48 @@ CELERY_RESULT_BACKEND = "redis://localhost:6379/1"
 CELERY_TASK_ALWAYS_EAGER = False  # True only in certain tests if you want synchronous behavior
 CELERY_TASK_TIME_LIMIT = 60
 CELERY_TASK_SOFT_TIME_LIMIT = 45
+
+
+
+# --- Celery (safe to import even if Celery not installed yet) ---
+CELERY_BROKER_URL = "redis://localhost:6379/0"
+CELERY_RESULT_BACKEND = "redis://localhost:6379/1"
+CELERY_TASK_ALWAYS_EAGER = False
+CELERY_TASK_TIME_LIMIT = 60
+CELERY_TASK_SOFT_TIME_LIMIT = 45
+
+# Route classes of tasks to separate queues (optional but helpful)
+CELERY_TASK_ROUTES = {
+    "notifications.tasks.*": {"queue": "emails"},
+    "propertylist_app.tasks.task_send_new_message_email": {"queue": "emails"},
+    "propertylist_app.expire_paid_listings": {"queue": "maintenance"},
+}
+
+# If you prefer, you can also declare queues, but Celery will create them on demand.
+
+
+try:
+    from celery.schedules import crontab
+    CELERY_BEAT_SCHEDULE = {
+        "send-due-notifications-every-minute": {
+            "task": "notifications.tasks.send_due_notifications",
+            "schedule": crontab(minute="*"),
+        },
+        "notify-listing-expiring-daily-7am": {
+            "task": "notifications.tasks.notify_listing_expiring",
+            "schedule": crontab(hour=7, minute=0),
+        },
+        # Add alongside your other two entries
+        "expire-paid-listings-daily-03:00": {
+        "task": "propertylist_app.expire_paid_listings",
+        "schedule": crontab(hour=3, minute=0),
+},
+
+    }
+except Exception:
+    # Celery not installed yet? No problem — run without beat for now.
+    CELERY_BEAT_SCHEDULE = {}
+    
+
+
+

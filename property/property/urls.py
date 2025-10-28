@@ -16,14 +16,19 @@ from drf_spectacular.views import (
     SpectacularRedocView,
 )
 
+# property/property/urls.py  (ONLY the include lines changed)
+
 urlpatterns = [
     path("admin/", admin.site.urls),
 
-    # Plain include (no namespace) so tests can reverse by simple name like 'room-list-alt'
-    path("api/", include("propertylist_app.api.urls")),
+    # 1) Plain include with NO namespace (so tests can reverse simple names)
+    #    The ", None" prevents Django from auto-using app_name as a namespace.
+    path("api/", include(("propertylist_app.api.urls", None))),
 
-    # Also keep explicit namespaces used by some tests
+    # 2) Explicit namespace "api" at the same base path
     path("api/", include(("propertylist_app.api.urls", "api"), namespace="api")),
+
+    # 3) Versioned include with its own unique namespace
     path("api/v1/", include(("propertylist_app.api.urls", "api"), namespace="v1")),
 
     # JWT-only auth routes
@@ -36,6 +41,7 @@ urlpatterns = [
     path("api/docs/", SpectacularSwaggerView.as_view(url_name="schema"), name="swagger-ui"),
     path("api/redoc/", SpectacularRedocView.as_view(url_name="schema"), name="redoc"),
 ]
+
 
 if settings.DEBUG:
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

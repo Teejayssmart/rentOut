@@ -1,14 +1,5 @@
 # property/__init__.py
+# Ensure Celery app is loaded when Django starts.
+from .celery_app import app as celery_app  # noqa: F401
 
-# Allow running without a Celery app present/working (e.g., in tests)
-# try:
-#     from .celery_app import app as celery_app  # noqa: F401
-# except Exception:  # pragma: no cover
-#     celery_app = None
-
-# __all__ = ("celery_app",)
-
-
-# property/property/__init__.py
-# Keep this file empty of any imports that require Django settings.
-__all__ = []
+__all__ = ("celery_app",)

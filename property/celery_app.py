@@ -1,42 +1,36 @@
 # property/celery_app.py
 import os
+from celery import Celery
+from celery.schedules import crontab
 
-# Always point Celery (or our shim) at Django settings
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "property.settings")
 
-# Try the real Celery first; fall back to a no-op shim in test/dev envs
-try:
-    from celery import Celery  # real Celery
-    from celery.schedules import crontab
-    HAVE_CELERY = True
-except Exception:  # Celery not installed — provide a stub
-    Celery = None
-    crontab = None
-    HAVE_CELERY = False
+app = Celery("property")
 
-if HAVE_CELERY:
-    # Real Celery app
-    app = Celery("property")
-    app.config_from_object("django.conf:settings", namespace="CELERY")
-    app.autodiscover_tasks()
+# Read CELERY_* settings from Django settings.py (namespace)
+app.config_from_object("django.conf:settings", namespace="CELERY")
 
-    # Optional: Celery Beat schedule (safe even if Beat isn’t running)
-    app.conf.beat_schedule = {
-        "expire-paid-listings-daily": {
-            "task": "propertylist_app.tasks.task_expire_paid_listings",
-            "schedule": crontab(minute=0, hour=3),
-        },
-    }
-else:
-    # Minimal shim so importing this module never crashes tests
-    class _DummyCelery:
-        main = "property"
-        conf = type("Cfg", (), {"beat_schedule": {}})()
+# Auto-discover tasks.py in installed apps
+app.autodiscover_tasks()
 
-        def config_from_object(self, *args, **kwargs):
-            pass
-
-        def autodiscover_tasks(self, *args, **kwargs):
-            pass
-
-    app = _DummyCelery()
+# (Optional) Define schedules here if you prefer centralised config
+# NOTE: You can also keep schedules in settings.py; choose ONE place.
+app.conf.beat_schedule = {
+    # Expire paid listings daily at 03:00
+    "expire-paid-listings-daily": {
+        "task": "propertylist_app.tasks.task_expire_paid_listings",
+        "schedule": crontab(hour=3, minute=0),
+    },
+    # Queue “listing expiring in N days” reminders daily at 07:00
+    "queue-expiry-reminders-daily": {
+        "task": "notifications.tasks.notify_listing_expiring",
+        "schedule": crontab(hour=7, minute=0),
+        "options": {"queue": "emails"},
+    },
+    # Send due notifications every minute
+    "send-due-notifications": {
+        "task": "notifications.tasks.send_due_notifications",
+        "schedule": crontab(),  # every minute
+        "options": {"queue": "emails"},
+    },
+}
