@@ -242,6 +242,20 @@ class RoomImageSerializer(serializers.ModelSerializer):
         fields = ["id", "room", "image", "status"]
         read_only_fields = ["room", "status"]
 
+    #  generate thumbnails after upload
+    def create(self, validated_data):
+        obj = super().create(validated_data)
+        f = validated_data.get("image")
+        if f:
+            stem = get_random_string(12)  # unique-ish stem
+            base_dir = "room_images/thumbs"
+            try:
+                generate_thumbnails_and_return_paths(f, base_dir, stem)
+            except Exception:
+                # Do not fail the main upload if thumbnail generation fails
+                pass
+        return obj
+
 
 
 class MessageSerializer(serializers.ModelSerializer):

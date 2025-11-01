@@ -53,3 +53,6 @@ def message_created_create_notifications(sender, instance: Message, created, **k
 def on_message_created(sender, instance: Message, created: bool, **kwargs):
     if created:
         task_send_new_message_email.delay(instance.id)
+        
+
+        

@@ -5,6 +5,13 @@ Usage everywhere:
     from propertylist_app.validators import validate_price, normalize_uk_postcode, ...
 """
 
+# ✅ FIX: import image validators RELATIVELY from this package (no self-import)
+from .images import (
+    validate_avatar_image,
+    validate_listing_photos,
+    assert_no_duplicate_files,
+)
+
 # --- GEO ---
 from .geo import (
     normalize_uk_postcode,
@@ -14,13 +21,6 @@ from .geo import (
 
 # --- BOOKING ---
 from .booking import validate_no_booking_conflict
-
-# --- IMAGES / FILES ---
-from .images import (
-    validate_avatar_image,
-    validate_listing_photos,
-    assert_no_duplicate_files,
-)
 
 # --- IO (network / low-level) ---
 from .io import geocode_postcode
@@ -58,13 +58,11 @@ from .security import (
 )
 
 # ---- Aliases to cover US/UK spelling imports ----
-# If some code imports "normalize_price", provide an alias to normalise_price.
 try:
     normalize_price  # type: ignore[name-defined]
 except NameError:
     normalize_price = normalise_price  # alias
 
-# If some code imports "normalise_uk_postcode", map it to normalize_uk_postcode.
 try:
     normalise_uk_postcode  # type: ignore[name-defined]
 except NameError:
@@ -90,4 +88,3 @@ __all__ = [
     "normalise_price", "normalize_price", "normalise_phone", "normalise_name", "enforce_user_caps",
     "assert_not_duplicate_listing",
 ]
-

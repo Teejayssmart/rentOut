@@ -381,6 +381,13 @@ except Exception:
     # Celery not installed yet? No problem — run without beat for now.
     CELERY_BEAT_SCHEDULE = {}
     
+    
+# ---- Caching knobs ----
+CACHE_KEY_PREFIX = "rentout"
+CACHE_DEFAULT_TTL = 60  # seconds; safe default for list/detail
+CACHE_SEARCH_TTL = 120  # seconds; search is slightly longer
+    
+    
 
 
 
