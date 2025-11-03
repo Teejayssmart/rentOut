@@ -15,7 +15,7 @@ from django.views.decorators.cache import cache_page
 
 from propertylist_app.api.views import (
     # Rooms & Categories
-    RoomAV, RoomDetailAV, RoomListGV,
+    RoomAV, RoomDetailAV, RoomListGV, ModerationReportModerateActionView,
     RoomCategorieAV, RoomCategorieDetailAV, RoomCategorieVS,
 
     # Reviews
@@ -64,6 +64,8 @@ from propertylist_app.api.views import (
     
     
     HealthCheckView,
+    
+    
 
 )
 
@@ -156,6 +158,8 @@ urlpatterns = [
     path("moderation/reports/",              ModerationReportListView.as_view(),  name="moderation-report-list"),
     path("moderation/reports/<int:pk>/",     ModerationReportUpdateView.as_view(), name="moderation-report-update"),
     path("moderation/rooms/<int:pk>/status/", RoomModerationStatusView.as_view(),  name="moderation-room-status"),
+    path("reports/<int:pk>/moderate/",     ModerationReportModerateActionView.as_view(), name="report-moderate"),
+
     path("ops/stats/",                       OpsStatsView.as_view(),               name="ops-stats"),
 
     # --- Privacy / GDPR ---
@@ -171,6 +175,8 @@ urlpatterns = [
     
     
     path("health/", HealthCheckView.as_view(), name="health"),
+    
+    
 
 ]
 

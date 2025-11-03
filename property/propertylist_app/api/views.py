@@ -270,14 +270,36 @@ class RoomAV(APIView):
         )
         return Response(RoomSerializer(qs, many=True).data)
 
-class RoomDetailAV(CachedAnonymousGETMixin, APIView):
+class RoomDetailAV(APIView):
     permission_classes = [IsOwnerOrReadOnly]
-    cache_prefix = "rooms:detail"
-    cache_ttl = 60
+    http_method_names = ["get", "put", "patch", "delete"]
 
     def get(self, request, pk):
         room = get_object_or_404(Room.objects.alive(), pk=pk)
         return Response(RoomSerializer(room).data)
+
+    def put(self, request, pk):
+        room = get_object_or_404(Room.objects.alive(), pk=pk)
+        self.check_object_permissions(request, room)
+        ser = RoomSerializer(room, data=request.data)
+        ser.is_valid(raise_exception=True)
+        ser.save()
+        return Response(ser.data)
+
+    def patch(self, request, pk):
+        room = get_object_or_404(Room.objects.alive(), pk=pk)
+        self.check_object_permissions(request, room)
+        ser = RoomSerializer(room, data=request.data, partial=True)
+        ser.is_valid(raise_exception=True)
+        ser.save()
+        return Response(ser.data)
+
+    def delete(self, request, pk):
+        room = get_object_or_404(Room.objects.alive(), pk=pk)
+        self.check_object_permissions(request, room)
+        room.soft_delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
 
     # put/patch/delete remain unchanged (not cached)
     
@@ -1580,6 +1602,69 @@ class ModerationReportUpdateView(generics.UpdateAPIView):
             pass
 
         return Response(self.get_serializer(report).data)
+
+
+
+class ModerationReportModerateActionView(APIView):
+    permission_classes = [IsAdminUser]
+
+    def post(self, request, pk):
+        """
+        POST /api/v1/reports/<id>/moderate/
+        body: {"action": "resolve"|"in_review"|"reject", "hide_room": true|false, "resolution_notes": "..." }
+        """
+        report = get_object_or_404(Report, pk=pk)
+
+        action = (request.data.get("action") or "").strip().lower()
+        notes = (request.data.get("resolution_notes") or "").strip()
+        hide_room = bool(request.data.get("hide_room"))
+
+        # map action → status
+        mapping = {
+            "resolve": "resolved",
+            "resolved": "resolved",
+            "in_review": "in_review",
+            "review": "in_review",
+            "reject": "rejected",
+            "rejected": "rejected",
+        }
+        new_status = mapping.get(action)
+        if not new_status:
+            return Response({"detail": "invalid action"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # update report
+        if notes:
+            report.resolution_notes = notes
+        report.status = new_status
+        report.handled_by = request.user
+        report.save(update_fields=["status", "resolution_notes", "handled_by", "updated_at"])
+
+        # optional: hide the room if requested and target is a room
+        if hide_room and report.target_type == "room" and isinstance(report.target, Room):
+            if report.target.status != "hidden":
+                report.target.status = "hidden"
+                report.target.save(update_fields=["status"])
+            try:
+                AuditLog.objects.create(
+                    user=request.user,
+                    action="room.hide",
+                    ip_address=getattr(request, "META", {}).get("REMOTE_ADDR"),
+                    extra_data={"via_report": report.pk, "room_id": report.target.pk},
+                )
+            except Exception:
+                pass
+
+        try:
+            AuditLog.objects.create(
+                user=request.user,
+                action="report.moderate",
+                ip_address=getattr(request, "META", {}).get("REMOTE_ADDR"),
+                extra_data={"status": report.status, "report_id": report.pk},
+            )
+        except Exception:
+            pass
+
+        return Response({"id": report.pk, "status": report.status})
 
 
 class RoomModerationStatusView(APIView):
