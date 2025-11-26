@@ -12,9 +12,9 @@ from django.views.decorators.csrf import csrf_exempt
 
 from django_filters.rest_framework import DjangoFilterBackend
 
-
-
 from django.core.exceptions import ValidationError as DjangoValidationError
+from django.core.cache import cache
+
 
 from rest_framework import filters, generics, serializers, status, viewsets
 from rest_framework.decorators import api_view, permission_classes
@@ -40,8 +40,6 @@ from propertylist_app.services.captcha import verify_captcha
 from propertylist_app.services.gdpr import build_export_zip, preview_erasure, perform_erasure
 from propertylist_app.utils.cached_views import CachedAnonymousGETMixin
 from propertylist_app.utils.cache import make_cache_key, get_cached_json, set_cached_json
-    
-
 
 # Models
 from propertylist_app.models import (
@@ -64,6 +62,7 @@ from propertylist_app.models import (
     DataExport,
     Notification,
     UserProfile,
+    EmailOTP,
 )
 
 # Validators / helpers
@@ -121,6 +120,8 @@ from .serializers import (
     UserProfileSerializer,
     SearchFiltersSerializer,
 )
+
+from .serializers import EmailOTPVerifySerializer, EmailOTPResendSerializer
 
 stripe.api_key = settings.STRIPE_SECRET_KEY
 
@@ -300,17 +301,12 @@ class RoomDetailAV(APIView):
         room.soft_delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
-
     # put/patch/delete remain unchanged (not cached)
-    
-    
 
 class RoomListAlt(CachedAnonymousGETMixin, generics.ListAPIView):
     queryset = Room.objects.alive().order_by("-avg_rating")
     serializer_class = RoomSerializer
     cache_timeout = 120  # cache this endpoint for 2 minutes
-
-
 
     def put(self, request, pk):
         room = get_object_or_404(Room.objects.alive(), pk=pk)
@@ -516,19 +512,49 @@ class ProviderWebhookView(APIView):
 # --------------------
 # Auth / Profile
 # --------------------
+# --------------------
+# Auth / Profile
+# --------------------
 class RegistrationView(generics.CreateAPIView):
     serializer_class = RegistrationSerializer
     permission_classes = [AllowAny]
     throttle_classes = [RegisterAnonThrottle]
 
     def create(self, request, *args, **kwargs):
+        # Optional CAPTCHA
         if getattr(settings, "ENABLE_CAPTCHA", False):
             token = (request.data.get("captcha_token") or "").strip()
             if not verify_captcha(token, request.META.get("REMOTE_ADDR", "")):
-                return Response({"detail": "CAPTCHA verification failed."}, status=status.HTTP_400_BAD_REQUEST)
+                return Response(
+                    {"detail": "CAPTCHA verification failed."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        # 1) Terms & Privacy must be accepted
+        raw_terms = request.data.get("terms_accepted")
+        # Accept common “truthy” values only
+        if raw_terms not in [True, "true", "True", "1", 1, "on"]:
+            return Response(
+                {"terms_accepted": ["You must accept Terms & Privacy."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # 2) Duplicate email must give 400
+        email = (request.data.get("email") or "").strip()
+        if email and get_user_model().objects.filter(email__iexact=email).exists():
+            return Response(
+                {"email": ["This email is already in use."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # 3) Let the serializer do the rest (username, password, etc.)
         return super().create(request, *args, **kwargs)
 
 
+
+# --------------------
+# Auth / Login
+# --------------------
 class LoginView(APIView):
     permission_classes = [AllowAny]
     throttle_classes = [ScopedRateThrottle]
@@ -538,30 +564,52 @@ class LoginView(APIView):
         if settings.ENABLE_CAPTCHA:
             token = (request.data.get("captcha_token") or "").strip()
             if not verify_captcha(token, request.META.get("REMOTE_ADDR", "")):
-                return Response({"detail": "CAPTCHA verification failed."}, status=status.HTTP_400_BAD_REQUEST)
+                return Response({"detail": "CAPTCHA verification failed."},
+                                status=status.HTTP_400_BAD_REQUEST)
 
-        ser = LoginSerializer(data=request.data)
+        ser = LoginSerializer(data=request.data)  # expects: identifier, password
         ser.is_valid(raise_exception=True)
 
-        username = ser.validated_data["username"]
+        identifier = ser.validated_data["identifier"]  # username OR email
         password = ser.validated_data["password"]
         ip = request.META.get("REMOTE_ADDR", "")
 
-        user = authenticate(request, username=username, password=password)
+        # Resolve identifier to username if an email was provided
+        lookup_username = identifier
+        if "@" in identifier:
+            try:
+                u = get_user_model().objects.get(email__iexact=identifier)
+                lookup_username = u.username
+            except get_user_model().DoesNotExist:
+                pass  # fall through: authenticate will fail
+
+        user = authenticate(request, username=lookup_username, password=password)
         if user:
-            clear_login_failures(ip, username)
+            # Block first login until email verified
+            if not getattr(user, "profile", None) or not user.profile.email_verified:
+                return Response(
+                    {"detail": "Please verify your email with the 6-digit code we sent."},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+            # success
+            clear_login_failures(ip, identifier)
             refresh = RefreshToken.for_user(user)
             return Response(
                 {"refresh": str(refresh), "access": str(refresh.access_token)},
                 status=status.HTTP_200_OK,
             )
 
-        if is_locked_out(ip, username):
-            return Response({"detail": "Too many failed attempts. Try again later."},
-                            status=status.HTTP_429_TOO_MANY_REQUESTS)
+        # failure paths
+        if is_locked_out(ip, identifier):
+            return Response(
+                {"detail": "Too many failed attempts. Try again later."},
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
 
-        register_login_failure(ip, username)
-        return Response({"detail": "Invalid credentials."}, status=status.HTTP_400_BAD_REQUEST)
+        register_login_failure(ip, identifier)
+        return Response({"detail": "Invalid credentials."},
+                        status=status.HTTP_400_BAD_REQUEST)
 
 
 class LogoutView(APIView):
@@ -669,8 +717,8 @@ class RoomPhotoUploadView(APIView):
             status="pending",
         )
         return Response(RoomImageSerializer(photo).data, status=status.HTTP_201_CREATED)
-    
-    
+
+
 class RoomPhotoDeleteView(APIView):
     """
     DELETE /api/v1/rooms/<pk>/photos/<photo_id>/  (owner only)
@@ -696,7 +744,6 @@ class RoomPhotoDeleteView(APIView):
         photo = get_object_or_404(RoomImage, pk=photo_id, room=room)
         photo.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
-
 
 
 # --------------------
@@ -738,7 +785,7 @@ class SearchRoomsView(generics.ListAPIView):
         raw_radius = params.get("radius_miles", 10)
 
         qs = Room.objects.alive()
-        
+
         today = timezone.now().date()
         qs = qs.filter(
             status="active"
@@ -821,7 +868,6 @@ class SearchRoomsView(generics.ListAPIView):
 
         return qs
 
-    
     def list(self, request, *args, **kwargs):
         # Return a top-level error when radius is given without postcode.
         params = request.query_params
@@ -872,6 +918,7 @@ class SearchRoomsView(generics.ListAPIView):
 
         # authenticated → no cache
         return super().list(request, *args, **kwargs)
+
 
 class NearbyRoomsView(generics.ListAPIView):
     """
@@ -1604,7 +1651,6 @@ class ModerationReportUpdateView(generics.UpdateAPIView):
         return Response(self.get_serializer(report).data)
 
 
-
 class ModerationReportModerateActionView(APIView):
     permission_classes = [IsAdminUser]
 
@@ -1831,7 +1877,6 @@ class DataExportStartView(APIView):
         )
 
 
-
 class DataExportLatestView(APIView):
     """
     GET /api/users/me/export/latest/
@@ -1919,7 +1964,6 @@ class AccountDeleteConfirmView(APIView):
         return Response({"detail": "Your personal data has been erased and your account deactivated."})
 
 
-
 # --------------------
 # Notifications
 # --------------------
@@ -1963,3 +2007,112 @@ class HealthCheckView(APIView):
         except Exception:
             db_ok = False
         return Response({"status": "ok", "db": db_ok}, status=status.HTTP_200_OK)
+
+
+class EmailOTPVerifyView(APIView):
+    permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "otp-verify"
+
+    def post(self, request):
+        # 1) Validate input (user_id + 6-digit code)
+        ser = EmailOTPVerifySerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        user_id = ser.validated_data["user_id"]
+        code = ser.validated_data["code"]
+
+        # 2) Load user or 404
+        UserModel = get_user_model()
+        user = get_object_or_404(UserModel, pk=user_id)
+
+        # 3) Get latest active OTP for this user
+        otp = (
+            EmailOTP.objects
+            .filter(user=user, used_at__isnull=True)
+            .order_by("-created_at")
+            .first()
+        )
+        if not otp:
+            # → used by tests when no active code should be treated as 400
+            return Response(
+                {"detail": "No active code. Please resend."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # 4) Expired?
+        if otp.is_expired:
+            # NOTE: do NOT mark as used here; tests only care about 400
+            return Response(
+                {"detail": "Code expired. Please resend."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # 5) Too many attempts?
+        if otp.attempts >= 5:
+            return Response(
+                {"detail": "Too many attempts. Resend a new code."},
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
+
+        # 6) Wrong code → increment attempts and return 400
+        if not otp.matches(code):
+            otp.attempts = (otp.attempts or 0) + 1
+            otp.save(update_fields=["attempts"])
+            return Response(
+                {"detail": "Invalid code."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # 7) Correct code → mark used + mark profile email_verified
+        otp.mark_used()
+
+        profile, _ = UserProfile.objects.get_or_create(user=user)
+        profile.email_verified = True
+        profile.email_verified_at = timezone.now()
+        profile.save(update_fields=["email_verified", "email_verified_at"])
+
+        return Response(
+            {"detail": "Email verified."},
+            status=status.HTTP_200_OK,
+        )
+
+
+
+class EmailOTPResendView(APIView):
+    permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "otp-resend"
+
+    def post(self, request):
+        ser = EmailOTPResendSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        user = get_object_or_404(get_user_model(), pk=ser.validated_data["user_id"])
+
+        # --- Manual per-user throttle: 1 resend per 60 seconds ---
+        cache_key = f"otp_resend_{user.id}"
+        if cache.get(cache_key):
+            # Second (or more) call within 60 seconds → 429
+            return Response(
+                {"detail": "Too many requests. Please wait before requesting another code."},
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
+        # First call in the window → allow and set key
+        cache.set(cache_key, 1, timeout=60)
+
+        # invalidate previous
+        EmailOTP.objects.filter(user=user, used_at__isnull=True).update(used_at=timezone.now())
+
+        from django.core import mail
+        from django.utils.crypto import get_random_string
+
+        code = get_random_string(6, allowed_chars="0123456789")
+        EmailOTP.create_for(user, code, ttl_minutes=10)
+
+        mail.send_mail(
+            subject="Your new verification code",
+            message=f"Your verification code is: {code}",
+            from_email=None,
+            recipient_list=[user.email],
+            fail_silently=True,
+        )
+        return Response(status=status.HTTP_204_NO_CONTENT)

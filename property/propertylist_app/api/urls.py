@@ -12,6 +12,8 @@ from django.views.decorators.cache import cache_page
 
 
 
+from .views import EmailOTPVerifyView, EmailOTPResendView
+
 
 from propertylist_app.api.views import (
     # Rooms & Categories
@@ -175,6 +177,10 @@ urlpatterns = [
     
     
     path("health/", HealthCheckView.as_view(), name="health"),
+    
+    path("auth/verify-otp/", EmailOTPVerifyView.as_view(), name="auth-verify-otp"),
+    path("auth/resend-otp/", EmailOTPResendView.as_view(), name="auth-resend-otp"),
+
     
     
 

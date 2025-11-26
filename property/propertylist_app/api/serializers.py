@@ -1,4 +1,4 @@
-from django.contrib.auth import get_user_model
+from django.contrib.auth import get_user_model, password_validation
 User = get_user_model()
 
 from rest_framework import serializers
@@ -7,7 +7,7 @@ from django.contrib.contenttypes.models import ContentType
 from propertylist_app.models import (
     Room, RoomCategorie, Review, UserProfile, RoomImage,
     SavedRoom, MessageThread, Message, Booking,
-    AvailabilitySlot, Payment, Report, Notification,
+    AvailabilitySlot, Payment, Report, Notification, EmailOTP
 )
 
 from propertylist_app.validators import (
@@ -20,6 +20,11 @@ from propertylist_app.validators import (
     assert_not_duplicate_listing, assert_no_duplicate_files,
     enforce_user_caps,
 )
+
+from django.utils import timezone
+from django.core import mail
+from django.utils.crypto import get_random_string
+import re
 
 
 # --------------------
@@ -35,13 +40,16 @@ class ReviewSerializer(serializers.ModelSerializer):
         read_only_fields = ["room", "review_user"]
 
 
-
 # --------------------
 # Room Serializer
 # --------------------
 class RoomSerializer(serializers.ModelSerializer):
     category = serializers.CharField(source="category.name", read_only=True)
-    category_id = serializers.PrimaryKeyRelatedField(source="category", queryset=RoomCategorie.objects.all(), write_only=True)
+    category_id = serializers.PrimaryKeyRelatedField(
+        source="category",
+        queryset=RoomCategorie.objects.all(),
+        write_only=True,
+    )
     is_saved = serializers.SerializerMethodField(read_only=True)
     distance_miles = serializers.SerializerMethodField(read_only=True)
 
@@ -76,7 +84,7 @@ class RoomSerializer(serializers.ModelSerializer):
         return value
 
     def validate(self, attrs):
-        price          = attrs.get("price_per_month")
+        price = attrs.get("price_per_month")
         bills_included = attrs.get("bills_included")
         available_from = attrs.get("available_from")
 
@@ -86,15 +94,17 @@ class RoomSerializer(serializers.ModelSerializer):
 
         # bills_included guard (only when price is provided)
         if bills_included and price is not None and float(price) < 100.0:
-            raise serializers.ValidationError({
-                "bills_included": "Bills cannot be included for such a low price."
-            })
+            raise serializers.ValidationError(
+                {"bills_included": "Bills cannot be included for such a low price."}
+            )
 
         # non-negative integers
         for field in ("number_of_bedrooms", "number_of_bathrooms"):
             val = attrs.get(field)
             if val is not None and int(val) < 0:
-                raise serializers.ValidationError({field: "Must be zero or a positive integer."})
+                raise serializers.ValidationError(
+                    {field: "Must be zero or a positive integer."}
+                )
 
         # available_from must not be in the past (when provided)
         if available_from is not None:
@@ -116,9 +126,10 @@ class RoomSerializer(serializers.ModelSerializer):
                 )
 
         return attrs
-    
+
     def get_is_saved(self, obj):
-        user = self.context.get("request").user if self.context.get("request") else None
+        request = self.context.get("request")
+        user = request.user if request and hasattr(request, "user") else None
         if not user or not user.is_authenticated:
             return False
         return SavedRoom.objects.filter(user=user, room=obj.id).exists()
@@ -144,8 +155,12 @@ class RoomCategorieSerializer(serializers.ModelSerializer):
 # --------------------
 class SearchFiltersSerializer(serializers.Serializer):
     q = serializers.CharField(required=False, allow_blank=True)
-    min_price = serializers.DecimalField(required=False, max_digits=10, decimal_places=2)
-    max_price = serializers.DecimalField(required=False, max_digits=10, decimal_places=2)
+    min_price = serializers.DecimalField(
+        required=False, max_digits=10, decimal_places=2
+    )
+    max_price = serializers.DecimalField(
+        required=False, max_digits=10, decimal_places=2
+    )
     postcode = serializers.CharField(required=False)
     radius_miles = serializers.FloatField(required=False)
     limit = serializers.IntegerField(required=False)
@@ -157,48 +172,152 @@ class SearchFiltersSerializer(serializers.Serializer):
 
     def validate(self, attrs):
         validate_numeric_range(attrs.get("min_price"), attrs.get("max_price"))
-        validate_pagination(attrs.get("limit"), attrs.get("page"), attrs.get("offset"))
+        validate_pagination(
+            attrs.get("limit"), attrs.get("page"), attrs.get("offset")
+        )
         if attrs.get("radius_miles") and not attrs.get("postcode"):
-            raise serializers.ValidationError({"postcode": "Postcode is required when using radius search."})
+            raise serializers.ValidationError(
+                {"postcode": "Postcode is required when using radius search."}
+            )
         return attrs
 
 
 # --------------------
 # User & Auth
 # --------------------
-# In property/propertylist_app/api/serializers.py
 class RegistrationSerializer(serializers.ModelSerializer):
     password2 = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    # NEW fields to match Figma
+    first_name = serializers.CharField(required=False, allow_blank=True)
+    last_name = serializers.CharField(required=False, allow_blank=True)
+    role = serializers.ChoiceField(choices=[("landlord", "Landlord"), ("seeker", "Seeker")])
+    terms_accepted = serializers.BooleanField()
+    terms_version = serializers.CharField()
+    marketing_consent = serializers.BooleanField(required=False, default=False)
 
     class Meta:
         model = User
-        fields = ["username", "email", "password", "password2"]
+        fields = [
+            "username",
+            "email",
+            "password",
+            "password2",
+            "first_name",
+            "last_name",
+            "role",
+            "terms_accepted",
+            "terms_version",
+            "marketing_consent",
+        ]
         extra_kwargs = {"password": {"write_only": True}}
 
     def validate(self, attrs):
-        pw = attrs.get("password")
+        # password match
+        pw = attrs.get("password") or ""
         pw2 = attrs.get("password2", "")
+
         if pw2 and pw != pw2:
             raise serializers.ValidationError({"password2": "Passwords must match."})
+
+        # --- Custom password policy (tests expect these rules) ---
+        errors = {}
+
+        # length
+        if len(pw) < 8:
+            errors.setdefault("password", []).append("Password must be at least 8 characters long.")
+
+        # at least one lowercase
+        if not re.search(r"[a-z]", pw):
+            errors.setdefault("password", []).append("Password must contain at least one lowercase letter.")
+
+        # at least one uppercase
+        if not re.search(r"[A-Z]", pw):
+            errors.setdefault("password", []).append("Password must contain at least one uppercase letter.")
+
+        # at least one digit
+        if not re.search(r"\d", pw):
+            errors.setdefault("password", []).append("Password must contain at least one digit.")
+
+        # at least one special character (non-alphanumeric)
+        if not re.search(r"[^\w\s]", pw):
+            errors.setdefault("password", []).append("Password must contain at least one special character.")
+
+        if errors:
+            # The tests only care about status=400, not specific messages
+            raise serializers.ValidationError(errors)
+
+        # Keep Django's built-in validators as an extra safety net
+        password_validation.validate_password(pw)
+
+        # terms
+        if attrs.get("terms_accepted") is not True:
+            raise serializers.ValidationError(
+                {"terms_accepted": "You must accept Terms & Privacy."}
+            )
+        if not (attrs.get("terms_version") or "").strip():
+            raise serializers.ValidationError(
+                {"terms_version": "Terms version is required."}
+            )
+
         return attrs
 
-    def create(self, validated_data):
-        # Remove password2 if present, hash password properly
-        validated_data.pop("password2", None)
-        password = validated_data.pop("password")
-        user = User.objects.create_user(**validated_data, password=password)  # ← Uses create_user to hash password
+
+    def create(self, validated):
+        validated.pop("password2", None)
+        role = validated.pop("role")
+        terms_accepted = validated.pop("terms_accepted")
+        terms_version = validated.pop("terms_version")
+        marketing = validated.pop("marketing_consent", False)
+
+        password = validated.pop("password")
+        user = User.objects.create_user(**validated, password=password)
+
+        # ensure profile and set flags
+        profile, _ = UserProfile.objects.get_or_create(user=user)
+        profile.role = role
+        profile.marketing_consent = bool(marketing)
+        profile.terms_accepted_at = timezone.now()
+        profile.terms_version = terms_version
+        profile.email_verified = False
+        profile.save()
+
+        # generate 6-digit OTP and email it
+        code = get_random_string(6, allowed_chars="0123456789")
+        EmailOTP.objects.filter(user=user, used_at__isnull=True).update(
+            used_at=timezone.now()
+        )
+        EmailOTP.create_for(user, code, ttl_minutes=10)
+
+        # simple email (console backend ok for now)
+        mail.send_mail(
+            subject="Verify your email (RentOut)",
+            message=f"Your verification code is: {code}",
+            from_email=None,
+            recipient_list=[user.email],
+            fail_silently=True,
+        )
         return user
 
     def to_representation(self, instance):
+        # minimal payload; FE knows to show OTP step next
+        masked = (
+            instance.email[:2]
+            + "•••@"
+            + instance.email.split("@")[-1]
+            if instance.email
+            else ""
+        )
         return {
             "id": instance.pk,
             "username": instance.username,
             "email": instance.email,
+            "email_masked": masked,
+            "need_otp": True,
         }
 
 
 class LoginSerializer(serializers.Serializer):
-    username = serializers.CharField()
+    identifier = serializers.CharField()  # username OR email
     password = serializers.CharField(write_only=True)
 
 
@@ -242,11 +361,16 @@ class RoomImageSerializer(serializers.ModelSerializer):
         fields = ["id", "room", "image", "status"]
         read_only_fields = ["room", "status"]
 
-    #  generate thumbnails after upload
+    # generate thumbnails after upload
     def create(self, validated_data):
         obj = super().create(validated_data)
         f = validated_data.get("image")
         if f:
+            from django.utils.crypto import get_random_string  # local import if needed
+            from propertylist_app.services.images import (
+                generate_thumbnails_and_return_paths,
+            )
+
             stem = get_random_string(12)  # unique-ish stem
             base_dir = "room_images/thumbs"
             try:
@@ -255,7 +379,6 @@ class RoomImageSerializer(serializers.ModelSerializer):
                 # Do not fail the main upload if thumbnail generation fails
                 pass
         return obj
-
 
 
 class MessageSerializer(serializers.ModelSerializer):
@@ -268,7 +391,9 @@ class MessageSerializer(serializers.ModelSerializer):
 
 
 class MessageThreadSerializer(serializers.ModelSerializer):
-    participants = serializers.SlugRelatedField(slug_field="username", many=True, queryset=User.objects.all())
+    participants = serializers.SlugRelatedField(
+        slug_field="username", many=True, queryset=User.objects.all()
+    )
     last_message = serializers.SerializerMethodField()
     unread_count = serializers.SerializerMethodField()
 
@@ -284,7 +409,9 @@ class MessageThreadSerializer(serializers.ModelSerializer):
         request = self.context.get("request")
         if not request or not request.user.is_authenticated:
             return 0
-        return obj.messages.exclude(sender=request.user).exclude(reads__user=request.user).count()
+        return obj.messages.exclude(sender=request.user).exclude(
+            reads__user=request.user
+        ).count()
 
 
 class BookingSerializer(serializers.ModelSerializer):
@@ -292,13 +419,22 @@ class BookingSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Booking
-        fields = ["id", "room", "slot", "room_title", "start", "end", "created_at", "canceled_at"]
+        fields = [
+            "id",
+            "room",
+            "slot",
+            "room_title",
+            "start",
+            "end",
+            "created_at",
+            "canceled_at",
+        ]
         read_only_fields = ["created_at", "canceled_at"]
         extra_kwargs = {
-            "room":  {"required": False},
-            "slot":  {"required": False},
+            "room": {"required": False},
+            "slot": {"required": False},
             "start": {"required": False},
-            "end":   {"required": False},
+            "end": {"required": False},
         }
 
 
@@ -318,37 +454,64 @@ class PaymentSerializer(serializers.ModelSerializer):
     class Meta:
         model = Payment
         fields = [
-            "id", "user", "room", "amount", "currency",
-            "stripe_checkout_session_id", "stripe_payment_intent_id",
-            "status", "created_at"
+            "id",
+            "user",
+            "room",
+            "amount",
+            "currency",
+            "stripe_checkout_session_id",
+            "stripe_payment_intent_id",
+            "status",
+            "created_at",
         ]
         read_only_fields = fields
-        
-        
+
+
 class NotificationSerializer(serializers.ModelSerializer):
     class Meta:
         model = Notification
         fields = [
-            "id", "type", "title", "body",
-            "thread", "message",
-            "is_read", "created_at",
+            "id",
+            "type",
+            "title",
+            "body",
+            "thread",
+            "message",
+            "is_read",
+            "created_at",
         ]
         read_only_fields = fields
-        
 
 
 class ReportSerializer(serializers.ModelSerializer):
-    target_type = serializers.ChoiceField(choices=[c[0] for c in Report.TARGET_CHOICES])
+    target_type = serializers.ChoiceField(
+        choices=[c[0] for c in Report.TARGET_CHOICES]
+    )
 
     class Meta:
         model = Report
         fields = [
-            "id", "reporter", "target_type", "object_id",
-            "reason", "details",
-            "status", "handled_by", "resolution_notes",
-            "created_at", "updated_at",
+            "id",
+            "reporter",
+            "target_type",
+            "object_id",
+            "reason",
+            "details",
+            "status",
+            "handled_by",
+            "resolution_notes",
+            "created_at",
+            "updated_at",
         ]
-        read_only_fields = ["id", "reporter", "status", "handled_by", "resolution_notes", "created_at", "updated_at"]
+        read_only_fields = [
+            "id",
+            "reporter",
+            "status",
+            "handled_by",
+            "resolution_notes",
+            "created_at",
+            "updated_at",
+        ]
 
     def validate(self, attrs):
         model_map = {
@@ -359,7 +522,9 @@ class ReportSerializer(serializers.ModelSerializer):
         }
         model = model_map.get(attrs["target_type"])
         if not model or not model.objects.filter(pk=attrs["object_id"]).exists():
-            raise serializers.ValidationError({"object_id": "Invalid object ID for the given target type."})
+            raise serializers.ValidationError(
+                {"object_id": "Invalid object ID for the given target type."}
+            )
         return attrs
 
     def create(self, validated_data):
@@ -378,6 +543,43 @@ class ReportSerializer(serializers.ModelSerializer):
 class GDPRExportStartSerializer(serializers.Serializer):
     confirm = serializers.BooleanField(required=True)
 
+
 class GDPRDeleteConfirmSerializer(serializers.Serializer):
     confirm = serializers.BooleanField(required=True)
-    idempotency_key = serializers.CharField(required=False, allow_blank=True, max_length=64)
+    idempotency_key = serializers.CharField(
+        required=False, allow_blank=True, max_length=64
+    )
+
+
+# --- OTP Serializers (single, final versions) ---
+class EmailOTPVerifySerializer(serializers.Serializer):
+    """
+    Used by /api/auth/verify-otp/
+    """
+    user_id = serializers.IntegerField()
+    code = serializers.CharField(max_length=6)
+
+    def validate_user_id(self, value):
+        UserModel = get_user_model()
+        if not UserModel.objects.filter(pk=value).exists():
+            raise serializers.ValidationError("User not found.")
+        return value
+
+    def validate_code(self, value):
+        value = (value or "").strip()
+        if len(value) != 6 or not value.isdigit():
+            raise serializers.ValidationError("Code must be a 6-digit number.")
+        return value
+
+
+class EmailOTPResendSerializer(serializers.Serializer):
+    """
+    Used by /api/auth/resend-otp/
+    """
+    user_id = serializers.IntegerField()
+
+    def validate_user_id(self, value):
+        UserModel = get_user_model()
+        if not UserModel.objects.filter(pk=value).exists():
+            raise serializers.ValidationError("User not found.")
+        return value

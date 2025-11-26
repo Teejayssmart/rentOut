@@ -192,6 +192,9 @@ REST_FRAMEWORK = {
         "password-reset-confirm": "10000/hour",
         "report-create": "10000/hour",
         "moderation": "10000/hour",
+        "login": "10000/hour",
+        "otp-verify": "10000/hour",
+        "otp-resend": "10000/hour",
     },
     "DEFAULT_FILTER_BACKENDS": [
         "django_filters.rest_framework.DjangoFilterBackend",

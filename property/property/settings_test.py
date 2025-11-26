@@ -37,6 +37,9 @@ REST_FRAMEWORK = {
         # Baselines; tests narrow these when needed:
         "user": "10000/hour",
         "anon": "10000/hour",
+        "otp-verify": "10000/hour",
+        "otp-resend": "10000/hour",
+
 
         # Scopes used in your views/tests:
         "login": "10000/hour",
@@ -51,6 +54,11 @@ REST_FRAMEWORK = {
         "report-create": "10000/hour",
         "moderation": "10000/hour",
     },
+    
+    "EXCEPTION_HANDLER": "rest_framework.views.exception_handler",
+    "TEST_REQUEST_DEFAULT_FORMAT": "json",
+
+    
 }
 
 # Stripe keys safe defaults
