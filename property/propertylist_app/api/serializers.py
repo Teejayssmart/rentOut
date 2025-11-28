@@ -7,9 +7,9 @@ from django.contrib.contenttypes.models import ContentType
 from propertylist_app.models import (
     Room, RoomCategorie, Review, UserProfile, RoomImage,
     SavedRoom, MessageThread, Message, Booking,
-    AvailabilitySlot, Payment, Report, Notification, EmailOTP
-)
+    AvailabilitySlot, Payment, Report, Notification, EmailOTP,
 
+)
 from propertylist_app.validators import (
     validate_person_name, validate_age_18_plus, validate_avatar_image,
     normalize_uk_postcode, validate_listing_title, sanitize_html_description,
@@ -155,12 +155,8 @@ class RoomCategorieSerializer(serializers.ModelSerializer):
 # --------------------
 class SearchFiltersSerializer(serializers.Serializer):
     q = serializers.CharField(required=False, allow_blank=True)
-    min_price = serializers.DecimalField(
-        required=False, max_digits=10, decimal_places=2
-    )
-    max_price = serializers.DecimalField(
-        required=False, max_digits=10, decimal_places=2
-    )
+    min_price = serializers.DecimalField(required=False, max_digits=10, decimal_places=2)
+    max_price = serializers.DecimalField(required=False, max_digits=10, decimal_places=2)
     postcode = serializers.CharField(required=False)
     radius_miles = serializers.FloatField(required=False)
     limit = serializers.IntegerField(required=False)
@@ -168,18 +164,61 @@ class SearchFiltersSerializer(serializers.Serializer):
     offset = serializers.IntegerField(required=False)
     ordering = serializers.CharField(required=False)
 
+    # NEW: filter by property_type choices on Room model
+    property_types = serializers.ListField(
+        child=serializers.ChoiceField(choices=["flat", "house", "studio"]),
+        required=False,
+        allow_empty=True,
+    )
+
     ALLOWED_ORDER_FIELDS = {"price_per_month", "available_from", "created_at"}
 
     def validate(self, attrs):
         validate_numeric_range(attrs.get("min_price"), attrs.get("max_price"))
-        validate_pagination(
-            attrs.get("limit"), attrs.get("page"), attrs.get("offset")
-        )
+        validate_pagination(attrs.get("limit"), attrs.get("page"), attrs.get("offset"))
+
         if attrs.get("radius_miles") and not attrs.get("postcode"):
             raise serializers.ValidationError(
                 {"postcode": "Postcode is required when using radius search."}
             )
+
         return attrs
+
+
+class FindAddressSerializer(serializers.Serializer):
+    postcode = serializers.CharField()
+
+    def validate_postcode(self, value):
+        # Re-use your existing UK postcode normaliser
+        value = (value or "").strip()
+        if not value:
+            raise serializers.ValidationError("Postcode is required.")
+        return normalize_uk_postcode(value)
+
+
+
+# --------------------
+# Home / City summaries
+# --------------------
+class CitySummarySerializer(serializers.Serializer):
+    """
+    Lightweight object for 'London / 132 rooms' style data.
+    """
+    name = serializers.CharField()
+    room_count = serializers.IntegerField()
+
+
+class HomeSummarySerializer(serializers.Serializer):
+    """
+    Top-level payload for the home page.
+    """
+    featured_rooms = RoomSerializer(many=True)
+    latest_rooms = RoomSerializer(many=True)
+    popular_cities = CitySummarySerializer(many=True)
+    stats = serializers.DictField()
+    app_links = serializers.DictField()
+
+
 
 
 # --------------------

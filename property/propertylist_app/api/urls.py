@@ -10,7 +10,7 @@ from rest_framework.routers import DefaultRouter
 
 from django.views.decorators.cache import cache_page
 
-
+from propertylist_app.api import views
 
 from .views import EmailOTPVerifyView, EmailOTPResendView
 
@@ -34,7 +34,7 @@ from propertylist_app.api.views import (
 
     # Bookings & Availability
     create_booking, BookingListCreateView, BookingDetailView, BookingCancelView,
-    RoomAvailabilityView, RoomAvailabilitySlotListCreateView, RoomAvailabilitySlotDeleteView, RoomAvailabilityPublicView,
+    RoomAvailabilityView, RoomAvailabilitySlotListCreateView, RoomAvailabilitySlotDeleteView, RoomAvailabilityPublicView,  FindAddressView,
 
     # Photos
     RoomPhotoUploadView, RoomPhotoDeleteView,
@@ -43,7 +43,7 @@ from propertylist_app.api.views import (
     RegistrationView, LoginView, LogoutView,
     PasswordResetRequestView, PasswordResetConfirmView,
     MeView, UserProfileView,
-    UserAvatarUploadView, ChangeEmailView, ChangePasswordView, DeactivateAccountView,
+    UserAvatarUploadView, ChangeEmailView, ChangePasswordView, DeactivateAccountView, MyRoomsView,
 
     # Soft delete
     RoomSoftDeleteView,
@@ -67,9 +67,11 @@ from propertylist_app.api.views import (
     
     HealthCheckView,
     
-    
-
+   
+   
 )
+
+
 
 router = DefaultRouter()
 router.register("category", RoomCategorieVS, basename="roomcategory")  # DRF ViewSet routes
@@ -182,7 +184,18 @@ urlpatterns = [
     path("auth/resend-otp/", EmailOTPResendView.as_view(), name="auth-resend-otp"),
 
     
-    
+    # Home page summary + city list
+    path("home/", views.HomePageView.as_view(), name="api-home"),
+    path("cities/", views.CityListView.as_view(), name="api-city-list"),
+    path("rooms/mine/", MyRoomsView.as_view(), name="rooms-mine"),
+
+
+
+    # --- Search & discovery ---
+    path("search/rooms/",  cache_page(60)(SearchRoomsView.as_view()),  name="search-rooms"),
+    path("rooms/nearby/",  NearbyRoomsView.as_view(),                  name="rooms-nearby"),
+    path("search/find-address/", FindAddressView.as_view(),            name="search-find-address"),
+
 
 ]
 

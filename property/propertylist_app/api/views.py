@@ -30,6 +30,7 @@ from rest_framework.response import Response
 from rest_framework.throttling import UserRateThrottle, AnonRateThrottle, ScopedRateThrottle
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework import status, permissions
 
 # Services
 from propertylist_app.services.geo import geocode_postcode_cached
@@ -96,6 +97,9 @@ from propertylist_app.api.serializers import (
     GDPRExportStartSerializer,
     GDPRDeleteConfirmSerializer,
     NotificationSerializer,
+    CitySummarySerializer,
+    HomeSummarySerializer,
+    FindAddressSerializer, 
 )
 from propertylist_app.api.throttling import (
     ReviewCreateThrottle,
@@ -758,6 +762,149 @@ class MyRoomsView(generics.ListAPIView):
         return Room.objects.alive().filter(property_owner=self.request.user)
 
 
+
+# --------------------
+# Home page + city list
+# --------------------
+class HomePageView(APIView):
+    """
+    GET /api/home/
+
+    Returns everything the mobile/web home screen needs:
+    - featured_rooms: top-rated, active listings
+    - latest_rooms: newest active listings
+    - popular_cities: cities with most listings (for the slider strip)
+    - stats: high-level counters
+    - app_links: iOS / Android URLs (from settings, if defined)
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        today = timezone.now().date()
+
+        base_rooms = (
+            Room.objects.alive()
+            .filter(status="active")
+            .filter(Q(paid_until__isnull=True) | Q(paid_until__gte=today))
+            .select_related("category", "property_owner")
+        )
+
+        # 1) Featured rooms – highest rating first
+        featured_rooms_qs = base_rooms.order_by("-avg_rating", "-number_rating", "-created_at")[:6]
+
+        # 2) Latest rooms – newest first
+        latest_rooms_qs = base_rooms.order_by("-created_at")[:6]
+
+        # 3) Popular cities for the “Explore the Most Popular Shared Homes” strip
+        city_rows = (
+            base_rooms
+            .exclude(location__isnull=True)
+            .exclude(location__exact="")
+            .values("location")
+            .annotate(room_count=Count("id"))
+            .order_by("-room_count", "location")[:12]
+        )
+        popular_cities = [
+            {"name": r["location"], "room_count": r["room_count"]}
+            for r in city_rows
+        ]
+
+        # 4) High-level stats for the page (can be shown or hidden in UI)
+        stats = {
+            "total_active_rooms": base_rooms.count(),
+            "total_landlords": UserProfile.objects.filter(role="landlord").count(),
+            "total_seekers": UserProfile.objects.filter(role="seeker").count(),
+        }
+
+        # 5) Mobile app links – pulled from settings if you configure them
+        app_links = {
+            "ios": getattr(settings, "MOBILE_APP_IOS_URL", ""),
+            "android": getattr(settings, "MOBILE_APP_ANDROID_URL", ""),
+        }
+
+        payload = {
+            "featured_rooms": featured_rooms_qs,
+            "latest_rooms": latest_rooms_qs,
+            "popular_cities": popular_cities,
+            "stats": stats,
+            "app_links": app_links,
+        }
+
+        ser = HomeSummarySerializer(payload, context={"request": request})
+        return Response(ser.data, status=status.HTTP_200_OK)
+
+
+class CityListView(APIView):
+    """
+    GET /api/cities/
+
+    Returns all distinct Room.location values (all cities / towns with listings)
+    so the front-end can show a scrollable list and call search on click.
+
+    Query params:
+      ?q=Lon    -> filters by case-insensitive substring
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        q = (request.query_params.get("q") or "").strip()
+
+        base_qs = (
+            Room.objects.alive()
+            .exclude(location__isnull=True)
+            .exclude(location__exact="")
+        )
+
+        if q:
+            base_qs = base_qs.filter(location__icontains=q)
+
+        rows = (
+            base_qs.values("location")
+            .annotate(room_count=Count("id"))
+            .order_by("location")
+        )
+
+        data = [
+            {"name": r["location"], "room_count": r["room_count"]}
+            for r in rows
+        ]
+
+        ser = CitySummarySerializer(data, many=True)
+        return Response(ser.data, status=status.HTTP_200_OK)
+
+
+
+class FindAddressView(APIView):
+  
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request, *args, **kwargs):
+        serializer = FindAddressSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(
+                {
+                    "ok": False,
+                    "code": "validation_error",
+                    "field_errors": serializer.errors,
+                },
+                status=400,
+            )
+
+        postcode = serializer.validated_data["postcode"]
+
+        # Placeholder response; extend with address / coordinates later
+        return Response(
+            {
+                "ok": True,
+                "postcode": postcode,
+            },
+            status=200,
+        )
+
+
+
+
+
 class SearchRoomsView(generics.ListAPIView):
     """
     GET /api/search/rooms/?q=&min_price=&max_price=&postcode=&radius_miles=&ordering=
@@ -846,12 +993,37 @@ class SearchRoomsView(generics.ListAPIView):
             self._distance_by_id = {rid: d for rid, d in distances}
             qs = qs.filter(id__in=ids_in_radius)
 
+                # ---------- Ordering / sort options ----------
         ordering_param = (params.get("ordering") or "").strip()
+
+        # Map frontend-friendly values to real ordering fields
+        # Frontend → ?ordering=...
+        alias_map = {
+            "default": None,               # let backend decide based on postcode
+            "newest": "-created_at",       # Newest Listings
+            "last_updated": "-updated_at", # Last Updated
+            "price_asc": "price_per_month",      # Price (Lowest First)
+            "price_desc": "-price_per_month",    # Price (Highest First)
+        }
+
+        # If FE used one of the aliases, translate it
+        if ordering_param in alias_map:
+            mapped = alias_map[ordering_param]
+            if mapped is None:
+                # "default" → let our normal default logic take over
+                ordering_param = ""
+            else:
+                ordering_param = mapped
+
+        # Default behaviour if nothing specific requested:
+        # - if postcode present → sort by distance
+        # - otherwise → sort by -avg_rating (best first)
         if not ordering_param:
             ordering_param = "distance_miles" if postcode else "-avg_rating"
 
         # Defer distance ordering to list() when we have computed distances
         if ordering_param in {"distance_miles", "-distance_miles"} and self._ordered_ids is not None:
+            # handled later in list()
             pass
         else:
             allowed = {
@@ -861,12 +1033,15 @@ class SearchRoomsView(generics.ListAPIView):
                 "-avg_rating": "-avg_rating",
                 "created_at": "created_at",
                 "-created_at": "-created_at",
+                "updated_at": "updated_at",
+                "-updated_at": "-updated_at",
             }
             mapped = allowed.get(ordering_param)
             if mapped:
                 qs = qs.order_by(mapped)
 
         return qs
+
 
     def list(self, request, *args, **kwargs):
         # Return a top-level error when radius is given without postcode.
