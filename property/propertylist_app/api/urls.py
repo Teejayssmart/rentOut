@@ -66,7 +66,8 @@ from propertylist_app.api.views import (
     NotificationListView, NotificationMarkReadView, NotificationMarkAllReadView,
     
     
-    HealthCheckView,
+    HealthCheckView, OnboardingCompleteView,
+
     
    
    
@@ -153,6 +154,8 @@ urlpatterns = [
     path("users/me/change-email/",    ChangeEmailView.as_view(),      name="user-change-email"),
     path("users/me/change-password/", ChangePasswordView.as_view(),   name="user-change-password"),
     path("users/me/deactivate/",      DeactivateAccountView.as_view(), name="user-deactivate"),
+    path("users/me/onboarding/complete/", OnboardingCompleteView.as_view(), name="user-onboarding-complete"),
+
 
     # --- Soft delete room ---
     path("rooms/<int:pk>/soft-delete/", RoomSoftDeleteView.as_view(), name="room-soft-delete"),

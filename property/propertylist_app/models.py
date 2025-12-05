@@ -259,9 +259,31 @@ class UserProfile(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="profile")
     phone = models.CharField(max_length=15, unique=True, null=True, blank=True)
     avatar = models.ImageField(upload_to="avatars/", null=True, blank=True)
-
     ROLE_CHOICES = (("landlord", "Landlord"), ("seeker", "Seeker"))
     role = models.CharField(max_length=20, choices=ROLE_CHOICES, default="seeker", db_index=True)
+
+    # Detailed “Role” dropdown on the profile screen
+    ROLE_DETAIL_CHOICES = (
+        ("live_in_landlord", "Live in Landlord"),
+        ("live_out_landlord", "Live Out Landlord"),
+        ("current_flatmate", "Current Flatmate"),
+        ("former_flatmate", "Former Flatmate"),
+        ("agent_broker", "Real Estate Agent/Broker"),
+    )
+    # More detailed description of user’s situation on onboarding
+    role_detail = models.CharField(
+        max_length=64,
+        blank=True,
+        default="",
+    )
+    
+
+    # Free-text “Enter address manually” field from onboarding screen
+    address_manual = models.TextField(
+        blank=True,
+        default="",
+    )
+
 
     # --- NEW FIELDS FOR "MY PROFILE" PAGE -----------------------------
     GENDER_CHOICES = (                                           # >>> NEW
@@ -287,6 +309,13 @@ class UserProfile(models.Model):
     about_you = models.TextField(                                # >>> NEW
         max_length=100, blank=True, default=""                   # >>> NEW
     )                                                             # >>> NEW
+
+    # Manual address text when user clicks “Enter Address Manually”
+    address_manual = models.CharField(
+        max_length=255,
+        blank=True,
+        default="",
+    )                                                           # >>> NEW
     # -----------------------------------------------------------------
 
     email_verified = models.BooleanField(default=False, db_index=True)
@@ -294,9 +323,11 @@ class UserProfile(models.Model):
     terms_accepted_at = models.DateTimeField(null=True, blank=True)
     terms_version = models.CharField(max_length=20, blank=True, default="")
     marketing_consent = models.BooleanField(default=False)
+    onboarding_completed = models.BooleanField(default=False)
 
     def __str__(self):
         return f"{self.user.username} profile"
+
 
 
 

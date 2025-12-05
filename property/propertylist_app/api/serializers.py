@@ -413,15 +413,6 @@ class UserSerializer(serializers.ModelSerializer):
 
 class UserProfileSerializer(serializers.ModelSerializer):
     avatar = serializers.ImageField(required=False, allow_null=True)
-    date_of_birth = serializers.DateField(required=False, allow_null=True)
-    gender = serializers.ChoiceField(
-        choices=["male", "female", "non_binary", "prefer_not_to_say"],
-        required=False,
-        allow_blank=True,
-    )
-    postcode = serializers.CharField(required=False, allow_blank=True)
-    occupation = serializers.CharField(required=False, allow_blank=True)
-    about_you = serializers.CharField(required=False, allow_blank=True)
 
     class Meta:
         model = UserProfile
@@ -433,6 +424,9 @@ class UserProfileSerializer(serializers.ModelSerializer):
             "date_of_birth",
             "gender",
             "about_you",
+            "role",          # high-level (landlord / seeker)
+            "role_detail",   # detailed dropdown on profile screen
+            "address_manual",
         ]
 
     def validate_avatar(self, file):
@@ -441,16 +435,15 @@ class UserProfileSerializer(serializers.ModelSerializer):
         return file
 
     def validate_postcode(self, value):
-        value = (value or "").strip()
-        if not value:
-            return value
-        return normalize_uk_postcode(value)
+        # optional, but if given, normalise it
+        if value:
+            return normalize_uk_postcode(value)
+        return value
 
     def validate_date_of_birth(self, value):
-        if not value:
-            return value
-        # ensures user is 18+ (you already imported validate_age_18_plus)
-        validate_age_18_plus(value)
+        # optional, but if given, enforce 18+
+        if value:
+            validate_age_18_plus(value)
         return value
 
 
@@ -761,3 +754,7 @@ class EmailOTPResendSerializer(serializers.Serializer):
         if not UserModel.objects.filter(pk=value).exists():
             raise serializers.ValidationError("User not found.")
         return value
+
+
+class OnboardingCompleteSerializer(serializers.Serializer):
+    confirm = serializers.BooleanField()

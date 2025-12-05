@@ -124,6 +124,7 @@ from .serializers import (
     UserSerializer,
     UserProfileSerializer,
     SearchFiltersSerializer,
+    OnboardingCompleteSerializer,
 )
 
 from .serializers import EmailOTPVerifySerializer, EmailOTPResendSerializer
@@ -706,12 +707,53 @@ class MeView(generics.RetrieveUpdateAPIView):
         return self.request.user
 
 
+class OnboardingCompleteView(APIView):
+    """
+    Marks onboarding as completed for the logged-in user.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = OnboardingCompleteSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        profile = request.user.profile
+        profile.onboarding_completed = True
+        profile.save(update_fields=["onboarding_completed"])
+
+        return Response({"onboarding_completed": True})
+
 class UserProfileView(generics.RetrieveUpdateAPIView):
     serializer_class = UserProfileSerializer
     permission_classes = [IsAuthenticated]
 
     def get_object(self):
-        return self.request.user.profile
+        # Always ensure the profile exists
+        profile, _ = UserProfile.objects.get_or_create(user=self.request.user)
+        return profile
+
+    def update(self, request, *args, **kwargs):
+        """
+        Override update so this endpoint returns plain DRF-style errors
+        (e.g. {"gender": ["..."]}) instead of the global wrapped format.
+        The tests for onboarding expect these top-level field keys.
+        """
+        partial = kwargs.pop("partial", False)
+        instance = self.get_object()
+
+        serializer = self.get_serializer(
+            instance,
+            data=request.data,
+            partial=partial,
+        )
+
+        if not serializer.is_valid():
+            # Return raw serializer errors so resp.data has "gender", "date_of_birth", etc
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        self.perform_update(serializer)
+        return Response(serializer.data)
+
 
 
 # --------------------
