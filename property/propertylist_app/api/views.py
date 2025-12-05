@@ -5,7 +5,7 @@ import stripe
 from django.conf import settings
 from django.contrib.auth import authenticate, get_user_model
 from django.db import transaction, connection
-from django.db.models import Q, Count, OuterRef, Subquery, Sum
+from django.db.models import Q, Count, OuterRef, Subquery, Sum,Exists
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
@@ -47,7 +47,6 @@ from propertylist_app.models import (
     Room,
     RoomCategorie,
     Review,
-    UserProfile,
     RoomImage,
     SavedRoom,
     MessageThread,
@@ -64,6 +63,7 @@ from propertylist_app.models import (
     Notification,
     UserProfile,
     EmailOTP,
+    MessageThreadState,
 )
 
 # Validators / helpers
@@ -76,7 +76,7 @@ from propertylist_app.validators import (
     validate_radius_miles,
     validate_avatar_image,
     validate_avatar_image,
-    validate_listing_photos, 
+    validate_listing_photos,
     assert_no_duplicate_files,
 )
 
@@ -99,7 +99,8 @@ from propertylist_app.api.serializers import (
     NotificationSerializer,
     CitySummarySerializer,
     HomeSummarySerializer,
-    FindAddressSerializer, 
+    FindAddressSerializer,
+    MessageThreadStateUpdateSerializer,
 )
 from propertylist_app.api.throttling import (
     ReviewCreateThrottle,
@@ -262,6 +263,7 @@ class RoomListGV(CachedAnonymousGETMixin, generics.ListAPIView):
     cache_prefix = "rooms:list"
     cache_ttl = 60  # short, keeps list fresh
 
+
 class RoomAV(APIView):
     throttle_classes = [AnonRateThrottle]
     permission_classes = [IsAuthenticatedOrReadOnly]
@@ -274,6 +276,7 @@ class RoomAV(APIView):
             Q(paid_until__isnull=True) | Q(paid_until__gte=today)
         )
         return Response(RoomSerializer(qs, many=True).data)
+
 
 class RoomDetailAV(APIView):
     permission_classes = [IsOwnerOrReadOnly]
@@ -306,6 +309,7 @@ class RoomDetailAV(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     # put/patch/delete remain unchanged (not cached)
+
 
 class RoomListAlt(CachedAnonymousGETMixin, generics.ListAPIView):
     queryset = Room.objects.alive().order_by("-avg_rating")
@@ -516,9 +520,6 @@ class ProviderWebhookView(APIView):
 # --------------------
 # Auth / Profile
 # --------------------
-# --------------------
-# Auth / Profile
-# --------------------
 class RegistrationView(generics.CreateAPIView):
     serializer_class = RegistrationSerializer
     permission_classes = [AllowAny]
@@ -553,6 +554,48 @@ class RegistrationView(generics.CreateAPIView):
 
         # 3) Let the serializer do the rest (username, password, etc.)
         return super().create(request, *args, **kwargs)
+
+
+# ---------- Social sign-up stubs (Google / Apple) ----------  # NEW
+class GoogleRegisterView(APIView):                             # NEW
+    """                                                         # NEW
+    POST /api/auth/register/google/                             # NEW
+    Stub endpoint for 'Register with Google' button.            # NEW
+    For now it just returns 501 so FE can wire the button and   # NEW
+    you can implement real Google OAuth later.                  # NEW
+    """                                                         # NEW
+    permission_classes = [AllowAny]                             # NEW
+    throttle_classes = [RegisterAnonThrottle]                   # NEW
+                                                                # NEW
+    def post(self, request, *args, **kwargs):                   # NEW
+        return Response(                                        # NEW
+            {                                                   # NEW
+                "detail": "Google sign-up not implemented yet.",# NEW
+                "hint": "Button is wired. Implement OAuth later",# NEW
+            },                                                  # NEW
+            status=status.HTTP_501_NOT_IMPLEMENTED,             # NEW
+        )                                                       # NEW
+                                                                # NEW
+                                                                # NEW
+class AppleRegisterView(APIView):                               # NEW
+    """                                                         # NEW
+    POST /api/auth/register/apple/                              # NEW
+    Stub endpoint for 'Register with Apple' button.             # NEW
+    Same behaviour as Google stub (501 for now).                # NEW
+    """                                                         # NEW
+    permission_classes = [AllowAny]                             # NEW
+    throttle_classes = [RegisterAnonThrottle]                   # NEW
+                                                                # NEW
+    def post(self, request, *args, **kwargs):                   # NEW
+        return Response(                                        # NEW
+            {                                                   # NEW
+                "detail": "Apple sign-up not implemented yet.", # NEW
+                "hint": "Button is wired. Implement OAuth later",# NEW
+            },                                                  # NEW
+            status=status.HTTP_501_NOT_IMPLEMENTED,             # NEW
+        )                                                       # NEW
+
+
 
 
 
@@ -762,7 +805,6 @@ class MyRoomsView(generics.ListAPIView):
         return Room.objects.alive().filter(property_owner=self.request.user)
 
 
-
 # --------------------
 # Home page + city list
 # --------------------
@@ -873,46 +915,23 @@ class CityListView(APIView):
         return Response(ser.data, status=status.HTTP_200_OK)
 
 
-
-class FindAddressView(APIView):
-  
-    permission_classes = [permissions.AllowAny]
-
-    def post(self, request, *args, **kwargs):
-        serializer = FindAddressSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(
-                {
-                    "ok": False,
-                    "code": "validation_error",
-                    "field_errors": serializer.errors,
-                },
-                status=400,
-            )
-
-        postcode = serializer.validated_data["postcode"]
-
-        # Placeholder response; extend with address / coordinates later
-        return Response(
-            {
-                "ok": True,
-                "postcode": postcode,
-            },
-            status=200,
-        )
-
-
-
-
-
 class SearchRoomsView(generics.ListAPIView):
     """
-    GET /api/search/rooms/?q=&min_price=&max_price=&postcode=&radius_miles=&ordering=
-    ordering: price_per_month, -price_per_month, avg_rating, -avg_rating,
-              distance_miles, -distance_miles, created_at, -created_at
+    GET /api/search/rooms/
+
+    Supports:
+    - q                : free-text search
+    - min_price        : minimum monthly price
+    - max_price        : maximum monthly price
+    - postcode         : UK postcode centre
+    - radius_miles     : search radius around postcode
+    - ordering         : default/newest/last_updated/price_asc/price_desc/distance_miles
+    - property_types   : flat / house / studio (Advanced Search)
+    - rooms_min/max    : minimum / maximum number_of_bedrooms (Advanced Search)
+    - move_in_date     : earliest acceptable move-in date (Advanced Search)
     """
     serializer_class = RoomSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [permissions.AllowAny]
     pagination_class = RoomLOPagination
 
     _ordered_ids = None
@@ -931,15 +950,33 @@ class SearchRoomsView(generics.ListAPIView):
         postcode = (params.get("postcode") or "").strip()
         raw_radius = params.get("radius_miles", 10)
 
+        # ===== Advanced filters from query =====
+        # “Rooms in existing shares”
+        include_shared = params.get("include_shared")
+
+        # “Rooms suitable for ages”
+        min_age = params.get("min_age")
+        max_age = params.get("max_age")
+
+        # “Length of stay”
+        min_stay = params.get("min_stay_months")
+        max_stay = params.get("max_stay_months")
+
+        # “Rooms for” and “Room sizes”
+        room_for = (params.get("room_for") or "").strip()
+        room_size = (params.get("room_size") or "").strip()
+
+        # property_types can be repeated in query: ?property_types=flat&property_types=studio
+        property_types = params.getlist("property_types") if hasattr(params, "getlist") else []
+
         qs = Room.objects.alive()
 
         today = timezone.now().date()
-        qs = qs.filter(
-            status="active"
-        ).filter(
+        qs = qs.filter(status="active").filter(
             Q(paid_until__isnull=True) | Q(paid_until__gte=today)
         )
 
+        # ----- keyword search -----
         if q_text:
             qs = qs.filter(
                 Q(title__icontains=q_text)
@@ -947,13 +984,7 @@ class SearchRoomsView(generics.ListAPIView):
                 | Q(location__icontains=q_text)
             )
 
-        if q_text:
-            qs = qs.filter(
-                Q(title__icontains=q_text)
-                | Q(description__icontains=q_text)
-                | Q(location__icontains=q_text)
-            )
-
+        # ----- price filters -----
         if min_price is not None:
             try:
                 qs = qs.filter(price_per_month__gte=int(min_price))
@@ -966,11 +997,114 @@ class SearchRoomsView(generics.ListAPIView):
             except Exception:
                 raise ValidationError({"max_price": "Must be an integer."})
 
+        # Property preferences – simple boolean filters
+        furnished_param = (params.get("furnished") or "").lower()
+        if furnished_param in {"true", "1", "yes"}:
+            qs = qs.filter(furnished=True)
+
+        bills_param = (params.get("bills_included") or "").lower()
+        if bills_param in {"true", "1", "yes"}:
+            qs = qs.filter(bills_included=True)
+
+        parking_param = (params.get("parking_available") or "").lower()
+        if parking_param in {"true", "1", "yes"}:
+            qs = qs.filter(parking_available=True)
+
+        # Property types (advanced search chips)
+        property_types = params.getlist("property_types") or params.getlist("property_type")
+        if property_types:
+            qs = qs.filter(property_type__in=property_types)
+
+        # Age suitability – simple range filter
+        min_age = params.get("min_age")
+        max_age = params.get("max_age")
+
+        if min_age is not None:
+            try:
+                min_age_int = int(min_age)
+            except ValueError:
+                raise ValidationError({"min_age": "Must be an integer."})
+            qs = qs.filter(min_age__gte=min_age_int)
+
+        if max_age is not None:
+            try:
+                max_age_int = int(max_age)
+            except ValueError:
+                raise ValidationError({"max_age": "Must be an integer."})
+            qs = qs.filter(max_age__lte=max_age_int)
+
+        # Length of stay – range in months
+        min_stay = params.get("min_stay_months")
+        max_stay = params.get("max_stay_months")
+
+        if min_stay is not None:
+            try:
+                min_stay_int = int(min_stay)
+            except ValueError:
+                raise ValidationError({"min_stay_months": "Must be an integer."})
+            qs = qs.filter(min_stay_months__gte=min_stay_int)
+
+        if max_stay is not None:
+            try:
+                max_stay_int = int(max_stay)
+            except ValueError:
+                raise ValidationError({"max_stay_months": "Must be an integer."})
+            qs = qs.filter(max_stay_months__lte=max_stay_int)
+
+        # ----- property types (flats / houses / studios) -----
+        if property_types:
+            qs = qs.filter(property_type__in=property_types)
+
+        # ----- “Rooms in existing shares” -----
+        if include_shared in {"1", "true", "True", "yes"}:
+            qs = qs.filter(is_shared_room=True)
+
+        # ----- “Rooms suitable for ages” -----
+        # If user sends min_age, keep rooms whose max_age is blank OR >= min_age
+        if min_age is not None and str(min_age).strip() != "":
+            try:
+                min_age_val = int(min_age)
+            except ValueError:
+                raise ValidationError({"min_age": "Must be an integer."})
+            qs = qs.filter(Q(max_age__isnull=True) | Q(max_age__gte=min_age_val))
+
+        # If user sends max_age, keep rooms whose min_age is blank OR <= max_age
+        if max_age is not None and str(max_age).strip() != "":
+            try:
+                max_age_val = int(max_age)
+            except ValueError:
+                raise ValidationError({"max_age": "Must be an integer."})
+            qs = qs.filter(Q(min_age__isnull=True) | Q(min_age__lte=max_age_val))
+
+        # ----- “Length of stay” (months) -----
+        if min_stay is not None and str(min_stay).strip() != "":
+            try:
+                min_stay_val = int(min_stay)
+            except ValueError:
+                raise ValidationError({"min_stay_months": "Must be an integer."})
+            qs = qs.filter(Q(max_stay_months__isnull=True) | Q(max_stay_months__gte=min_stay_val))
+
+        if max_stay is not None and str(max_stay).strip() != "":
+            try:
+                max_stay_val = int(max_stay)
+            except ValueError:
+                raise ValidationError({"max_stay_months": "Must be an integer."})
+            qs = qs.filter(Q(min_stay_months__isnull=True) | Q(min_stay_months__lte=max_stay_val))
+
+        # ----- “Rooms for” -----
+        # Only filter when user picks a specific option (not 'any')
+        if room_for and room_for != "any":
+            qs = qs.filter(room_for=room_for)
+
+        # ----- “Room sizes” -----
+        if room_size and room_size != "dont_mind":
+            qs = qs.filter(room_size=room_size)
+
         # Reset any prior state for distance ordering
         self._ordered_ids = None
         self._distance_by_id = None
 
-        # If postcode provided, compute distances & filter to radius
+        # ----- distance / radius handling ----- 
         if postcode:
             try:
                 radius_miles = validate_radius_miles(raw_radius, max_miles=500)
@@ -993,37 +1127,31 @@ class SearchRoomsView(generics.ListAPIView):
             self._distance_by_id = {rid: d for rid, d in distances}
             qs = qs.filter(id__in=ids_in_radius)
 
-                # ---------- Ordering / sort options ----------
         ordering_param = (params.get("ordering") or "").strip()
 
-        # Map frontend-friendly values to real ordering fields
-        # Frontend → ?ordering=...
-        alias_map = {
-            "default": None,               # let backend decide based on postcode
-            "newest": "-created_at",       # Newest Listings
-            "last_updated": "-updated_at", # Last Updated
-            "price_asc": "price_per_month",      # Price (Lowest First)
-            "price_desc": "-price_per_month",    # Price (Highest First)
+        # Map friendly front-end sort keys to real fields
+        # Frontend options:
+        #   default       -> lets backend decide
+        #   newest        -> -created_at
+        #   last_updated  -> -updated_at
+        #   price_asc     -> price_per_month
+        #   price_desc    -> -price_per_month
+        ui_sort_map = {
+            "default": "",
+            "newest": "-created_at",
+            "last_updated": "-updated_at",
+            "price_asc": "price_per_month",
+            "price_desc": "-price_per_month",
         }
+        if ordering_param in ui_sort_map:
+            ordering_param = ui_sort_map[ordering_param]
 
-        # If FE used one of the aliases, translate it
-        if ordering_param in alias_map:
-            mapped = alias_map[ordering_param]
-            if mapped is None:
-                # "default" → let our normal default logic take over
-                ordering_param = ""
-            else:
-                ordering_param = mapped
-
-        # Default behaviour if nothing specific requested:
-        # - if postcode present → sort by distance
-        # - otherwise → sort by -avg_rating (best first)
         if not ordering_param:
+            # backend default: by distance if postcode is known, otherwise by rating
             ordering_param = "distance_miles" if postcode else "-avg_rating"
 
         # Defer distance ordering to list() when we have computed distances
         if ordering_param in {"distance_miles", "-distance_miles"} and self._ordered_ids is not None:
-            # handled later in list()
             pass
         else:
             allowed = {
@@ -1043,56 +1171,35 @@ class SearchRoomsView(generics.ListAPIView):
         return qs
 
 
-    def list(self, request, *args, **kwargs):
-        # Return a top-level error when radius is given without postcode.
-        params = request.query_params
-        if params.get("radius_miles") is not None and not (params.get("postcode") or "").strip():
-            return Response(
-                {"postcode": "Postcode is required when using radius search."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+class FindAddressView(APIView):
+    """
+    POST /api/search/find-address/
 
-        # Only cache anonymous GETs; authenticated users bypass cache
-        if request.method == "GET" and not request.user.is_authenticated:
-            key = make_cache_key("search:rooms", request.path, request=request)
-            cached = get_cached_json(key)
-            if cached is not None:
-                return Response(cached)
+    Validates a UK postcode and (later) calls an external geocoding API.
+    For now it just returns the normalised postcode so the FE can show
+    a confirmation / allow the user to proceed.
+    """
+    permission_classes = [permissions.AllowAny]
 
-            # compute fresh
-            queryset = self.get_queryset()
+    def post(self, request, *args, **kwargs):
+        serializer = FindAddressSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
 
-            if self._distance_by_id is not None:
-                room_by_id = {obj.id: obj for obj in queryset}
-                ordered_objs = []
-                for rid in (self._ordered_ids or []):
-                    obj = room_by_id.get(rid)
-                    if obj is not None:
-                        obj.distance_miles = self._distance_by_id.get(rid)
-                        ordered_objs.append(obj)
+        postcode = serializer.validated_data["postcode"]
 
-                ordering_param = (request.query_params.get("ordering") or "").strip()
-                if ordering_param == "-distance_miles":
-                    ordered_objs.reverse()
+        # TODO: integrate with a real geocoding service, e.g. postcodes.io
+        # Example (pseudo-code):
+        # lat, lon = geocode_postcode(postcode)
+        # return Response({"postcode": postcode, "latitude": lat, "longitude": lon})
 
-                page = self.paginate_queryset(ordered_objs)
-                if page is not None:
-                    ser = self.get_serializer(page, many=True)
-                    payload = self.get_paginated_response(ser.data).data
-                    set_cached_json(key, payload, ttl=getattr(settings, "CACHE_SEARCH_TTL", 120))
-                    return Response(payload)
-                ser = self.get_serializer(ordered_objs, many=True)
-                payload = ser.data
-                set_cached_json(key, payload, ttl=getattr(settings, "CACHE_SEARCH_TTL", 120))
-                return Response(payload)
-
-            # default path (no distances)
-            resp = super().list(request, *args, **kwargs)
-            set_cached_json(key, resp.data, ttl=getattr(settings, "CACHE_SEARCH_TTL", 120))
-            return resp
-
-        # authenticated → no cache
-        return super().list(request, *args, **kwargs)
+        # For now just echo the cleaned postcode
+        return Response(
+            {
+                "postcode": postcode,
+                "message": "Postcode is valid. Address lookup service not yet integrated.",
+            },
+            status=status.HTTP_200_OK,
+        )
 
 
 class NearbyRoomsView(generics.ListAPIView):
@@ -1222,23 +1329,165 @@ class MySavedRoomsView(generics.ListAPIView):
 
 # Messaging
 # --------------------
+
+
+
 class MessageThreadListCreateView(generics.ListCreateAPIView):
-    """GET/POST /api/messages/threads/"""
+    """
+    GET /api/messages/threads/
+
+    Query params:
+      - folder : inbox (default) | sent | bin | new | waiting_reply   # >>> 
+      - label  : filter by per-user label (Viewing scheduled, Good fit, etc.)
+      - q      : search in message body or participant username
+      - sort_by: latest (default) | oldest
+    """
     serializer_class = MessageThreadSerializer
     permission_classes = [IsAuthenticated]
     pagination_class = RoomLOPagination
-    
-    # Disable throttling for tests that expect no 429 here
-    #throttle_classes = [UserRateThrottle, MessagingScopedThrottle]
+    # throttle_classes = [UserRateThrottle, MessagingScopedThrottle]  # keep off if tests expect no 429
 
     def get_queryset(self):
-        return MessageThread.objects.filter(participants=self.request.user).prefetch_related("participants")
+        user = self.request.user
+        params = self.request.query_params
+
+        # Base: threads where I am a participant
+        qs = (
+            MessageThread.objects
+            .filter(participants=user)
+            .prefetch_related("participants")
+        )
+
+        # ===== folder handling (inbox / sent / bin / new) =====          # >>> GOLDEN
+        folder = (params.get("folder") or "").strip().lower()
+
+        # All threads that *I* have put in bin (per-user state)
+        bin_thread_ids = list(
+            MessageThreadState.objects.filter(user=user, in_bin=True)
+            .values_list("thread_id", flat=True)
+        )
+
+        if folder == "bin":
+            # Only those I’ve put in the bin
+            qs = qs.filter(id__in=bin_thread_ids or [-1])  # -1 to handle empty list safely
+        else:
+            # inbox / sent / new → exclude ones in my bin
+            if bin_thread_ids:
+                qs = qs.exclude(id__in=bin_thread_ids)
+
+            if folder == "new":                                         # 
+                # Threads where there is at least one UNREAD inbound    # 
+                unread_exists = Message.objects.filter(                 # 
+                    thread=OuterRef("pk")                               # 
+                ).exclude(                                              # 
+                    sender=user                                        # 
+                ).exclude(                                              # 
+                    reads__user=user                                   # 
+                )                                                       # 
+                qs = qs.annotate(has_unread=Exists(unread_exists))      # 
+                qs = qs.filter(has_unread=True)                         # 
+
+            elif folder == "sent":                                      # 
+                # Threads where the *latest* message is from me
+                last_sender_subq = (
+                    Message.objects
+                    .filter(thread=OuterRef("pk"))
+                    .order_by("-created")
+                    .values("sender_id")[:1]
+                )
+                qs = qs.annotate(last_sender_id=Subquery(last_sender_subq))
+                qs = qs.filter(last_sender_id=user.id)
+
+        # ===== label filter (per-user label from MessageThreadState) =====
+        label = (params.get("label") or "").strip()
+        if label:
+            label_ids = MessageThreadState.objects.filter(
+                user=user,
+                label=label,
+                in_bin=False,  # usually you don’t want bin here
+            ).values_list("thread_id", flat=True)
+            qs = qs.filter(id__in=label_ids)
+
+        # ===== free-text search =====
+        search = (params.get("q") or "").strip()
+        if search:
+            qs = qs.filter(
+                Q(messages__body__icontains=search)
+                | Q(participants__username__icontains=search)
+            ).distinct()
+
+                # ===== sorting =====
+        sort_by = (params.get("sort_by") or "").strip().lower()
+
+        if sort_by == "oldest":
+            # Old → oldest first
+            qs = qs.order_by("created_at")
+
+        elif sort_by in {"name", "alphabetical"}:
+            # Sort by the *other* participant's username
+            UserModel = get_user_model()
+
+            other_username_subq = (
+                UserModel.objects
+                .filter(message_threads__id=OuterRef("pk"))
+                .exclude(id=user.id)
+                .order_by("username")
+                .values("username")[:1]
+            )
+
+            qs = qs.annotate(other_username=Subquery(other_username_subq)).order_by(
+                "other_username", "-created_at"
+            )
+
+        else:
+            # Default / "new" / unknown → newest first
+            qs = qs.order_by("-created_at")
+
+        return qs.distinct()
+
+
+
+    def _attach_state_for_user(self, user, threads):
+        """
+        Attach obj._state_for_user = MessageThreadState(...) for each thread
+        so the serializer can use it without extra queries.
+        """
+        ids = [t.id for t in threads]
+        if not ids:
+            return
+
+        states = MessageThreadState.objects.filter(
+            user=user,
+            thread_id__in=ids,
+        )
+        state_map = {st.thread_id: st for st in states}
+        for t in threads:
+            setattr(t, "_state_for_user", state_map.get(t.id))
+
+    def list(self, request, *args, **kwargs):
+        """
+        Override list() so we can attach per-user state on the page/queryset
+        before serialisation.
+        """
+        queryset = self.filter_queryset(self.get_queryset())
+
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            self._attach_state_for_user(request.user, page)
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+
+        self._attach_state_for_user(request.user, queryset)
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
 
     def perform_create(self, serializer):
         participants = set(serializer.validated_data.get("participants", []))
         participants.add(self.request.user)
         if len(participants) != 2:
-            raise ValidationError({"participants": "Threads must have exactly 2 participants (you + one other user)."})
+            raise ValidationError(
+                {"participants": "Threads must have exactly 2 participants (you + one other user)." }
+            )
 
         p_list = list(participants)
         existing = (
@@ -1254,17 +1503,161 @@ class MessageThreadListCreateView(generics.ListCreateAPIView):
         thread.participants.set(participants)
 
 
+
+
+
+
+class MessageThreadStateView(APIView):
+    """
+    PATCH /api/messages/threads/<thread_id>/state/
+
+    Updates the *current user's* view of a thread:
+    - label: viewing_scheduled / viewing_done / good_fit / unsure / not_a_fit / paperwork_pending / no_status
+    - in_bin: true / false
+    """
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, thread_id):
+        # User must be a participant in the thread
+        thread = get_object_or_404(
+            MessageThread.objects.filter(participants=request.user),
+            pk=thread_id,
+        )
+
+        ser = MessageThreadStateUpdateSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        data = ser.validated_data
+
+        state, _ = MessageThreadState.objects.get_or_create(
+            user=request.user,
+            thread=thread,
+        )
+
+        # Update label if present
+        if "label" in data:
+            state.label = data["label"]  # "" means clear / no status
+
+        # Update bin flag if present
+        if "in_bin" in data:
+            state.in_bin = bool(data["in_bin"])
+
+        state.save()
+
+        return Response(
+            {
+                "thread": thread.id,
+                "label": state.label or None,
+                "in_bin": state.in_bin,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+
+class MessageStatsView(APIView):
+    """
+    GET /api/messages/stats/
+
+    Used by the home screen to power quick filters like
+    “Messages > Good Fit”.
+
+    Returns counts scoped to the current user:
+      - total_threads: all threads I’m in (excluding my Bin)
+      - total_unread: unread messages in those threads
+      - good_fit.threads: threads labelled 'good_fit' for me
+      - good_fit.unread: unread messages inside those threads
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+
+        # Base threads: I am a participant
+        base_threads = MessageThread.objects.filter(
+            participants=user
+        )
+
+        # Exclude threads that *I* put in Bin
+        bin_thread_ids = list(
+            MessageThreadState.objects
+            .filter(user=user, in_bin=True)
+            .values_list("thread_id", flat=True)
+        )
+        if bin_thread_ids:
+            base_threads = base_threads.exclude(id__in=bin_thread_ids)
+
+        # Good-fit threads
+        good_fit_ids = MessageThreadState.objects.filter(
+            user=user,
+            label="good_fit",
+            in_bin=False,
+        ).values_list("thread_id", flat=True)
+
+        good_fit_threads = base_threads.filter(id__in=good_fit_ids)
+
+        # Counts
+        total_threads = base_threads.distinct().count()
+        total_good_fit = good_fit_threads.distinct().count()
+
+        # Unread = messages not from me & not read by me
+        total_unread = (
+            Message.objects
+            .filter(thread__in=base_threads)
+            .exclude(sender=user)
+            .exclude(reads__user=user)
+            .count()
+        )
+
+        good_fit_unread = (
+            Message.objects
+            .filter(thread__in=good_fit_threads)
+            .exclude(sender=user)
+            .exclude(reads__user=user)
+            .count()
+        )
+
+        return Response(
+            {
+                "total_threads": total_threads,
+                "total_unread": total_unread,
+                "good_fit": {
+                    "threads": total_good_fit,
+                    "unread": good_fit_unread,
+                },
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+
+
+
 class MessageListCreateView(generics.ListCreateAPIView):
     serializer_class = MessageSerializer
     permission_classes = [IsAuthenticated]
     pagination_class = RoomCPagination
-    throttle_classes = [MessageUserThrottle]  # ← UNCOMMENTED
+    throttle_classes = [MessageUserThrottle]
+    # NEW: allow ?ordering=created / -created / updated / -updated / id / -id
+    filter_backends = [filters.OrderingFilter]
     ordering_fields = ["updated", "created", "id"]
     ordering = ["-created"]
 
     def get_queryset(self):
         thread_id = self.kwargs["thread_id"]
-        return Message.objects.filter(thread__id=thread_id, thread__participants=self.request.user)
+        user = self.request.user
+
+        # Base: only messages in this thread, where user is a participant
+        qs = Message.objects.filter(
+            thread__id=thread_id,
+            thread__participants=user,
+        )
+
+        # NEW: free-text search within this thread
+        q = (self.request.query_params.get("q") or "").strip()
+        if q:
+            qs = qs.filter(body__icontains=q)
+
+        return qs
 
     def perform_create(self, serializer):
         thread = get_object_or_404(
@@ -1287,6 +1680,131 @@ class ThreadMarkReadView(APIView):
         MessageRead.objects.bulk_create([MessageRead(message=m, user=request.user) for m in to_mark], ignore_conflicts=True)
 
         return Response({"marked": to_mark.count()})
+    
+    
+class ThreadSetLabelView(APIView):
+    """
+    POST /api/messages/threads/<thread_id>/label/
+    Body: {"label": "viewing_scheduled" | "viewing_done" | "good_fit" | "unsure" | "not_a_fit" | "paperwork_pending" | "none"}
+
+    Per-user label for a thread (used by the “Filter by label” dropdown).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, thread_id):
+        # Only allow labels for threads I am in
+        thread = get_object_or_404(
+            MessageThread.objects.filter(participants=request.user),
+            pk=thread_id,
+        )
+
+        raw_label = (request.data.get("label") or "").strip()
+
+        # Map the allowed incoming values to what we actually store
+        # (here they are the same strings, except "none" => "")
+        allowed = {
+            "none": "",
+            "viewing_scheduled": "viewing_scheduled",
+            "viewing_done": "viewing_done",
+            "good_fit": "good_fit",
+            "unsure": "unsure",
+            "not_a_fit": "not_a_fit",
+            "paperwork_pending": "paperwork_pending",
+        }
+
+        if raw_label not in allowed:
+            return Response(
+                {
+                    "label": "Invalid label. Use one of: "
+                             "none, viewing_scheduled, viewing_done, good_fit, "
+                             "unsure, not_a_fit, paperwork_pending."
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Get or create per-user state row
+        state, _ = MessageThreadState.objects.get_or_create(
+            user=request.user,
+            thread=thread,
+        )
+
+        state.label = allowed[raw_label]
+        state.save(update_fields=["label", "updated_at"])
+
+        return Response(
+            {
+                "thread_id": thread.id,
+                "label": state.label or None,  # return None instead of "" for “none”
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    
+
+class ThreadMoveToBinView(APIView):
+    """
+    POST /api/messages/threads/<thread_id>/bin/
+    Move this thread into the current user's Bin.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, thread_id):
+        thread = get_object_or_404(
+            MessageThread.objects.filter(participants=request.user),
+            pk=thread_id,
+        )
+
+        state, _ = MessageThreadState.objects.get_or_create(
+            user=request.user,
+            thread=thread,
+        )
+
+        if not state.in_bin:
+            state.in_bin = True
+            state.save(update_fields=["in_bin", "updated_at"])
+
+        return Response(
+            {"id": thread.id, "in_bin": True},
+            status=status.HTTP_200_OK,
+        )
+
+
+
+
+
+class ThreadRestoreFromBinView(APIView):
+    """
+    POST /api/messages/threads/<thread_id>/restore/
+    Restore this thread from the current user's Bin back to the inbox.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, thread_id):
+        thread = get_object_or_404(
+            MessageThread.objects.filter(participants=request.user),
+            pk=thread_id,
+        )
+
+        try:
+            state = MessageThreadState.objects.get(user=request.user, thread=thread)
+        except MessageThreadState.DoesNotExist:
+            # Nothing to restore; treat as already in inbox
+            return Response(
+                {"id": thread.id, "in_bin": False},
+                status=status.HTTP_200_OK,
+            )
+
+        if state.in_bin:
+            state.in_bin = False
+            state.save(update_fields=["in_bin", "updated_at"])
+
+        return Response(
+            {"id": thread.id, "in_bin": False},
+            status=status.HTTP_200_OK,
+        )
+
+
+
 
 
 class StartThreadFromRoomView(APIView):
@@ -1946,7 +2464,7 @@ class OpsStatsView(APIView):
         top_categories = []
 
         try:
-            total_rooms  = _safe_count(Room.objects.all())
+            total_rooms = _safe_count(Room.objects.all())
             active_rooms = _safe_count(Room.objects.filter(status="active", is_deleted=False))
             hidden_rooms = _safe_count(Room.objects.filter(status="hidden", is_deleted=False))
             deleted_rooms = _safe_count(Room.objects.filter(is_deleted=True))
@@ -2250,7 +2768,6 @@ class EmailOTPVerifyView(APIView):
             {"detail": "Email verified."},
             status=status.HTTP_200_OK,
         )
-
 
 
 class EmailOTPResendView(APIView):

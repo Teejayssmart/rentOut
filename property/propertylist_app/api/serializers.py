@@ -8,6 +8,7 @@ from propertylist_app.models import (
     Room, RoomCategorie, Review, UserProfile, RoomImage,
     SavedRoom, MessageThread, Message, Booking,
     AvailabilitySlot, Payment, Report, Notification, EmailOTP,
+    MessageThreadState,
 
 )
 from propertylist_app.validators import (
@@ -164,23 +165,58 @@ class SearchFiltersSerializer(serializers.Serializer):
     offset = serializers.IntegerField(required=False)
     ordering = serializers.CharField(required=False)
 
-    # NEW: filter by property_type choices on Room model
+    # property type filters (basic & advanced)
     property_types = serializers.ListField(
         child=serializers.ChoiceField(choices=["flat", "house", "studio"]),
         required=False,
         allow_empty=True,
     )
-
     ALLOWED_ORDER_FIELDS = {"price_per_month", "available_from", "created_at"}
 
+    # ========== Advanced search filters ==========
+    # “Rooms in existing shares”
+    include_shared = serializers.BooleanField(required=False)
+
+    # “Rooms suitable for ages”
+    min_age = serializers.IntegerField(required=False)
+    max_age = serializers.IntegerField(required=False)
+
+    # “Length of stay”
+    min_stay_months = serializers.IntegerField(required=False)
+    max_stay_months = serializers.IntegerField(required=False)
+
+    # “Rooms for”
+    room_for = serializers.ChoiceField(
+        choices=["any", "females", "males", "couples"],
+        required=False,
+    )
+
+    # “Room sizes”
+    room_size = serializers.ChoiceField(
+        choices=["dont_mind", "single", "double"],
+        required=False,
+    )
+
+    ALLOWED_ORDER_FIELDS = {"price_per_month", "available_from", "created_at",  "updated_at",}
+
     def validate(self, attrs):
+        # existing price / pagination rules
         validate_numeric_range(attrs.get("min_price"), attrs.get("max_price"))
         validate_pagination(attrs.get("limit"), attrs.get("page"), attrs.get("offset"))
 
+        # radius must have postcode
         if attrs.get("radius_miles") and not attrs.get("postcode"):
             raise serializers.ValidationError(
                 {"postcode": "Postcode is required when using radius search."}
             )
+
+        # NEW: ages range sanity (simple check)
+        if attrs.get("min_age") is not None or attrs.get("max_age") is not None:
+            validate_numeric_range(attrs.get("min_age"), attrs.get("max_age"))
+
+        # NEW: stay length range sanity
+        if attrs.get("min_stay_months") is not None or attrs.get("max_stay_months") is not None:
+            validate_numeric_range(attrs.get("min_stay_months"), attrs.get("max_stay_months"))
 
         return attrs
 
@@ -377,15 +413,46 @@ class UserSerializer(serializers.ModelSerializer):
 
 class UserProfileSerializer(serializers.ModelSerializer):
     avatar = serializers.ImageField(required=False, allow_null=True)
+    date_of_birth = serializers.DateField(required=False, allow_null=True)
+    gender = serializers.ChoiceField(
+        choices=["male", "female", "non_binary", "prefer_not_to_say"],
+        required=False,
+        allow_blank=True,
+    )
+    postcode = serializers.CharField(required=False, allow_blank=True)
+    occupation = serializers.CharField(required=False, allow_blank=True)
+    about_you = serializers.CharField(required=False, allow_blank=True)
 
     class Meta:
         model = UserProfile
-        fields = ["phone", "avatar"]
+        fields = [
+            "phone",
+            "avatar",
+            "occupation",
+            "postcode",
+            "date_of_birth",
+            "gender",
+            "about_you",
+        ]
 
     def validate_avatar(self, file):
         if file:
             return validate_avatar_image(file)
         return file
+
+    def validate_postcode(self, value):
+        value = (value or "").strip()
+        if not value:
+            return value
+        return normalize_uk_postcode(value)
+
+    def validate_date_of_birth(self, value):
+        if not value:
+            return value
+        # ensures user is 18+ (you already imported validate_age_18_plus)
+        validate_age_18_plus(value)
+        return value
+
 
 
 # --------------------
@@ -436,9 +503,21 @@ class MessageThreadSerializer(serializers.ModelSerializer):
     last_message = serializers.SerializerMethodField()
     unread_count = serializers.SerializerMethodField()
 
+    # NEW: per-user state fields
+    label = serializers.SerializerMethodField()
+    in_bin = serializers.SerializerMethodField()
+
     class Meta:
         model = MessageThread
-        fields = ["id", "participants", "created_at", "last_message", "unread_count"]
+        fields = [
+            "id",
+            "participants",
+            "created_at",
+            "last_message",
+            "unread_count",
+            "label",
+            "in_bin",
+        ]
 
     def get_last_message(self, obj):
         msg = obj.messages.order_by("-created").first()
@@ -451,6 +530,66 @@ class MessageThreadSerializer(serializers.ModelSerializer):
         return obj.messages.exclude(sender=request.user).exclude(
             reads__user=request.user
         ).count()
+
+    def _get_state_for_user(self, obj):
+        """
+        Helper to get MessageThreadState for the current user.
+        If the view has pre-attached obj._state_for_user, use that;
+        otherwise do a small DB lookup.
+        """
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        if not user or not user.is_authenticated:
+            return None
+
+        # If view pre-attached a state
+        st = getattr(obj, "_state_for_user", None)
+        if st is not None:
+            return st
+
+        # Fallback: 1 query per thread
+        return MessageThreadState.objects.filter(user=user, thread=obj).first()
+
+    def get_label(self, obj):
+        st = self._get_state_for_user(obj)
+        if not st or not st.label:
+            return None  # treated as "no status"
+        return st.label
+
+    def get_in_bin(self, obj):
+        st = self._get_state_for_user(obj)
+        return bool(st.in_bin) if st else False
+
+
+
+class MessageThreadStateUpdateSerializer(serializers.Serializer):
+    """
+    Used by PATCH /api/messages/threads/<thread_id>/state/
+    to update per-user label and/or in_bin.
+    """
+    label = serializers.ChoiceField(
+        choices=[
+            "viewing_scheduled",
+            "viewing_done",
+            "good_fit",
+            "unsure",
+            "not_a_fit",
+            "paperwork_pending",
+            "no_status",        # special value to clear label
+        ],
+        required=False,
+    )
+    in_bin = serializers.BooleanField(required=False)
+
+    def validate(self, attrs):
+        # nothing fancy yet; we just normalise label
+        label = attrs.get("label")
+        if label == "no_status":
+            attrs["label"] = ""  # clear label in DB
+        return attrs
+
+
+
 
 
 class BookingSerializer(serializers.ModelSerializer):

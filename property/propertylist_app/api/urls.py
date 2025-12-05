@@ -30,7 +30,8 @@ from propertylist_app.api.views import (
     RoomSaveView, RoomSaveToggleView, MySavedRoomsView,
 
     # Messaging
-    MessageThreadListCreateView, MessageListCreateView, ThreadMarkReadView, StartThreadFromRoomView,
+    MessageThreadListCreateView, MessageListCreateView, ThreadMarkReadView, StartThreadFromRoomView,ThreadMoveToBinView,ThreadRestoreFromBinView,ThreadSetLabelView,
+    MessageThreadStateView,MessageStatsView,
 
     # Bookings & Availability
     create_booking, BookingListCreateView, BookingDetailView, BookingCancelView,
@@ -43,7 +44,7 @@ from propertylist_app.api.views import (
     RegistrationView, LoginView, LogoutView,
     PasswordResetRequestView, PasswordResetConfirmView,
     MeView, UserProfileView,
-    UserAvatarUploadView, ChangeEmailView, ChangePasswordView, DeactivateAccountView, MyRoomsView,
+    UserAvatarUploadView, ChangeEmailView, ChangePasswordView, DeactivateAccountView, MyRoomsView,GoogleRegisterView,AppleRegisterView,
 
     # Soft delete
     RoomSoftDeleteView,
@@ -111,6 +112,22 @@ urlpatterns = [
     path("messages/threads/<int:thread_id>/read/",         ThreadMarkReadView.as_view(),          name="thread-mark-read"),
     path("rooms/<int:room_id>/start-thread/",              StartThreadFromRoomView.as_view(),     name="start-thread-from-room"),
 
+    # Bin (per-user)
+    path("messages/threads/<int:thread_id>/bin/",          ThreadMoveToBinView.as_view(),         name="message-thread-bin"),
+    path("messages/threads/<int:thread_id>/restore/",      ThreadRestoreFromBinView.as_view(),     name="message-thread-restore"),
+
+    # Set label (Good Fit, Viewing Scheduled, etc.)
+    path("messages/threads/<int:thread_id>/label/",        ThreadSetLabelView.as_view(),           name="message-thread-label"),
+
+    # Full per-user thread state update (label + bin)
+    path("messages/threads/<int:thread_id>/state/",        MessageThreadStateView.as_view(),       name="thread-state"),
+
+    #Message statistics (for homepage quick filters)
+    path("messages/stats/",                                MessageStatsView.as_view(),             name="messages-stats"),
+
+
+
+
     # --- Bookings / viewings ---
     path("bookings/create/",               create_booking,                  name="booking-create"),
     path("bookings/",                      BookingListCreateView.as_view(), name="bookings-list-create"),
@@ -140,12 +157,17 @@ urlpatterns = [
     # --- Soft delete room ---
     path("rooms/<int:pk>/soft-delete/", RoomSoftDeleteView.as_view(), name="room-soft-delete"),
 
-    # --- Auth ---
+        # --- Auth ---
     path("auth/register/",               RegistrationView.as_view(),         name="auth-register"),
     path("auth/login/",                  LoginView.as_view(),                name="auth-login"),
     path("auth/logout/",                 LogoutView.as_view(),               name="auth-logout"),
     path("auth/password-reset/",         PasswordResetRequestView.as_view(), name="auth-password-reset"),
     path("auth/password-reset/confirm/", PasswordResetConfirmView.as_view(), name="auth-password-reset-confirm"),
+
+    # Social sign-up stubs (for Figma buttons)           # NEW
+    path("auth/register/google/",        GoogleRegisterView.as_view(),       name="auth-register-google"),  # NEW
+    path("auth/register/apple/",         AppleRegisterView.as_view(),        name="auth-register-apple"),   # NEW
+
 
     # --- Payments (Stripe) ---
     path("payments/checkout/rooms/<int:pk>/", CreateListingCheckoutSessionView.as_view(), name="payments-checkout-room"),

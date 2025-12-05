@@ -124,13 +124,74 @@ class Room(SoftDeleteModel):
     latitude = models.FloatField(null=True, blank=True)
     longitude = models.FloatField(null=True, blank=True)
     paid_until = models.DateField(null=True, blank=True)  # listing is paid/active until this date
+
     STATUS_CHOICES = (("active", "Active"), ("hidden", "Hidden"))
     status = models.CharField(max_length=16, choices=STATUS_CHOICES, default="active")
 
+    # ===== Advanced-search fields (for the modal) =====
+    # “Rooms in existing shares”
+    is_shared_room = models.BooleanField(
+        default=False,
+        help_text="Room is in an existing flat/house share.",
+    )
+
+    # “Rooms suitable for ages”
+    min_age = models.PositiveSmallIntegerField(null=True, blank=True)
+    max_age = models.PositiveSmallIntegerField(null=True, blank=True)
+
+    # “Length of stay”
+    min_stay_months = models.PositiveSmallIntegerField(null=True, blank=True)
+    max_stay_months = models.PositiveSmallIntegerField(null=True, blank=True)
+
+    # “Rooms for – females / males / couples / don’t mind”
+    ROOM_FOR_CHOICES = [
+        ("any", "Don't mind"),
+        ("females", "Females"),
+        ("males", "Males"),
+        ("couples", "Couples"),
+    ]
+    room_for = models.CharField(
+        max_length=16,
+        choices=ROOM_FOR_CHOICES,
+        default="any",
+    )
+
+    # “Room sizes – single / double / don’t mind”
+    ROOM_SIZE_CHOICES = [
+        ("dont_mind", "Don't mind"),
+        ("single", "Single"),
+        ("double", "Double"),
+    ]
+    room_size = models.CharField(
+        max_length=16,
+        choices=ROOM_SIZE_CHOICES,
+        default="dont_mind",
+    )
+
     def clean(self):
         super().clean()
-        if self.bills_included and self.price_per_month is not None and float(self.price_per_month) < 100.0:
+
+        # Existing bills + price rule
+        if (
+            self.bills_included
+            and self.price_per_month is not None
+            and float(self.price_per_month) < 100.0
+        ):
             raise ValidationError({"bills_included": "Bills cannot be included for such a low price."})
+
+        # NEW: age range sanity
+        if self.min_age is not None and self.max_age is not None and self.min_age > self.max_age:
+            raise ValidationError({"min_age": "min_age cannot be greater than max_age."})
+
+        # NEW: stay length sanity
+        if (
+            self.min_stay_months is not None
+            and self.max_stay_months is not None
+            and self.min_stay_months > self.max_stay_months
+        ):
+            raise ValidationError(
+                {"min_stay_months": "min_stay_months cannot be greater than max_stay_months."}
+            )
 
     def save(self, *args, **kwargs):
         if self.property_owner_id is None:
@@ -140,7 +201,7 @@ class Room(SoftDeleteModel):
                 owner = UserModel.objects.create_user(
                     username=f"system_{uuid4().hex[:8]}",
                     password="!auto!",
-                    email=""
+                    email="",
                 )
             self.property_owner = owner
 
@@ -198,8 +259,36 @@ class UserProfile(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="profile")
     phone = models.CharField(max_length=15, unique=True, null=True, blank=True)
     avatar = models.ImageField(upload_to="avatars/", null=True, blank=True)
+
     ROLE_CHOICES = (("landlord", "Landlord"), ("seeker", "Seeker"))
     role = models.CharField(max_length=20, choices=ROLE_CHOICES, default="seeker", db_index=True)
+
+    # --- NEW FIELDS FOR "MY PROFILE" PAGE -----------------------------
+    GENDER_CHOICES = (                                           # >>> NEW
+        ("male", "Male"),                                        # >>> NEW
+        ("female", "Female"),                                    # >>> NEW
+        ("non_binary", "Non-binary"),                            # >>> NEW
+        ("prefer_not_to_say", "Prefer not to say"),              # >>> NEW
+    )                                                             # >>> NEW
+
+    occupation = models.CharField(                               # >>> NEW
+        max_length=100, blank=True, default=""                   # >>> NEW
+    )                                                             # >>> NEW
+    gender = models.CharField(                                   # >>> NEW
+        max_length=32, choices=GENDER_CHOICES, blank=True,       # >>> NEW
+        default=""                                               # >>> NEW
+    )                                                             # >>> NEW
+    postcode = models.CharField(                                 # >>> NEW
+        max_length=12, blank=True, default=""                    # >>> NEW
+    )                                                             # >>> NEW
+    date_of_birth = models.DateField(                            # >>> NEW
+        null=True, blank=True                                    # >>> NEW
+    )                                                             # >>> NEW
+    about_you = models.TextField(                                # >>> NEW
+        max_length=100, blank=True, default=""                   # >>> NEW
+    )                                                             # >>> NEW
+    # -----------------------------------------------------------------
+
     email_verified = models.BooleanField(default=False, db_index=True)
     email_verified_at = models.DateTimeField(null=True, blank=True)
     terms_accepted_at = models.DateTimeField(null=True, blank=True)
@@ -208,6 +297,7 @@ class UserProfile(models.Model):
 
     def __str__(self):
         return f"{self.user.username} profile"
+
 
 
 # --------
@@ -337,9 +427,58 @@ class MessageThread(models.Model):
     participants = models.ManyToManyField(User, related_name="message_threads")
     created_at = models.DateTimeField(auto_now_add=True)
 
+    # Optional label for UI filters (Viewing scheduled, Good fit, etc.)
+    label = models.CharField(
+        max_length=32,
+        blank=True,
+        default="",
+        db_index=True,
+        help_text="Optional label for this thread (e.g. 'Viewing scheduled', 'Good fit').",
+    )
+
+    # Soft-delete flag for “Bin” folder (applies to both participants for now)
+    is_deleted = models.BooleanField(default=False, db_index=True)
+
     def __str__(self):
         users = ", ".join(self.participants.values_list("username", flat=True)[:2])
         return f"Thread {self.id} ({users}…)"
+
+
+class MessageThreadState(models.Model):
+    """
+    Per-user state for a message thread:
+    - label (Viewing scheduled / Good fit / etc.)
+    - in_bin (whether THIS user has moved the thread to Bin)
+    """
+    LABEL_CHOICES = [
+        ("viewing_scheduled", "Viewing scheduled"),
+        ("viewing_done", "Viewing done"),
+        ("good_fit", "Good fit"),
+        ("unsure", "Unsure"),
+        ("not_a_fit", "Not a fit"),
+        ("paperwork_pending", "Paperwork pending"),
+    ]
+
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="thread_states")
+    thread = models.ForeignKey("MessageThread", on_delete=models.CASCADE, related_name="states")
+
+    # If empty/blank → treated as "no status"
+    label = models.CharField(max_length=32, choices=LABEL_CHOICES, blank=True, default="")
+    in_bin = models.BooleanField(default=False)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ("user", "thread")
+        indexes = [
+            models.Index(fields=["user", "thread"]),
+            models.Index(fields=["user", "in_bin"]),
+            models.Index(fields=["user", "label"]),
+        ]
+
+    def __str__(self):
+        return f"State(user={self.user_id}, thread={self.thread_id}, label={self.label or 'no_status'}, bin={self.in_bin})"
 
 
 # -------
