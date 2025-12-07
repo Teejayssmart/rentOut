@@ -125,6 +125,7 @@ from .serializers import (
     UserProfileSerializer,
     SearchFiltersSerializer,
     OnboardingCompleteSerializer,
+    ContactMessageSerializer,
 )
 
 from .serializers import EmailOTPVerifySerializer, EmailOTPResendSerializer
@@ -916,6 +917,16 @@ class HomePageView(APIView):
 
         ser = HomeSummarySerializer(payload, context={"request": request})
         return Response(ser.data, status=status.HTTP_200_OK)
+
+
+
+class ContactMessageCreateView(generics.CreateAPIView):
+    """
+    Public Contact Us endpoint.
+    Used by the Contact Us form on the marketing site.
+    """
+    permission_classes = [AllowAny]
+    serializer_class = ContactMessageSerializer
 
 
 class CityListView(APIView):

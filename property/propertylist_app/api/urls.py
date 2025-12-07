@@ -68,7 +68,8 @@ from propertylist_app.api.views import (
     
     HealthCheckView, OnboardingCompleteView,
 
-    
+    # Contact
+    ContactMessageCreateView,
    
    
 )
@@ -214,12 +215,16 @@ urlpatterns = [
     path("cities/", views.CityListView.as_view(), name="api-city-list"),
     path("rooms/mine/", MyRoomsView.as_view(), name="rooms-mine"),
 
-
+    
+    # Contact Us form
+    path("contact/", ContactMessageCreateView.as_view(), name="contact-create"),
 
     # --- Search & discovery ---
     path("search/rooms/",  cache_page(60)(SearchRoomsView.as_view()),  name="search-rooms"),
     path("rooms/nearby/",  NearbyRoomsView.as_view(),                  name="rooms-nearby"),
     path("search/find-address/", FindAddressView.as_view(),            name="search-find-address"),
+    
+    
 
 
 ]

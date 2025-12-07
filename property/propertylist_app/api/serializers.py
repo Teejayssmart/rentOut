@@ -8,7 +8,7 @@ from propertylist_app.models import (
     Room, RoomCategorie, Review, UserProfile, RoomImage,
     SavedRoom, MessageThread, Message, Booking,
     AvailabilitySlot, Payment, Report, Notification, EmailOTP,
-    MessageThreadState,
+    MessageThreadState,ContactMessage,
 
 )
 from propertylist_app.validators import (
@@ -445,6 +445,22 @@ class UserProfileSerializer(serializers.ModelSerializer):
         if value:
             validate_age_18_plus(value)
         return value
+
+
+
+class ContactMessageSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ContactMessage
+        fields = [
+            "id",
+            "name",
+            "email",
+            "subject",
+            "message",
+            "created_at",
+        ]
+        read_only_fields = ["id", "created_at"]
+
 
 
 
