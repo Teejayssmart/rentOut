@@ -8,8 +8,7 @@ from propertylist_app.models import (
     Room, RoomCategorie, Review, UserProfile, RoomImage,
     SavedRoom, MessageThread, Message, Booking,
     AvailabilitySlot, Payment, Report, Notification, EmailOTP,
-    MessageThreadState,ContactMessage,
-
+    MessageThreadState, ContactMessage,
 )
 from propertylist_app.validators import (
     validate_person_name, validate_age_18_plus, validate_avatar_image,
@@ -53,6 +52,12 @@ class RoomSerializer(serializers.ModelSerializer):
     )
     is_saved = serializers.SerializerMethodField(read_only=True)
     distance_miles = serializers.SerializerMethodField(read_only=True)
+
+    # extra fields for Find a Room cards
+    owner_name = serializers.SerializerMethodField(read_only=True)
+    owner_avatar = serializers.SerializerMethodField(read_only=True)
+    main_photo = serializers.SerializerMethodField(read_only=True)
+    photo_count = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = Room
@@ -139,6 +144,53 @@ class RoomSerializer(serializers.ModelSerializer):
         val = getattr(obj, "distance_miles", None)
         return round(val, 2) if isinstance(val, (int, float)) else val
 
+    def get_owner_name(self, obj):
+        user = getattr(obj, "property_owner", None)
+        if not user:
+            return ""
+        full_name = (user.get_full_name() or "").strip()
+        return full_name or user.username
+
+    def get_owner_avatar(self, obj):
+        user = getattr(obj, "property_owner", None)
+        if not user:
+            return None
+
+        profile = getattr(user, "profile", None)
+        if not profile or not profile.avatar:
+            return None
+
+        request = self.context.get("request")
+        url = profile.avatar.url
+        if request is not None:
+            return request.build_absolute_uri(url)
+        return url
+
+    def get_main_photo(self, obj):
+        # prefer first approved RoomImage; fall back to legacy Room.image
+        first_image = (
+            obj.roomimage_set.filter(status="approved")
+            .order_by("id")
+            .first()
+        )
+        if first_image and first_image.image:
+            url = first_image.image.url
+        elif obj.image:
+            url = obj.image.url
+        else:
+            return None
+
+        request = self.context.get("request")
+        if request is not None:
+            return request.build_absolute_uri(url)
+        return url
+
+    def get_photo_count(self, obj):
+        count = obj.roomimage_set.filter(status="approved").count()
+        if count > 0:
+            return count
+        return 1 if obj.image else 0
+
 
 # --------------------
 # Room Category Serializer
@@ -197,7 +249,7 @@ class SearchFiltersSerializer(serializers.Serializer):
         required=False,
     )
 
-    ALLOWED_ORDER_FIELDS = {"price_per_month", "available_from", "created_at",  "updated_at",}
+    ALLOWED_ORDER_FIELDS = {"price_per_month", "available_from", "created_at", "updated_at"}
 
     def validate(self, attrs):
         # existing price / pagination rules
@@ -232,7 +284,6 @@ class FindAddressSerializer(serializers.Serializer):
         return normalize_uk_postcode(value)
 
 
-
 # --------------------
 # Home / City summaries
 # --------------------
@@ -253,8 +304,6 @@ class HomeSummarySerializer(serializers.Serializer):
     popular_cities = CitySummarySerializer(many=True)
     stats = serializers.DictField()
     app_links = serializers.DictField()
-
-
 
 
 # --------------------
@@ -335,7 +384,6 @@ class RegistrationSerializer(serializers.ModelSerializer):
             )
 
         return attrs
-
 
     def create(self, validated):
         validated.pop("password2", None)
@@ -447,7 +495,6 @@ class UserProfileSerializer(serializers.ModelSerializer):
         return value
 
 
-
 class ContactMessageSerializer(serializers.ModelSerializer):
     class Meta:
         model = ContactMessage
@@ -460,8 +507,6 @@ class ContactMessageSerializer(serializers.ModelSerializer):
             "created_at",
         ]
         read_only_fields = ["id", "created_at"]
-
-
 
 
 # --------------------
@@ -570,7 +615,6 @@ class MessageThreadSerializer(serializers.ModelSerializer):
         return bool(st.in_bin) if st else False
 
 
-
 class MessageThreadStateUpdateSerializer(serializers.Serializer):
     """
     Used by PATCH /api/messages/threads/<thread_id>/state/
@@ -596,9 +640,6 @@ class MessageThreadStateUpdateSerializer(serializers.Serializer):
         if label == "no_status":
             attrs["label"] = ""  # clear label in DB
         return attrs
-
-
-
 
 
 class BookingSerializer(serializers.ModelSerializer):

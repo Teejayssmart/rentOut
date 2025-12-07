@@ -1190,18 +1190,24 @@ class SearchRoomsView(generics.ListAPIView):
         #   price_asc     -> price_per_month
         #   price_desc    -> -price_per_month
         ui_sort_map = {
-            "default": "",
+            # Frontend "Default viewing order" → newest first
+            "default": "-created_at",
             "newest": "-created_at",
             "last_updated": "-updated_at",
             "price_asc": "price_per_month",
             "price_desc": "-price_per_month",
+            # optional: if FE ever sends this explicitly
+            "distance": "distance_miles",
         }
         if ordering_param in ui_sort_map:
             ordering_param = ui_sort_map[ordering_param]
 
         if not ordering_param:
-            # backend default: by distance if postcode is known, otherwise by rating
-            ordering_param = "distance_miles" if postcode else "-avg_rating"
+            # Backend default when no ordering is provided:
+            # - If postcode search: by distance
+            # - Otherwise: newest first
+            ordering_param = "distance_miles" if postcode else "-created_at"
+
 
         # Defer distance ordering to list() when we have computed distances
         if ordering_param in {"distance_miles", "-distance_miles"} and self._ordered_ids is not None:
@@ -1222,6 +1228,36 @@ class SearchRoomsView(generics.ListAPIView):
                 qs = qs.order_by(mapped)
 
         return qs
+    
+    
+    def list(self, request, *args, **kwargs):
+        """
+        Ensure distance-based ordering is preserved and distance_miles is
+        attached to each Room when postcode radius search is used.
+        """
+        queryset = self.get_queryset()
+
+        # If we have an explicit distance ordering with pre-computed ids,
+        # re-order the queryset in memory to follow self._ordered_ids.
+        if self._ordered_ids is not None and self._distance_by_id is not None:
+            room_by_id = {obj.id: obj for obj in queryset}
+            ordered_objs = []
+            for rid in self._ordered_ids:
+                obj = room_by_id.get(rid)
+                if obj is not None:
+                    obj.distance_miles = self._distance_by_id.get(rid)
+                    ordered_objs.append(obj)
+        else:
+            ordered_objs = list(queryset)
+
+        page = self.paginate_queryset(ordered_objs)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+
+        serializer = self.get_serializer(ordered_objs, many=True)
+        return Response(serializer.data)
+
 
 
 class FindAddressView(APIView):
