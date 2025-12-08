@@ -101,9 +101,19 @@ class Room(SoftDeleteModel):
     title = models.CharField(max_length=200)
     description = models.TextField()
     price_per_month = models.DecimalField(max_digits=8, decimal_places=2)
+    security_deposit = models.DecimalField(      
+        max_digits=8,                            
+        decimal_places=2,                        
+        null=True,                               
+        blank=True,                              
+        help_text="Security deposit in GBP.",    
+    )                                            
     location = models.CharField(max_length=255)
     category = models.ForeignKey(RoomCategorie, on_delete=models.CASCADE, related_name="room_info")
-    available_from = models.DateField(default=date.today)
+    available_from = models.DateField(
+    default=date.today,
+    help_text="Date from which the room will be available for listing / move-in.",
+)
     is_available = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -125,8 +135,13 @@ class Room(SoftDeleteModel):
     longitude = models.FloatField(null=True, blank=True)
     paid_until = models.DateField(null=True, blank=True)  # listing is paid/active until this date
 
-    STATUS_CHOICES = (("active", "Active"), ("hidden", "Hidden"))
+    STATUS_CHOICES = (
+        ("draft", "Draft"),   # not fully listed yet – appears only to owner
+        ("active", "Active"), # live listing – appears in search / homepage
+        ("hidden", "Hidden"), # manually hidden or GDPR-cleanup, admin use
+    )
     status = models.CharField(max_length=16, choices=STATUS_CHOICES, default="active")
+
 
     # ===== Advanced-search fields (for the modal) =====
     # “Rooms in existing shares”
@@ -168,6 +183,77 @@ class Room(SoftDeleteModel):
         default="dont_mind",
     )
 
+    
+        # Daily availability window – when the landlord is available for viewings
+    availability_from_time = models.TimeField(
+        null=True,
+        blank=True,
+        help_text="Earliest time you are available (e.g. 16:30).",
+    )
+    availability_to_time = models.TimeField(
+        null=True,
+        blank=True,
+        help_text="Latest time you are available (e.g. 20:00).",
+    )
+
+    
+    
+    
+        # --- Viewing availability (List a Room step 1) ---
+    VIEW_DAYS_CHOICES = [
+        ("everyday", "Everyday"),
+        ("weekdays", "Weekdays only"),
+        ("weekends", "Weekends only"),
+        ("custom", "Custom dates"),
+    ]
+
+    # How the “View Available Days” dropdown is set
+    view_available_days_mode = models.CharField(
+        max_length=20,
+        choices=VIEW_DAYS_CHOICES,
+        default="everyday",
+        help_text="Everyday / weekdays only / weekends only / custom dates.",
+    )
+
+    # When mode = 'custom', front-end sends an array of dates (YYYY-MM-DD)
+    # that the calendar has highlighted (range or scattered).
+    view_available_custom_dates = models.JSONField(
+        blank=True,
+        default=list,
+        help_text="List of specific viewing dates when mode is 'custom'.",
+    )
+
+    @property
+    def is_live(self):
+        """
+        Used for public listing visibility:
+        - status is 'active'
+        - not soft-deleted
+        - paid_until is either NULL or today/in the future
+        """
+        if self.status != "active" or getattr(self, "is_deleted", False):
+            return False
+
+        today = date.today()
+        if self.paid_until and self.paid_until < today:
+            return False
+        return True
+
+    @property
+    def is_expired_listing(self):
+        """
+        A listing that has *passed* its paid_until date.
+        Still belongs to the owner but won't show in public search.
+        """
+        if not self.paid_until:
+            return False
+        return self.paid_until < date.today()
+
+
+    
+
+
+    
     def clean(self):
         super().clean()
 

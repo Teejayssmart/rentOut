@@ -25,6 +25,7 @@ from django.utils import timezone
 from django.core import mail
 from django.utils.crypto import get_random_string
 import re
+from datetime import date
 
 
 # --------------------
@@ -58,6 +59,8 @@ class RoomSerializer(serializers.ModelSerializer):
     owner_avatar = serializers.SerializerMethodField(read_only=True)
     main_photo = serializers.SerializerMethodField(read_only=True)
     photo_count = serializers.SerializerMethodField(read_only=True)
+    listing_state = serializers.SerializerMethodField(read_only=True)
+
 
     class Meta:
         model = Room
@@ -72,6 +75,14 @@ class RoomSerializer(serializers.ModelSerializer):
     def validate_price_per_month(self, value):
         value = normalise_price(value)
         return validate_price(value, min_val=50.0, max_val=20000.0)
+    
+    
+    def validate_security_deposit(self, value):
+        # normalise_price handles strings like "£200" or "200.00"
+        value = normalise_price(value)
+        # allow zero, but cap it to something sensible
+        return validate_price(value, min_val=0.0, max_val=50000.0)
+
 
     def validate_location(self, value):
         parts = str(value or "").strip().split()
@@ -88,6 +99,8 @@ class RoomSerializer(serializers.ModelSerializer):
         validate_listing_photos([value])
         assert_no_duplicate_files([value])
         return value
+    
+    
 
     def validate(self, attrs):
         price = attrs.get("price_per_month")
@@ -115,6 +128,74 @@ class RoomSerializer(serializers.ModelSerializer):
         # available_from must not be in the past (when provided)
         if available_from is not None:
             validate_available_from(available_from)
+            
+        # ----- Minimum / maximum rental period (months, 1–12) -----
+        # Support PATCH: if a field is not in attrs, fall back to instance
+        min_stay = attrs.get(
+            "min_stay_months",
+            getattr(self.instance, "min_stay_months", None),
+        )
+        max_stay = attrs.get(
+            "max_stay_months",
+            getattr(self.instance, "max_stay_months", None),
+        )
+        
+        
+        
+                # --- Daily availability time window (optional HH:MM) ---
+        start_time = attrs.get("availability_from_time")
+        end_time = attrs.get("availability_to_time")
+
+        # For PATCH, fall back to existing instance values
+        if self.instance is not None:
+            if start_time is None:
+                start_time = getattr(self.instance, "availability_from_time", None)
+            if end_time is None:
+                end_time = getattr(self.instance, "availability_to_time", None)
+
+        # Case 1: one side missing
+        if start_time and not end_time:
+            raise serializers.ValidationError(
+                {"availability_to_time": "Please provide an end time as well."}
+            )
+
+        if end_time and not start_time:
+            raise serializers.ValidationError(
+                {"availability_from_time": "Please provide a start time as well."}
+            )
+
+        # Case 2: both present but invalid order
+        if start_time and end_time and start_time >= end_time:
+            raise serializers.ValidationError(
+                {"availability_to_time": "End time must be after start time."}
+            )
+
+        
+        def _check_month_field(val, field_name):
+            if val is None:
+                return
+            try:
+                val_int = int(val)
+            except (TypeError, ValueError):
+                raise serializers.ValidationError(
+                    {field_name: "Must be an integer number of months."}
+                )
+            if val_int < 1 or val_int > 12:
+                raise serializers.ValidationError(
+                    {field_name: "Must be between 1 and 12 months."}
+                )
+            # normalise back into attrs so DB always sees clean ints
+            attrs[field_name] = val_int
+
+        _check_month_field(min_stay, "min_stay_months")
+        _check_month_field(max_stay, "max_stay_months")
+
+        min_final = attrs.get("min_stay_months", min_stay)
+        max_final = attrs.get("max_stay_months", max_stay)
+        if min_final is not None and max_final is not None and min_final > max_final:
+            raise serializers.ValidationError(
+                {"min_stay_months": "Minimum rental period cannot be greater than maximum rental period."}
+            )    
 
         # ----- Per-owner duplicate check (centralised) -----
         request = self.context.get("request")
@@ -127,11 +208,35 @@ class RoomSerializer(serializers.ModelSerializer):
                     title=new_title,
                     queryset=Room.objects,
                     exclude_pk=getattr(self.instance, "pk", None),
-                    # If you also want to consider location for duplicates, uncomment:
-                    # location=attrs.get("location") or getattr(self.instance, "location", None),
                 )
 
+        # --- New: consistency between mode and custom dates ---
+        # Work out the effective mode, taking PATCH into account.
+        mode = attrs.get(
+            "view_available_days_mode",
+            getattr(self.instance, "view_available_days_mode", "everyday"),
+        )
+        custom_dates = attrs.get(
+            "view_available_custom_dates",
+            getattr(self.instance, "view_available_custom_dates", []),
+        )
+
+        if mode == "custom":
+            # For custom, we require at least one date
+            if not custom_dates:
+                raise serializers.ValidationError(
+                    {
+                        "view_available_custom_dates": (
+                            "Provide at least one date when using custom mode."
+                        )
+                    }
+                )
+        else:
+            # For non-custom modes, we ignore any custom dates sent
+            attrs["view_available_custom_dates"] = []
+
         return attrs
+
 
     def get_is_saved(self, obj):
         request = self.context.get("request")
@@ -143,6 +248,43 @@ class RoomSerializer(serializers.ModelSerializer):
     def get_distance_miles(self, obj):
         val = getattr(obj, "distance_miles", None)
         return round(val, 2) if isinstance(val, (int, float)) else val
+    
+    def get_listing_state(self, obj):
+            """
+            Returns one of: 'draft', 'active', 'expired', 'hidden'.
+            Used by the 'My Listings' page to group into tabs:
+            - Draft    (listing_state == 'draft')
+            - Live     (listing_state == 'active')
+            - Expired  (listing_state == 'expired')
+            """
+            # If the queryset annotated a listing_state, reuse it.
+            state = getattr(obj, "listing_state", None)
+            if state:
+                return state
+
+            from datetime import date
+            today = date.today()
+
+            # 1) Explicit hidden + past paid_until = expired
+            if obj.status == "hidden" and obj.paid_until and obj.paid_until < today:
+                return "expired"
+
+            # 2) Hidden but not clearly expired
+            if obj.status == "hidden":
+                return "hidden"
+
+            # 3) No paid_until at all = draft (never paid / not live yet)
+            if obj.paid_until is None:
+                return "draft"
+
+            # 4) Paid until date in the past = expired
+            if obj.paid_until < today:
+                return "expired"
+
+            # 5) Otherwise treat as active
+            return "active"
+
+
 
     def get_owner_name(self, obj):
         user = getattr(obj, "property_owner", None)
@@ -190,6 +332,48 @@ class RoomSerializer(serializers.ModelSerializer):
         if count > 0:
             return count
         return 1 if obj.image else 0
+    
+        # --- New helpers for 'View Available Days' ---
+
+
+    def validate_view_available_days_mode(self, value):
+        # DRF already checks choices; this is just a safety normaliser.
+        return (value or "everyday").strip()
+
+    def validate_view_available_custom_dates(self, value):
+        """
+        Front-end sends an array of dates (strings) when mode='custom'.
+        We accept:
+          - ["2025-12-01", "2025-12-03"]
+          - [date(2025, 12, 1), ...]
+        and normalise everything to list of YYYY-MM-DD strings.
+        """
+        if value in (None, ""):
+            return []
+
+        if not isinstance(value, (list, tuple)):
+            raise serializers.ValidationError("Must be a list of dates.")
+
+        normalised = []
+        for item in value:
+            if isinstance(item, date):
+                normalised.append(item.isoformat())
+                continue
+            if isinstance(item, str):
+                try:
+                    d = date.fromisoformat(item)
+                except ValueError:
+                    raise serializers.ValidationError(
+                        "Dates must be in 'YYYY-MM-DD' format."
+                    )
+                normalised.append(d.isoformat())
+                continue
+            raise serializers.ValidationError(
+                "Each item must be a date or 'YYYY-MM-DD' string."
+            )
+
+        return normalised
+
 
 
 # --------------------

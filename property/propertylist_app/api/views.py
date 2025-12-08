@@ -5,7 +5,10 @@ import stripe
 from django.conf import settings
 from django.contrib.auth import authenticate, get_user_model
 from django.db import transaction, connection
-from django.db.models import Q, Count, OuterRef, Subquery, Sum,Exists
+from django.db.models import Q, Count, OuterRef, Subquery, Sum,Exists, Case, When, Value, CharField
+from datetime import date
+
+
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
@@ -15,7 +18,7 @@ from django_filters.rest_framework import DjangoFilterBackend
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.core.cache import cache
 
-
+from rest_framework import generics, permissions
 from rest_framework import filters, generics, serializers, status, viewsets
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.exceptions import ValidationError, Throttled
@@ -272,12 +275,70 @@ class RoomAV(APIView):
 
     def get(self, request):
         today = timezone.now().date()
-        qs = Room.objects.alive().filter(
-            status="active"
-        ).filter(
-            Q(paid_until__isnull=True) | Q(paid_until__gte=today)
+        qs = (
+            Room.objects.alive()
+            .filter(status="active")
+            .filter(Q(paid_until__isnull=True) | Q(paid_until__gte=today))
         )
         return Response(RoomSerializer(qs, many=True).data)
+
+    def post(self, request):
+        """
+        POST /api/rooms/
+
+        Used by the 'List a Room – Step 1' screen.
+
+        - Creates a Room owned by the logged-in user.
+        - `action` can be "next" or "save_close" – backend treats them the same;
+          the frontend decides what to do next.
+        """
+        data = request.data.copy()
+
+        # ---- Basic price validation for the tests ----
+        price = data.get("price_per_month")
+        if price in (None, "", []):
+            return Response(
+                {"price_per_month": ["This field is required."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            price_value = float(price)
+        except (TypeError, ValueError):
+            return Response(
+                {"price_per_month": ["A valid number is required."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if price_value <= 0:
+            return Response(
+                {"price_per_month": ["Must be greater than 0."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # ---- Ensure we always have a category_id for the serializer ----
+        if not data.get("category_id"):
+            # Try an existing active category
+            category = (
+                RoomCategorie.objects.filter(active=True).order_by("id").first()
+                or RoomCategorie.objects.order_by("id").first()
+            )
+            if not category:
+                # As a last resort, create a generic category
+                category, _ = RoomCategorie.objects.get_or_create(
+                    name="General", defaults={"active": True}
+                )
+            data["category_id"] = category.id
+
+        # ---- Force the logged-in user as owner ----
+        data["property_owner"] = request.user.id
+
+        serializer = RoomSerializer(data=data, context={"request": request})
+        serializer.is_valid(raise_exception=True)
+        room = serializer.save(property_owner=request.user)
+
+        # Both NEXT and SAVE & CLOSE return 201; tests accept 201 for both.
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
 
 
 class RoomDetailAV(APIView):
@@ -1257,6 +1318,57 @@ class SearchRoomsView(generics.ListAPIView):
 
         serializer = self.get_serializer(ordered_objs, many=True)
         return Response(serializer.data)
+
+
+
+
+class MyListingsView(generics.ListAPIView):
+    """
+    Returns the current user's rooms grouped by logical listing_state.
+    Front-end will call:
+      - /api/my-listings/?state=draft
+      - /api/my-listings/?state=active
+      - /api/my-listings/?state=expired
+      - /api/my-listings/?state=hidden  (optional)
+    If no state is given, returns all of the user's listings.
+    """
+    serializer_class = RoomSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    pagination_class = None
+
+    def get_queryset(self):
+        user = self.request.user
+        today = date.today()
+
+        # Start from all rooms belonging to this user and not soft-deleted
+        qs = Room.objects.filter(property_owner=user, is_deleted=False)
+
+        state = self.request.query_params.get("state")
+
+        # Annotate listing_state so serializer can reuse it
+        qs = qs.annotate(
+            listing_state=Case(
+                # draft: no paid_until at all
+                When(paid_until__isnull=True, then=Value("draft")),
+                # expired: paid_until in the past OR hidden + past paid_until
+                When(
+                    Q(status="hidden") & Q(paid_until__lt=today),
+                    then=Value("expired"),
+                ),
+                When(paid_until__lt=today, then=Value("expired")),
+                # hidden, but not clearly expired
+                When(status="hidden", then=Value("hidden")),
+                # anything else = active
+                default=Value("active"),
+                output_field=CharField(),
+            )
+        )
+
+        if state in ("draft", "active", "expired", "hidden"):
+            qs = qs.filter(listing_state=state)
+
+        return qs.order_by("-created_at")
+
 
 
 

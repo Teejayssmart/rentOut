@@ -70,6 +70,9 @@ from propertylist_app.api.views import (
 
     # Contact
     ContactMessageCreateView,
+    
+    MyListingsView,
+
    
    
 )
@@ -224,15 +227,14 @@ urlpatterns = [
     path("rooms/nearby/",  NearbyRoomsView.as_view(),                  name="rooms-nearby"),
     path("search/find-address/", FindAddressView.as_view(),            name="search-find-address"),
     
-    
+    path("my-listings/", MyListingsView.as_view(), name="my-listings"),
+
 
 
 ]
 
     
     
-   
-
 
 # Serve media in development only
 if settings.DEBUG:
