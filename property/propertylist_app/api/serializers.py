@@ -60,6 +60,45 @@ class RoomSerializer(serializers.ModelSerializer):
     main_photo = serializers.SerializerMethodField(read_only=True)
     photo_count = serializers.SerializerMethodField(read_only=True)
     listing_state = serializers.SerializerMethodField(read_only=True)
+    
+        # Amenity keys matching the Step 2/5 chips
+    AMENITY_CHOICES = {
+        # Home
+        "in_unit_laundry",
+        "broadband_inclusive",
+        "en_suite",
+        "bills_inclusive",
+        "tv",
+        "air_conditioning",
+        "furnished",
+        "unfurnished",
+        "balcony",
+        "pets_allowed",
+        "large_closet",
+        "private_bath",
+
+        # Property
+        "exercise_equipment",
+        "elevator",
+        "doorman",
+        "heating",
+        "paid_parking",
+        "outdoor_space",
+        "swimming_pool",
+        "free_parking",
+        "bbq_grill",
+        "fire_pit",
+        "pool_table",
+
+        # Safety
+        "smoke_alarm",
+        "first_aid_kit",
+        "security_system",
+        "carbon_monoxide",
+        "fire_extinguisher",
+        "disabled_accessible",
+        "must_climb_stairs",
+    }
 
 
     class Meta:
@@ -70,11 +109,61 @@ class RoomSerializer(serializers.ModelSerializer):
         return validate_listing_title(value)
 
     def validate_description(self, value):
-        return sanitize_html_description(value)
+        """
+        Clean the HTML and enforce a minimum description length.
+        User must write at least 25 words.
+        """
+        clean = sanitize_html_description(value or "")
+
+        words = [w for w in clean.split() if w.strip()]
+        if len(words) < 25:
+            raise serializers.ValidationError(
+                "Description must be at least 25 words."
+            )
+
+        return clean
+
 
     def validate_price_per_month(self, value):
         value = normalise_price(value)
         return validate_price(value, min_val=50.0, max_val=20000.0)
+    
+    
+    def validate_amenities(self, value):
+        """
+        Front-end sends a list of amenity *keys* (strings).
+        Example:
+            ["in_unit_laundry", "broadband_inclusive", "smoke_alarm"]
+        We ensure:
+        - it's a list
+        - every item is in AMENITY_CHOICES
+        - everything is normalised to a simple list of strings
+        """
+        if value in (None, "", []):
+            return []
+
+        if not isinstance(value, (list, tuple)):
+            raise serializers.ValidationError("Amenities must be a list of strings.")
+
+        cleaned = []
+        invalid = []
+
+        for item in value:
+            key = str(item).strip()
+            if not key:
+                continue
+            if key not in self.AMENITY_CHOICES:
+                invalid.append(key)
+            else:
+                cleaned.append(key)
+
+        if invalid:
+            raise serializers.ValidationError(
+                f"Unknown amenity keys: {', '.join(sorted(set(invalid)))}"
+            )
+
+        return cleaned
+
     
     
     def validate_security_deposit(self, value):
@@ -128,7 +217,7 @@ class RoomSerializer(serializers.ModelSerializer):
         # available_from must not be in the past (when provided)
         if available_from is not None:
             validate_available_from(available_from)
-            
+
         # ----- Minimum / maximum rental period (months, 1–12) -----
         # Support PATCH: if a field is not in attrs, fall back to instance
         min_stay = attrs.get(
@@ -139,38 +228,7 @@ class RoomSerializer(serializers.ModelSerializer):
             "max_stay_months",
             getattr(self.instance, "max_stay_months", None),
         )
-        
-        
-        
-                # --- Daily availability time window (optional HH:MM) ---
-        start_time = attrs.get("availability_from_time")
-        end_time = attrs.get("availability_to_time")
 
-        # For PATCH, fall back to existing instance values
-        if self.instance is not None:
-            if start_time is None:
-                start_time = getattr(self.instance, "availability_from_time", None)
-            if end_time is None:
-                end_time = getattr(self.instance, "availability_to_time", None)
-
-        # Case 1: one side missing
-        if start_time and not end_time:
-            raise serializers.ValidationError(
-                {"availability_to_time": "Please provide an end time as well."}
-            )
-
-        if end_time and not start_time:
-            raise serializers.ValidationError(
-                {"availability_from_time": "Please provide a start time as well."}
-            )
-
-        # Case 2: both present but invalid order
-        if start_time and end_time and start_time >= end_time:
-            raise serializers.ValidationError(
-                {"availability_to_time": "End time must be after start time."}
-            )
-
-        
         def _check_month_field(val, field_name):
             if val is None:
                 return
@@ -195,12 +253,62 @@ class RoomSerializer(serializers.ModelSerializer):
         if min_final is not None and max_final is not None and min_final > max_final:
             raise serializers.ValidationError(
                 {"min_stay_months": "Minimum rental period cannot be greater than maximum rental period."}
-            )    
+            )
 
-        # ----- Per-owner duplicate check (centralised) -----
+        # --- Daily availability time window (optional HH:MM) ---
+        start_time = attrs.get("availability_from_time")
+        end_time = attrs.get("availability_to_time")
+
+        # For PATCH, fall back to existing instance values
+        if self.instance is not None:
+            if start_time is None:
+                start_time = getattr(self.instance, "availability_from_time", None)
+            if end_time is None:
+                end_time = getattr(self.instance, "availability_to_time", None)
+
+        # Case 1: one side missing
+        if start_time and not end_time:
+            raise serializers.ValidationError(
+                {"availability_to_time": "Please provide an end time as well."}
+            )
+
+        if end_time and not start_time:
+            raise serializers.ValidationError(
+                {"availability_from_time": "Please provide a start time as well."}
+            )
+
+        # Case 2: invalid order
+        if start_time and end_time and start_time >= end_time:
+            raise serializers.ValidationError(
+                {"availability_to_time": "End time must be after start time."}
+            )
+
+        # ----- Preferred flatmate min/max age sanity -----
+        pref_min_age = attrs.get(
+            "preferred_flatmate_min_age",
+            getattr(self.instance, "preferred_flatmate_min_age", None),
+        )
+        pref_max_age = attrs.get(
+            "preferred_flatmate_max_age",
+            getattr(self.instance, "preferred_flatmate_max_age", None),
+        )
+
+        if pref_min_age is not None and pref_max_age is not None:
+            try:
+                pref_min_int = int(pref_min_age)
+                pref_max_int = int(pref_max_age)
+            except (TypeError, ValueError):
+                raise serializers.ValidationError(
+                    {"preferred_flatmate_min_age": "Min and max age must be integers."}
+                )
+            if pref_min_int > pref_max_int:
+                raise serializers.ValidationError(
+                    {"preferred_flatmate_min_age": "Minimum preferred age cannot be greater than maximum preferred age."}
+                )
+
+        # ----- Per-owner duplicate check -----
         request = self.context.get("request")
         if request and getattr(request.user, "is_authenticated", False):
-            # final title to check (handle PATCH without title change)
             new_title = attrs.get("title") or getattr(self.instance, "title", None)
             if new_title:
                 assert_not_duplicate_listing(
@@ -210,8 +318,7 @@ class RoomSerializer(serializers.ModelSerializer):
                     exclude_pk=getattr(self.instance, "pk", None),
                 )
 
-        # --- New: consistency between mode and custom dates ---
-        # Work out the effective mode, taking PATCH into account.
+        # --- Availability: mode vs custom dates consistency ---
         mode = attrs.get(
             "view_available_days_mode",
             getattr(self.instance, "view_available_days_mode", "everyday"),
@@ -222,20 +329,15 @@ class RoomSerializer(serializers.ModelSerializer):
         )
 
         if mode == "custom":
-            # For custom, we require at least one date
             if not custom_dates:
                 raise serializers.ValidationError(
-                    {
-                        "view_available_custom_dates": (
-                            "Provide at least one date when using custom mode."
-                        )
-                    }
+                    {"view_available_custom_dates": "Provide at least one date when using custom mode."}
                 )
         else:
-            # For non-custom modes, we ignore any custom dates sent
             attrs["view_available_custom_dates"] = []
 
         return attrs
+
 
 
     def get_is_saved(self, obj):

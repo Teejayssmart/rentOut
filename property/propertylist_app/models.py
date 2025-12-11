@@ -67,18 +67,18 @@ class RoomCategorie(models.Model):
     active = models.BooleanField(default=True, db_index=True)
 
     def save(self, *args, **kwargs):
-        # --- key: required unique; derive from name if empty ---
+        # key: required unique; derive from name if empty
         if not (self.key or "").strip():
             base = slugify(self.name) or "category"
             candidate = base[:30]  # enforce max_length
             i = 2
             while RoomCategorie.objects.filter(key=candidate).exclude(pk=self.pk).exists():
                 suffix = f"-{i}"
-                candidate = (base[: (30 - len(suffix))] + suffix)
+                candidate = base[: (30 - len(suffix))] + suffix
                 i += 1
             self.key = candidate
 
-        # --- slug: keep it unique as well ---
+        # slug: keep it unique as well
         if not self.slug:
             base = slugify(self.name) or slugify(self.key)
             candidate = base
@@ -94,6 +94,7 @@ class RoomCategorie(models.Model):
         return self.name
 
 
+
 # ----
 # Room
 # ----
@@ -101,47 +102,63 @@ class Room(SoftDeleteModel):
     title = models.CharField(max_length=200)
     description = models.TextField()
     price_per_month = models.DecimalField(max_digits=8, decimal_places=2)
-    security_deposit = models.DecimalField(      
-        max_digits=8,                            
-        decimal_places=2,                        
-        null=True,                               
-        blank=True,                              
-        help_text="Security deposit in GBP.",    
-    )                                            
+    security_deposit = models.DecimalField(
+        max_digits=8,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Security deposit in GBP.",
+    )
     location = models.CharField(max_length=255)
-    category = models.ForeignKey(RoomCategorie, on_delete=models.CASCADE, related_name="room_info")
+    category = models.ForeignKey(
+        RoomCategorie,
+        on_delete=models.CASCADE,
+        related_name="room_info",
+    )
     available_from = models.DateField(
-    default=date.today,
-    help_text="Date from which the room will be available for listing / move-in.",
-)
+        default=date.today,
+        help_text="Date from which the room will be available for listing / move-in.",
+    )
     is_available = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     furnished = models.BooleanField(default=False)
     bills_included = models.BooleanField(default=False)
-    property_owner = models.ForeignKey(User, on_delete=models.CASCADE, related_name="rooms")
+    property_owner = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="rooms",
+    )
     image = models.ImageField(upload_to="room_images/", null=True, blank=True)
     number_of_bedrooms = models.IntegerField(default=1)
     number_of_bathrooms = models.IntegerField(default=1)
     property_type = models.CharField(
         max_length=100,
-        choices=[("flat", "Flat"), ("house", "House"), ("studio", "Studio")],
+        choices=[
+            ("flat", "Flat"),
+            ("house", "House"),
+            ("studio", "Studio"),
+        ],
     )
     parking_available = models.BooleanField(default=False)
     avg_rating = models.FloatField(default=0)
     number_rating = models.IntegerField(default=0)
     latitude = models.FloatField(null=True, blank=True)
     longitude = models.FloatField(null=True, blank=True)
-    paid_until = models.DateField(null=True, blank=True)  # listing is paid/active until this date
+    # listing is paid/active until this date
+    paid_until = models.DateField(null=True, blank=True)
 
     STATUS_CHOICES = (
-        ("draft", "Draft"),   # not fully listed yet – appears only to owner
-        ("active", "Active"), # live listing – appears in search / homepage
-        ("hidden", "Hidden"), # manually hidden or GDPR-cleanup, admin use
+        ("draft", "Draft"),    # not fully listed yet – appears only to owner
+        ("active", "Active"),  # live listing – appears in search / homepage
+        ("hidden", "Hidden"),  # manually hidden or GDPR-cleanup, admin use
     )
-    status = models.CharField(max_length=16, choices=STATUS_CHOICES, default="active")
-
+    status = models.CharField(
+        max_length=16,
+        choices=STATUS_CHOICES,
+        default="active",
+    )
 
     # ===== Advanced-search fields (for the modal) =====
     # “Rooms in existing shares”
@@ -183,8 +200,170 @@ class Room(SoftDeleteModel):
         default="dont_mind",
     )
 
+    # --- Existing flatmate (List a Room – Step 3/5, section 1) ---
+    existing_flatmate_age = models.PositiveSmallIntegerField(
+        null=True,
+        blank=True,
+        help_text="Approximate age of current flatmate or average age in the household.",
+    )
+
+    EXISTING_GENDER_CHOICES = [
+        ("male", "Male"),
+        ("female", "Female"),
+        ("non_binary", "Non-binary"),
+        ("prefer_not_to_say", "Prefer not to say"),
+    ]
+    existing_flatmate_gender = models.CharField(
+        max_length=32,
+        choices=EXISTING_GENDER_CHOICES,
+        blank=True,
+        default="",
+    )
+
+    EXISTING_OCCUPATION_CHOICES = [
+        ("professional", "Professional"),
+        ("student", "Student"),
+        ("prefer_not_to_say", "Prefer not to say"),
+    ]
+    existing_flatmate_occupation = models.CharField(
+        max_length=32,
+        choices=EXISTING_OCCUPATION_CHOICES,
+        blank=True,
+        default="",
+    )
+
+    # These are free text; FE uses big dropdown lists, BE just stores the chosen text.
+    existing_flatmate_nationality = models.CharField(
+        max_length=100,
+        blank=True,
+        default="",
+    )
+    existing_flatmate_language = models.CharField(
+        max_length=100,
+        blank=True,
+        default="",
+    )
+
+    YES_NO_PREF_CHOICES = [
+        ("yes", "Yes"),
+        ("no", "No"),
+        ("no_preference", "No preference"),
+    ]
+    existing_flatmate_smoking = models.CharField(
+        max_length=20,
+        choices=YES_NO_PREF_CHOICES,
+        blank=True,
+        default="no_preference",
+        help_text="Do existing flatmates smoke?",
+    )
+    existing_flatmate_pets = models.CharField(
+        max_length=20,
+        choices=YES_NO_PREF_CHOICES,
+        blank=True,
+        default="",
+        help_text="Are there pets in the home?",
+    )
+    existing_flatmate_lgbtqia_household = models.CharField(
+        max_length=20,
+        choices=YES_NO_PREF_CHOICES,
+        blank=True,
+        default="",
+        help_text="Whether the household includes LGBTQIA+ people.",
+    )
     
-        # Daily availability window – when the landlord is available for viewings
+    
+    # --- Flatmate preference (List a Room – Step 3/5, section 2) ---
+    preferred_flatmate_nationality = models.CharField(
+        max_length=100,
+        blank=True,
+        default="",
+        help_text="Preferred nationality of future flatmate (free text from dropdown).",
+    )
+    preferred_flatmate_language = models.CharField(
+        max_length=100,
+        blank=True,
+        default="",
+        help_text="Preferred language of future flatmate (free text from dropdown).",
+    )
+
+    preferred_flatmate_min_age = models.PositiveSmallIntegerField(
+        null=True,
+        blank=True,
+        help_text="Minimum preferred age of flatmate.",
+    )
+    preferred_flatmate_max_age = models.PositiveSmallIntegerField(
+        null=True,
+        blank=True,
+        help_text="Maximum preferred age of flatmate.",
+    )
+
+    PREFERRED_OCCUPATION_CHOICES = [
+        ("students_only", "For students only"),
+        ("not_for_students", "Not for students"),
+        ("open_to_everyone", "Open to everyone"),
+    ]
+    preferred_flatmate_occupation = models.CharField(
+        max_length=32,
+        choices=PREFERRED_OCCUPATION_CHOICES,
+        blank=True,
+        default="",
+        help_text="Student / non-student preference for future flatmate.",
+    )
+
+    # Reuse YES_NO_PREF_CHOICES for Yes / No / No preference
+    preferred_flatmate_pets = models.CharField(
+        max_length=20,
+        choices=YES_NO_PREF_CHOICES,
+        blank=True,
+        default="no_preference",
+        help_text="Whether future flatmate can have / be around pets.",
+    )
+    preferred_flatmate_gender = models.CharField(
+        max_length=20,
+        choices=[
+            ("no_preference", "No preference"),
+            ("male", "Male"),
+            ("female", "Female"),
+            ("others", "Others"),
+        ],
+        blank=True,
+        default="no_preference",
+        help_text="Preferred gender of future flatmate.",
+    )
+    preferred_flatmate_smoking = models.CharField(
+        max_length=20,
+        choices=YES_NO_PREF_CHOICES,
+        blank=True,
+        default="no_preference",
+        help_text="Whether future flatmate can smoke or not.",
+    )
+    preferred_flatmate_partners_allowed = models.CharField(
+        max_length=20,
+        choices=[
+            ("yes", "Yes"),
+            ("no", "No"),
+        ],
+        blank=True,
+        default="no",
+        help_text="Whether partners are allowed to stay over.",
+    )
+    preferred_flatmate_lgbtqia = models.CharField(
+        max_length=20,
+        choices=YES_NO_PREF_CHOICES,
+        blank=True,
+        default="no_preference",
+        help_text="Preference about LGBTQIA+ flatmates.",
+    )
+    preferred_flatmate_vegan_vegetarian = models.CharField(
+        max_length=20,
+        choices=YES_NO_PREF_CHOICES,
+        blank=True,
+        default="no_preference",
+        help_text="Preference about vegan/vegetarian flatmates.",
+    )
+    
+    
+    # Daily availability window – when the landlord is available for viewings
     availability_from_time = models.TimeField(
         null=True,
         blank=True,
@@ -196,10 +375,7 @@ class Room(SoftDeleteModel):
         help_text="Latest time you are available (e.g. 20:00).",
     )
 
-    
-    
-    
-        # --- Viewing availability (List a Room step 1) ---
+    # --- Viewing availability (List a Room step 1) ---
     VIEW_DAYS_CHOICES = [
         ("everyday", "Everyday"),
         ("weekdays", "Weekdays only"),
@@ -249,11 +425,6 @@ class Room(SoftDeleteModel):
             return False
         return self.paid_until < date.today()
 
-
-    
-
-
-    
     def clean(self):
         super().clean()
 
@@ -263,11 +434,19 @@ class Room(SoftDeleteModel):
             and self.price_per_month is not None
             and float(self.price_per_month) < 100.0
         ):
-            raise ValidationError({"bills_included": "Bills cannot be included for such a low price."})
+            raise ValidationError(
+                {"bills_included": "Bills cannot be included for such a low price."}
+            )
 
         # NEW: age range sanity
-        if self.min_age is not None and self.max_age is not None and self.min_age > self.max_age:
-            raise ValidationError({"min_age": "min_age cannot be greater than max_age."})
+        if (
+            self.min_age is not None
+            and self.max_age is not None
+            and self.min_age > self.max_age
+        ):
+            raise ValidationError(
+                {"min_age": "min_age cannot be greater than max_age."}
+            )
 
         # NEW: stay length sanity
         if (
@@ -276,8 +455,30 @@ class Room(SoftDeleteModel):
             and self.min_stay_months > self.max_stay_months
         ):
             raise ValidationError(
-                {"min_stay_months": "min_stay_months cannot be greater than max_stay_months."}
+                {
+                    "min_stay_months": (
+                        "min_stay_months cannot be greater than max_stay_months."
+                    )
+                }
             )
+            
+        # Preferred flatmate age sanity (for Step 3/5 Flatmate Preference)
+        if (
+            self.preferred_flatmate_min_age is not None
+            and self.preferred_flatmate_max_age is not None
+            and self.preferred_flatmate_min_age > self.preferred_flatmate_max_age
+        ):
+            raise ValidationError(
+                {
+                    "preferred_flatmate_min_age": (
+                        "preferred_flatmate_min_age cannot be greater than "
+                        "preferred_flatmate_max_age."
+                    )
+                }
+            )
+
+        
+            
 
     def save(self, *args, **kwargs):
         if self.property_owner_id is None:
@@ -293,7 +494,8 @@ class Room(SoftDeleteModel):
 
         if self.category_id is None:
             cat, _ = RoomCategorie.objects.get_or_create(
-                name="General", defaults={"key": "general", "slug": "general", "active": True}
+                name="General",
+                defaults={"key": "general", "slug": "general", "active": True},
             )
             self.category = cat
 
@@ -312,12 +514,15 @@ class Room(SoftDeleteModel):
         return self.title
 
 
+
 # ------
 # Review
 # ------
 class Review(models.Model):
     review_user = models.ForeignKey(User, on_delete=models.CASCADE)
-    rating = models.PositiveIntegerField(validators=[MinValueValidator(1), MaxValueValidator(5)])
+    rating = models.PositiveIntegerField(
+        validators=[MinValueValidator(1), MaxValueValidator(5)]
+    )
     description = models.CharField(max_length=200, null=True)
     created = models.DateTimeField(auto_now_add=True)
     room = models.ForeignKey(Room, on_delete=models.CASCADE, related_name="reviews")
@@ -327,7 +532,10 @@ class Review(models.Model):
     class Meta:
         ordering = ["-created"]
         constraints = [
-            models.UniqueConstraint(fields=["room", "review_user"], name="uq_review_once_per_room"),
+            models.UniqueConstraint(
+                fields=["room", "review_user"],
+                name="uq_review_once_per_room",
+            ),
         ]
         indexes = [
             models.Index(fields=["room", "review_user"]),
@@ -342,11 +550,21 @@ class Review(models.Model):
 # UserProfile
 # -----------
 class UserProfile(models.Model):
-    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="profile")
+    user = models.OneToOneField(
+        User,
+        on_delete=models.CASCADE,
+        related_name="profile",
+    )
     phone = models.CharField(max_length=15, unique=True, null=True, blank=True)
     avatar = models.ImageField(upload_to="avatars/", null=True, blank=True)
+
     ROLE_CHOICES = (("landlord", "Landlord"), ("seeker", "Seeker"))
-    role = models.CharField(max_length=20, choices=ROLE_CHOICES, default="seeker", db_index=True)
+    role = models.CharField(
+        max_length=20,
+        choices=ROLE_CHOICES,
+        default="seeker",
+        db_index=True,
+    )
 
     # Detailed “Role” dropdown on the profile screen
     ROLE_DETAIL_CHOICES = (
@@ -356,53 +574,52 @@ class UserProfile(models.Model):
         ("former_flatmate", "Former Flatmate"),
         ("agent_broker", "Real Estate Agent/Broker"),
     )
-    # More detailed description of user’s situation on onboarding
     role_detail = models.CharField(
         max_length=64,
         blank=True,
         default="",
     )
-    
-
-    # Free-text “Enter address manually” field from onboarding screen
-    address_manual = models.TextField(
-        blank=True,
-        default="",
-    )
-
-
-    # --- NEW FIELDS FOR "MY PROFILE" PAGE -----------------------------
-    GENDER_CHOICES = (                                           # >>> NEW
-        ("male", "Male"),                                        # >>> NEW
-        ("female", "Female"),                                    # >>> NEW
-        ("non_binary", "Non-binary"),                            # >>> NEW
-        ("prefer_not_to_say", "Prefer not to say"),              # >>> NEW
-    )                                                             # >>> NEW
-
-    occupation = models.CharField(                               # >>> NEW
-        max_length=100, blank=True, default=""                   # >>> NEW
-    )                                                             # >>> NEW
-    gender = models.CharField(                                   # >>> NEW
-        max_length=32, choices=GENDER_CHOICES, blank=True,       # >>> NEW
-        default=""                                               # >>> NEW
-    )                                                             # >>> NEW
-    postcode = models.CharField(                                 # >>> NEW
-        max_length=12, blank=True, default=""                    # >>> NEW
-    )                                                             # >>> NEW
-    date_of_birth = models.DateField(                            # >>> NEW
-        null=True, blank=True                                    # >>> NEW
-    )                                                             # >>> NEW
-    about_you = models.TextField(                                # >>> NEW
-        max_length=100, blank=True, default=""                   # >>> NEW
-    )                                                             # >>> NEW
 
     # Manual address text when user clicks “Enter Address Manually”
     address_manual = models.CharField(
         max_length=255,
         blank=True,
         default="",
-    )                                                           # >>> NEW
-    # -----------------------------------------------------------------
+    )
+
+    # Fields for My Profile page
+    GENDER_CHOICES = (
+        ("male", "Male"),
+        ("female", "Female"),
+        ("non_binary", "Non-binary"),
+        ("prefer_not_to_say", "Prefer not to say"),
+    )
+
+    occupation = models.CharField(
+        max_length=100,
+        blank=True,
+        default="",
+    )
+    gender = models.CharField(
+        max_length=32,
+        choices=GENDER_CHOICES,
+        blank=True,
+        default="",
+    )
+    postcode = models.CharField(
+        max_length=12,
+        blank=True,
+        default="",
+    )
+    date_of_birth = models.DateField(
+        null=True,
+        blank=True,
+    )
+    about_you = models.TextField(
+        max_length=100,
+        blank=True,
+        default="",
+    )
 
     email_verified = models.BooleanField(default=False, db_index=True)
     email_verified_at = models.DateTimeField(null=True, blank=True)
@@ -413,8 +630,6 @@ class UserProfile(models.Model):
 
     def __str__(self):
         return f"{self.user.username} profile"
-
-
 
 
 # --------
@@ -429,7 +644,6 @@ class AuditLog(models.Model):
 
     def __str__(self):
         return f"{self.timestamp} - {self.user} - {self.action}"
-
 
 
 class ContactMessage(models.Model):
@@ -448,7 +662,6 @@ class ContactMessage(models.Model):
 
     def __str__(self):
         return f"{self.email} | {self.subject[:40]}"
-
 
 
 # ---------------
@@ -481,7 +694,11 @@ class RoomImage(models.Model):
     # moderation status
     status = models.CharField(
         max_length=16,
-        choices=[("pending", "Pending"), ("approved", "Approved"), ("rejected", "Rejected")],
+        choices=[
+            ("pending", "Pending"),
+            ("approved", "Approved"),
+            ("rejected", "Rejected"),
+        ],
         default="pending",
         db_index=True,
     )
@@ -493,7 +710,11 @@ class RoomImage(models.Model):
 # AvailabilitySlot
 # -----------------
 class AvailabilitySlot(models.Model):
-    room = models.ForeignKey("Room", related_name="availability_slots", on_delete=models.CASCADE)
+    room = models.ForeignKey(
+        "Room",
+        related_name="availability_slots",
+        on_delete=models.CASCADE,
+    )
     start = models.DateTimeField()
     end = models.DateTimeField()
     max_bookings = models.PositiveIntegerField(default=1)
@@ -502,13 +723,25 @@ class AvailabilitySlot(models.Model):
     class Meta:
         ordering = ("start",)
         constraints = [
-            CheckConstraint(check=Q(end__gt=F("start")), name="slot_end_after_start"),
-            CheckConstraint(check=Q(max_bookings__gte=1), name="slot_max_bookings_gte_1"),
-            models.UniqueConstraint(fields=["room", "start", "end"], name="unique_slot_room_start_end"),
+            CheckConstraint(
+                check=Q(end__gt=F("start")),
+                name="slot_end_after_start",
+            ),
+            CheckConstraint(
+                check=Q(max_bookings__gte=1),
+                name="slot_max_bookings_gte_1",
+            ),
+            models.UniqueConstraint(
+                fields=["room", "start", "end"],
+                name="unique_slot_room_start_end",
+            ),
         ]
 
     def __str__(self):
-        return f"{self.room} | {self.start:%Y-%m-%d %H:%M} → {self.end:%Y-%m-%d %H:%M} (cap {self.max_bookings})"
+        return (
+            f"{self.room} | {self.start:%Y-%m-%d %H:%M} → "
+            f"{self.end:%Y-%m-%d %H:%M} (cap {self.max_bookings})"
+        )
 
 
 # -------
@@ -517,14 +750,22 @@ class AvailabilitySlot(models.Model):
 class Booking(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="bookings")
     room = models.ForeignKey(Room, on_delete=models.CASCADE, related_name="bookings")
-    slot = models.ForeignKey(AvailabilitySlot, on_delete=models.PROTECT, related_name="bookings", null=True, blank=True)
+    slot = models.ForeignKey(
+        AvailabilitySlot,
+        on_delete=models.PROTECT,
+        related_name="bookings",
+        null=True,
+        blank=True,
+    )
     start = models.DateTimeField()
     end = models.DateTimeField()
     created_at = models.DateTimeField(auto_now_add=True)
     canceled_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
-        indexes = [models.Index(fields=["room", "start", "end"])]
+        indexes = [
+            models.Index(fields=["room", "start", "end"]),
+        ]
 
 
 # ---------------
@@ -542,8 +783,16 @@ class WebhookReceipt(models.Model):
 # SavedRoom
 # ---------
 class SavedRoom(models.Model):
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="saved_rooms_links")
-    room = models.ForeignKey("Room", on_delete=models.CASCADE, related_name="saved_by_links")
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="saved_rooms_links",
+    )
+    room = models.ForeignKey(
+        "Room",
+        on_delete=models.CASCADE,
+        related_name="saved_by_links",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -596,11 +845,24 @@ class MessageThreadState(models.Model):
         ("paperwork_pending", "Paperwork pending"),
     ]
 
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="thread_states")
-    thread = models.ForeignKey("MessageThread", on_delete=models.CASCADE, related_name="states")
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="thread_states",
+    )
+    thread = models.ForeignKey(
+        "MessageThread",
+        on_delete=models.CASCADE,
+        related_name="states",
+    )
 
     # If empty/blank → treated as "no status"
-    label = models.CharField(max_length=32, choices=LABEL_CHOICES, blank=True, default="")
+    label = models.CharField(
+        max_length=32,
+        choices=LABEL_CHOICES,
+        blank=True,
+        default="",
+    )
     in_bin = models.BooleanField(default=False)
 
     created_at = models.DateTimeField(auto_now_add=True)
@@ -615,39 +877,63 @@ class MessageThreadState(models.Model):
         ]
 
     def __str__(self):
-        return f"State(user={self.user_id}, thread={self.thread_id}, label={self.label or 'no_status'}, bin={self.in_bin})"
+        return (
+            f"State(user={self.user_id}, thread={self.thread_id}, "
+            f"label={self.label or 'no_status'}, bin={self.in_bin})"
+        )
 
 
 # -------
 # Message
 # -------
 class Message(models.Model):
-    thread = models.ForeignKey(MessageThread, on_delete=models.CASCADE, related_name="messages")
-    sender = models.ForeignKey(User, on_delete=models.CASCADE, related_name="sent_messages")
+    thread = models.ForeignKey(
+        MessageThread,
+        on_delete=models.CASCADE,
+        related_name="messages",
+    )
+    sender = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="sent_messages",
+    )
     body = models.TextField()
-    created = models.DateTimeField(auto_now_add=True, db_index=True)  # existing
-    updated = models.DateTimeField(auto_now=True, db_index=True)      # NEW
+    created = models.DateTimeField(auto_now_add=True, db_index=True)
+    updated = models.DateTimeField(auto_now=True, db_index=True)
 
     class Meta:
         ordering = ["created"]
         indexes = [
             models.Index(fields=["thread", "created"]),
-            models.Index(fields=["thread", "updated"]),  # NEW helpful index
+            models.Index(fields=["thread", "updated"]),
         ]
 
 
 class MessageRead(models.Model):
     """Records that a given user has read a specific message."""
-    message = models.ForeignKey("Message", on_delete=models.CASCADE, related_name="reads")
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="message_reads")
+    message = models.ForeignKey(
+        "Message",
+        on_delete=models.CASCADE,
+        related_name="reads",
+    )
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="message_reads",
+    )
     read_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         unique_together = ("message", "user")
-        indexes = [models.Index(fields=["user", "message"])]
+        indexes = [
+            models.Index(fields=["user", "message"]),
+        ]
 
     def __str__(self):
-        return f"Read m#{self.message_id} by {self.user_id} at {self.read_at:%Y-%m-%d %H:%M:%S}"
+        return (
+            f"Read m#{self.message_id} by {self.user_id} "
+            f"at {self.read_at:%Y-%m-%d %H:%M:%S}"
+        )
 
 
 # -----------
@@ -660,8 +946,16 @@ class Notification(models.Model):
     class Type(models.TextChoices):
         MESSAGE = "message", "Message"
 
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="notifications")
-    type = models.CharField(max_length=32, choices=Type.choices, default=Type.MESSAGE)
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="notifications",
+    )
+    type = models.CharField(
+        max_length=32,
+        choices=Type.choices,
+        default=Type.MESSAGE,
+    )
 
     # Optional pointers to the event source (keep it simple for messages)
     thread = models.ForeignKey(
@@ -709,17 +1003,39 @@ class Payment(models.Model):
         SUCCEEDED = "succeeded", "Succeeded"
         CANCELED = "canceled", "Canceled"
 
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="payments")
-    room = models.ForeignKey("Room", on_delete=models.SET_NULL, null=True, blank=True, related_name="payments")
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="payments",
+    )
+    room = models.ForeignKey(
+        "Room",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="payments",
+    )
 
-    provider = models.CharField(max_length=20, choices=Provider.choices, default=Provider.STRIPE)
-    amount = models.DecimalField(max_digits=9, decimal_places=2, default=Decimal("0.00"))
+    provider = models.CharField(
+        max_length=20,
+        choices=Provider.choices,
+        default=Provider.STRIPE,
+    )
+    amount = models.DecimalField(
+        max_digits=9,
+        decimal_places=2,
+        default=Decimal("0.00"),
+    )
     currency = models.CharField(max_length=10, default="GBP")
 
     stripe_payment_intent_id = models.CharField(max_length=200, blank=True, default="")
     stripe_checkout_session_id = models.CharField(max_length=200, blank=True, default="")
 
-    status = models.CharField(max_length=40, choices=Status.choices, default=Status.REQUIRES_PAYMENT)
+    status = models.CharField(
+        max_length=40,
+        choices=Status.choices,
+        default=Status.REQUIRES_PAYMENT,
+    )
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -772,7 +1088,11 @@ class Report(models.Model):
     reason = models.CharField(max_length=64)   # e.g., "spam", "abuse", "scam", "inaccurate", "other"
     details = models.TextField(blank=True)
 
-    status = models.CharField(max_length=16, choices=STATUS_CHOICES, default="open")
+    status = models.CharField(
+        max_length=16,
+        choices=STATUS_CHOICES,
+        default="open",
+    )
     handled_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         null=True,
@@ -798,11 +1118,28 @@ class Report(models.Model):
 
 class DataExport(models.Model):
     """Tracks user data exports and where the ZIP is stored (under MEDIA_ROOT)."""
-    STATUS_CHOICES = (("queued", "queued"), ("processing", "processing"), ("ready", "ready"), ("failed", "failed"))
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="data_exports")
+    STATUS_CHOICES = (
+        ("queued", "queued"),
+        ("processing", "processing"),
+        ("ready", "ready"),
+        ("failed", "failed"),
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="data_exports",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="queued")
-    file_path = models.CharField(max_length=512, blank=True, default="")  # media-relative path
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default="queued",
+    )
+    file_path = models.CharField(
+        max_length=512,
+        blank=True,
+        default="",
+    )  # media-relative path
     expires_at = models.DateTimeField(null=True, blank=True)
     error = models.TextField(blank=True, default="")
 

@@ -294,6 +294,9 @@ class RoomAV(APIView):
         """
         data = request.data.copy()
 
+        # Ignore wizard action flag ("next" / "save_close")
+        data.pop("action", None)
+
         # ---- Basic price validation for the tests ----
         price = data.get("price_per_month")
         if price in (None, "", []):
@@ -316,13 +319,11 @@ class RoomAV(APIView):
 
         # ---- Ensure we always have a category_id for the serializer ----
         if not data.get("category_id"):
-            # Try an existing active category
             category = (
                 RoomCategorie.objects.filter(active=True).order_by("id").first()
                 or RoomCategorie.objects.order_by("id").first()
             )
             if not category:
-                # As a last resort, create a generic category
                 category, _ = RoomCategorie.objects.get_or_create(
                     name="General", defaults={"active": True}
                 )
@@ -335,8 +336,9 @@ class RoomAV(APIView):
         serializer.is_valid(raise_exception=True)
         room = serializer.save(property_owner=request.user)
 
-        # Both NEXT and SAVE & CLOSE return 201; tests accept 201 for both.
+        # Both NEXT and SAVE & CLOSE return 201; FE chooses next screen.
         return Response(serializer.data, status=status.HTTP_201_CREATED)
+
 
 
 
@@ -352,7 +354,13 @@ class RoomDetailAV(APIView):
     def put(self, request, pk):
         room = get_object_or_404(Room.objects.alive(), pk=pk)
         self.check_object_permissions(request, room)
-        ser = RoomSerializer(room, data=request.data)
+
+        data = request.data.copy()
+        # Wizard must not be able to flip status or paid_until directly
+        data.pop("status", None)
+        data.pop("paid_until", None)
+
+        ser = RoomSerializer(room, data=data)
         ser.is_valid(raise_exception=True)
         ser.save()
         return Response(ser.data)
@@ -360,10 +368,47 @@ class RoomDetailAV(APIView):
     def patch(self, request, pk):
         room = get_object_or_404(Room.objects.alive(), pk=pk)
         self.check_object_permissions(request, room)
-        ser = RoomSerializer(room, data=request.data, partial=True)
+
+        data = request.data.copy()
+
+        # Read the wizard action before we drop it
+        # Possible values we expect from the frontend:
+        # - "next"       -> Step 2/3 Next
+        # - "save_close" -> Save & Close
+        # - "preview"    -> Step 4 Next / Preview  ✅ enforce 3 photos here
+        action = (data.get("action") or "").strip().lower()
+
+        # Never let the wizard change these directly
+        data.pop("action", None)
+        data.pop("status", None)
+        data.pop("paid_until", None)
+
+        ser = RoomSerializer(
+            room,
+            data=data,
+            partial=True,
+            context={"request": request},
+        )
         ser.is_valid(raise_exception=True)
         ser.save()
+
+        # --- Minimum 3 photos rule for Step 4 Next / Preview ---
+        if action == "preview":
+            # Count ALL photos for this room (pending + approved)
+            total_photos = RoomImage.objects.filter(room=room).count()
+
+            if total_photos < 3:
+                return Response(
+                    {
+                        "detail": "Please upload at least 3 photos before previewing your listing.",
+                        "photos_min_required": 3,
+                        "photos_current": total_photos,
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
         return Response(ser.data)
+
 
     def delete(self, request, pk):
         room = get_object_or_404(Room.objects.alive(), pk=pk)
@@ -371,7 +416,6 @@ class RoomDetailAV(APIView):
         room.soft_delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
-    # put/patch/delete remain unchanged (not cached)
 
 
 class RoomListAlt(CachedAnonymousGETMixin, generics.ListAPIView):
@@ -619,44 +663,44 @@ class RegistrationView(generics.CreateAPIView):
         return super().create(request, *args, **kwargs)
 
 
-# ---------- Social sign-up stubs (Google / Apple) ----------  # NEW
-class GoogleRegisterView(APIView):                             # NEW
-    """                                                         # NEW
-    POST /api/auth/register/google/                             # NEW
-    Stub endpoint for 'Register with Google' button.            # NEW
-    For now it just returns 501 so FE can wire the button and   # NEW
-    you can implement real Google OAuth later.                  # NEW
-    """                                                         # NEW
-    permission_classes = [AllowAny]                             # NEW
-    throttle_classes = [RegisterAnonThrottle]                   # NEW
-                                                                # NEW
-    def post(self, request, *args, **kwargs):                   # NEW
-        return Response(                                        # NEW
-            {                                                   # NEW
-                "detail": "Google sign-up not implemented yet.",# NEW
-                "hint": "Button is wired. Implement OAuth later",# NEW
-            },                                                  # NEW
-            status=status.HTTP_501_NOT_IMPLEMENTED,             # NEW
-        )                                                       # NEW
-                                                                # NEW
-                                                                # NEW
-class AppleRegisterView(APIView):                               # NEW
-    """                                                         # NEW
-    POST /api/auth/register/apple/                              # NEW
-    Stub endpoint for 'Register with Apple' button.             # NEW
-    Same behaviour as Google stub (501 for now).                # NEW
-    """                                                         # NEW
-    permission_classes = [AllowAny]                             # NEW
-    throttle_classes = [RegisterAnonThrottle]                   # NEW
-                                                                # NEW
-    def post(self, request, *args, **kwargs):                   # NEW
-        return Response(                                        # NEW
-            {                                                   # NEW
-                "detail": "Apple sign-up not implemented yet.", # NEW
-                "hint": "Button is wired. Implement OAuth later",# NEW
-            },                                                  # NEW
-            status=status.HTTP_501_NOT_IMPLEMENTED,             # NEW
-        )                                                       # NEW
+# ---------- Social sign-up stubs (Google / Apple) ----------  
+class GoogleRegisterView(APIView):                             
+    """                                                         
+    POST /api/auth/register/google/                             
+    Stub endpoint for 'Register with Google' button.            
+    For now it just returns 501 so FE can wire the button and   
+    you can implement real Google OAuth later.                  
+    """                                                         
+    permission_classes = [AllowAny]                             
+    throttle_classes = [RegisterAnonThrottle]                   
+                                                                
+    def post(self, request, *args, **kwargs):                   
+        return Response(                                        
+            {                                                   
+                "detail": "Google sign-up not implemented yet.",
+                "hint": "Button is wired. Implement OAuth later",
+            },                                                  
+            status=status.HTTP_501_NOT_IMPLEMENTED,             
+        )                                                       #
+                                                                
+                                                                
+class AppleRegisterView(APIView):                               
+    """                                                         
+    POST /api/auth/register/apple/                              
+    Stub endpoint for 'Register with Apple' button.             
+    Same behaviour as Google stub (501 for now).                
+    """                                                         
+    permission_classes = [AllowAny]                             
+    throttle_classes = [RegisterAnonThrottle]                   
+                                                                
+    def post(self, request, *args, **kwargs):                   
+        return Response(                                        
+            {                                                   
+                "detail": "Apple sign-up not implemented yet.", 
+                "hint": "Button is wired. Implement OAuth later",
+            },                                                  
+            status=status.HTTP_501_NOT_IMPLEMENTED,             
+        )                                                       
 
 
 
@@ -823,26 +867,40 @@ class UserProfileView(generics.RetrieveUpdateAPIView):
 # --------------------
 class RoomPhotoUploadView(APIView):
     """
-    POST /api/v1/rooms/<pk>/photos/  (owner only; new photos start as 'pending')
-    GET  /api/v1/rooms/<pk>/photos/  (public: only 'approved' photos returned)
+    Step 4/5 – Listing images
+
+    POST /api/rooms/<pk>/photos/  (owner only; new photos start as 'pending')
+    GET  /api/rooms/<pk>/photos/  (public: only 'approved' photos returned)
+
+    Figma rules:
+    - Upload up to 5MB
+    - JPG / JPEG / PNG only
     """
+
     parser_classes = [MultiPartParser, FormParser]
-    # default for non-GET methods will be IsAuthenticated
+
     def get_permissions(self):
+        # Anyone can view approved photos; only authenticated owners can upload
         if self.request.method == "GET":
             return [AllowAny()]
         return [IsAuthenticated()]
 
-    # List: only approved images are visible to users
     def get(self, request, pk):
+        """Return only approved images for a room (for grids on Step 4/5, room cards, etc.)."""
         room = get_object_or_404(Room, pk=pk)
         photos = RoomImage.objects.approved().filter(room=room)
         data = RoomImageSerializer(photos, many=True).data
         return Response(data, status=status.HTTP_200_OK)
 
-    # Upload: owner only, saved as 'pending'
     def post(self, request, pk):
+        """
+        Upload a single image for this room.
+
+        Front-end can call this multiple times (one per image) to build the gallery.
+        """
         room = get_object_or_404(Room, pk=pk)
+
+        # Owner check
         if room.property_owner_id != request.user.id:
             return Response(
                 {"detail": "You do not have permission to perform this action."},
@@ -851,23 +909,40 @@ class RoomPhotoUploadView(APIView):
 
         file_obj = request.FILES.get("image")
         if not file_obj:
-            return Response({"image": "This field is required."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"image": "This field is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-        # Light validation: content-type/size/duplicates (no Pillow decoding)
+        # 1) Quick extension check – JPG / JPEG / PNG only
+        allowed_exts = {"jpg", "jpeg", "png"}
+        name_lower = (file_obj.name or "").lower()
+        ext = name_lower.rsplit(".", 1)[-1] if "." in name_lower else ""
+        if ext not in allowed_exts:
+            return Response(
+                {"image": "Only JPG, JPEG, or PNG files are allowed."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # 2) Size/type/duplicate validation (5MB max, uses your existing validator)
         try:
-            validate_listing_photos([file_obj], max_mb=10)
+            validate_listing_photos([file_obj], max_mb=5)
             assert_no_duplicate_files([file_obj])
         except DjangoValidationError as e:
             # Normalize error shape to DRF style
-            return Response({"image": e.message if hasattr(e, "message") else str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            msg = e.message if hasattr(e, "message") else str(e)
+            return Response({"image": msg}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Save as 'pending' so moderation can approve later
+        # Save as 'pending' so moderation/admin can approve later
         photo = RoomImage.objects.create(
             room=room,
             image=file_obj,
             status="pending",
         )
-        return Response(RoomImageSerializer(photo).data, status=status.HTTP_201_CREATED)
+        return Response(
+            RoomImageSerializer(photo).data,
+            status=status.HTTP_201_CREATED,
+        )
 
 
 class RoomPhotoDeleteView(APIView):
@@ -1374,33 +1449,34 @@ class MyListingsView(generics.ListAPIView):
 
 class FindAddressView(APIView):
     """
-    POST /api/search/find-address/
+    GET /api/search/find-address/?postcode=SW1A1AA
 
-    Validates a UK postcode and (later) calls an external geocoding API.
-    For now it just returns the normalised postcode so the FE can show
-    a confirmation / allow the user to proceed.
+    Validates a UK postcode and returns a mock list of addresses.
+    Later this will call a real API like postcodes.io or getAddress.io.
     """
     permission_classes = [permissions.AllowAny]
 
-    def post(self, request, *args, **kwargs):
-        serializer = FindAddressSerializer(data=request.data)
+    def get(self, request, *args, **kwargs):
+        serializer = FindAddressSerializer(data=request.query_params)
         serializer.is_valid(raise_exception=True)
 
         postcode = serializer.validated_data["postcode"]
 
-        # TODO: integrate with a real geocoding service, e.g. postcodes.io
-        # Example (pseudo-code):
-        # lat, lon = geocode_postcode(postcode)
-        # return Response({"postcode": postcode, "latitude": lat, "longitude": lon})
+        # TODO: integrate real address provider
+        mock_addresses = [
+            f"10 Downing Street, London, {postcode}",
+            f"11 Downing Street, London, {postcode}",
+            f"12 Downing Street, London, {postcode}",
+        ]
 
-        # For now just echo the cleaned postcode
         return Response(
             {
                 "postcode": postcode,
-                "message": "Postcode is valid. Address lookup service not yet integrated.",
+                "addresses": mock_addresses,
             },
             status=status.HTTP_200_OK,
         )
+
 
 
 class NearbyRoomsView(generics.ListAPIView):
