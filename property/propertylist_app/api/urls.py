@@ -18,7 +18,7 @@ from .views import EmailOTPVerifyView, EmailOTPResendView
 from propertylist_app.api.views import (
     # Rooms & Categories
     RoomAV, RoomDetailAV, RoomListGV, ModerationReportModerateActionView,
-    RoomCategorieAV, RoomCategorieDetailAV, RoomCategorieVS,
+    RoomCategorieAV, RoomCategorieDetailAV, RoomCategorieVS, RoomPreviewView, 
 
     # Reviews
     ReviewCreate, ReviewList, ReviewDetail, UserReview,
@@ -50,7 +50,7 @@ from propertylist_app.api.views import (
     RoomSoftDeleteView,
 
     # Payments
-    CreateListingCheckoutSessionView, stripe_webhook, StripeSuccessView, StripeCancelView,
+    CreateListingCheckoutSessionView, stripe_webhook, StripeSuccessView, StripeCancelView, SavedCardsListView,
 
     # Webhooks
     webhook_in, ProviderWebhookView,
@@ -87,6 +87,7 @@ urlpatterns = [
     # --- Rooms ---
     path("rooms/",                     RoomAV.as_view(),            name="room-list"),
     path("rooms/<int:pk>/",            RoomDetailAV.as_view(),      name="room-detail"),
+    path("rooms/<int:pk>/preview/",    RoomPreviewView.as_view(),   name="room-preview"), 
     
     # Cached alt list
     path("rooms-alt/",                 cache_page(60)(RoomListGV.as_view()),  name="room-list-alt"),
@@ -181,6 +182,7 @@ urlpatterns = [
     path("payments/webhook/",                 stripe_webhook,                         name="stripe-webhook"),
     path("payments/success/",                 StripeSuccessView.as_view(),            name="payments-success"),
     path("payments/cancel/",                  StripeCancelView.as_view(),             name="payments-cancel"),
+    path("payments/saved-cards/",             SavedCardsListView.as_view(),           name="payments-saved-cards"),
 
     # --- Webhooks ---
     path("webhooks/incoming/",                webhook_in,                    name="webhook-incoming"),

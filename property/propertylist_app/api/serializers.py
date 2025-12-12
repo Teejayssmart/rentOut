@@ -477,6 +477,78 @@ class RoomSerializer(serializers.ModelSerializer):
         return normalised
 
 
+# --------------------
+# Room Preview Serializer (Step 5/5)
+# --------------------
+class RoomPreviewSerializer(serializers.Serializer):
+    """
+    Used by Step 5/5 (Preview & Edit) screen.
+
+    Returns:
+      - full RoomSerializer payload (all fields)
+      - photos[] list with absolute URLs for approved images
+        and a fallback to legacy Room.image if no RoomImage exists.
+    """
+
+    room = serializers.SerializerMethodField()
+    photos = serializers.SerializerMethodField()
+
+    def get_room(self, obj):
+        """
+        Reuse the existing RoomSerializer so Step 5 gets
+        the same fields as other endpoints.
+        """
+        return RoomSerializer(obj, context=self.context).data
+
+    def get_photos(self, obj):
+        """
+        Returns a list like:
+        [
+          {"id": 1, "url": "https://.../image1.jpg", "status": "approved"},
+          {"id": 2, "url": "https://.../image2.jpg", "status": "approved"},
+          ...
+        ]
+
+        If there are no RoomImage rows yet, but the legacy Room.image
+        field is set, we return one 'legacy' photo entry.
+        """
+        request = self.context.get("request")
+        photos = []
+
+        # Prefer RoomImage objects with status='approved'
+        qs = obj.roomimage_set.filter(status="approved").order_by("id")
+
+        for img in qs:
+            if not img.image:
+                continue
+            url = img.image.url
+            if request is not None:
+                url = request.build_absolute_uri(url)
+            photos.append(
+                {
+                    "id": img.id,
+                    "url": url,
+                    "status": img.status,
+                }
+            )
+
+        # Fallback to legacy Room.image if no approved RoomImage exists
+        if not photos and obj.image:
+            url = obj.image.url
+            if request is not None:
+                url = request.build_absolute_uri(url)
+            photos.append(
+                {
+                    "id": None,
+                    "url": url,
+                    "status": "legacy",
+                }
+            )
+
+        return photos
+
+
+
 
 # --------------------
 # Room Category Serializer

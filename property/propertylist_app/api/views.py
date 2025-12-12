@@ -7,6 +7,8 @@ from django.contrib.auth import authenticate, get_user_model
 from django.db import transaction, connection
 from django.db.models import Q, Count, OuterRef, Subquery, Sum,Exists, Case, When, Value, CharField
 from datetime import date
+from decimal import Decimal
+
 
 
 from django.shortcuts import get_object_or_404
@@ -104,6 +106,7 @@ from propertylist_app.api.serializers import (
     HomeSummarySerializer,
     FindAddressSerializer,
     MessageThreadStateUpdateSerializer,
+    RoomPreviewSerializer,
 )
 from propertylist_app.api.throttling import (
     ReviewCreateThrottle,
@@ -415,6 +418,40 @@ class RoomDetailAV(APIView):
         self.check_object_permissions(request, room)
         room.soft_delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+
+class RoomPreviewView(APIView):
+    """
+    Step 5/5 – Preview & Edit page
+
+    GET /api/rooms/<pk>/preview/
+
+    Returns:
+      {
+        "room": { ... full RoomSerializer data ... },
+        "photos": [ ... ]
+      }
+
+    Only the room owner is allowed to see this preview payload.
+    """
+    # Must be logged in
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        room = get_object_or_404(Room.objects.filter(is_deleted=False), pk=pk)
+
+        # Explicit owner check – preview is private
+        if request.user != room.property_owner:
+            return Response(
+                {"detail": "You do not have permission to view this listing preview."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        serializer = RoomPreviewSerializer(room, context={"request": request})
+        return Response(serializer.data)
+
+
 
 
 
@@ -2406,57 +2443,101 @@ class DeactivateAccountView(APIView):
 # Stripe payments (GBP stored in Payment.amount)
 # --------------------
 class CreateListingCheckoutSessionView(APIView):
-    """
-    POST /api/payments/checkout/rooms/<pk>/
-    Creates a £1 Stripe Checkout Session (line item in pence; Payment.amount stored in GBP).
-    """
     permission_classes = [IsAuthenticated]
 
     def post(self, request, pk):
-        room = get_object_or_404(Room, pk=pk)
+        room = get_object_or_404(Room.objects.filter(is_deleted=False), pk=pk)
 
-        if getattr(room, "property_owner_id", None) != request.user.id:
-            return Response({"detail": "You can only pay for your own room."}, status=status.HTTP_403_FORBIDDEN)
+        # Only the property owner can pay to list this room
+        if room.property_owner != request.user:
+            return Response(
+                {"detail": "You are not allowed to pay for this listing."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
-        amount_gbp = 1.00
-        amount_pence = 100
+        user = request.user
 
+        # Make sure user has a profile
+        profile = getattr(user, "profile", None)
+        if profile is None:
+            profile = user.profile = UserProfile.objects.create(user=user)
+
+        # Ensure a Stripe Customer exists for this user
+        if not profile.stripe_customer_id:
+            stripe_customer = stripe.Customer.create(
+                email=user.email or None,
+                name=user.get_full_name() or user.username,
+            )
+
+            # Coerce to a plain string so tests (MagicMock) and real Stripe both work
+            stripe_customer_id = getattr(stripe_customer, "id", None)
+            if stripe_customer_id:
+                profile.stripe_customer_id = str(stripe_customer_id)
+                profile.save(update_fields=["stripe_customer_id"])
+
+        customer_id = profile.stripe_customer_id or None
+
+        # Listing fee – still £1.00 for 4 weeks
+        amount_gbp = Decimal("1.00")
+        amount_pence = int(amount_gbp * 100)
+
+        # Create our internal Payment record
         payment = Payment.objects.create(
-            user=request.user,
+            user=user,
             room=room,
             amount=amount_gbp,
             currency="GBP",
             status="created",
         )
 
-        success_url = f"{settings.SITE_URL}/api/payments/success/?session_id={{CHECKOUT_SESSION_ID}}&payment_id={payment.id}"
-        cancel_url = f"{settings.SITE_URL}/api/payments/cancel/?payment_id={payment.id}"
 
+        # Optional: read a selected saved card id from the body (for future use)
+        payment_method_id = request.data.get("payment_method_id")  # may be None
+        # (Not yet used, but here for future extension.)
+
+        # Create the Stripe Checkout Session
         session = stripe.checkout.Session.create(
             mode="payment",
-            success_url=success_url,
-            cancel_url=cancel_url,
-            customer_email=request.user.email or None,
-            line_items=[{
-                "price_data": {
-                    "currency": "gbp",
-                    "product_data": {"name": f"Listing fee for: {room.title}"},
-                    "unit_amount": amount_pence,
-                },
-                "quantity": 1,
-            }],
+            customer=customer_id,             # ties it to saved cards
+            payment_method_types=["card"],
+            line_items=[
+                {
+                    "price_data": {
+                        "currency": "gbp",
+                        "product_data": {
+                            "name": f"Listing fee for: {room.title}",
+                        },
+                        "unit_amount": amount_pence,
+                    },
+                    "quantity": 1,
+                }
+            ],
+            success_url=(
+                f"{settings.SITE_URL}"
+                f"/payments/success/?session_id={{CHECKOUT_SESSION_ID}}&payment_id={payment.id}"
+            ),
+            cancel_url=f"{settings.SITE_URL}/payments/cancel/?payment_id={payment.id}",
             metadata={
                 "payment_id": str(payment.id),
                 "room_id": str(room.id),
-                "user_id": str(request.user.id),
+                "user_id": str(user.id),
             },
         )
 
-        payment.stripe_checkout_session_id = session.id
+        # Safely get session id for both real Stripe objects and test fakes
+        session_id = getattr(session, "id", None)
+        if session_id is None and isinstance(session, dict):
+            session_id = session.get("id")
+
+        payment.stripe_checkout_session_id = str(session_id)
         payment.save(update_fields=["stripe_checkout_session_id"])
 
-        return Response({"sessionId": session.id, "publishableKey": settings.STRIPE_PUBLISHABLE_KEY})
-
+        return Response(
+            {
+                "sessionId": session_id,
+                "publishableKey": settings.STRIPE_PUBLISHABLE_KEY,
+            }
+        )
 
 @csrf_exempt
 @api_view(["POST"])
@@ -2508,6 +2589,59 @@ def stripe_webhook(request):
             Payment.objects.filter(id=payment_id, status="created").update(status="canceled")
 
     return Response(status=200)
+
+
+
+class SavedCardsListView(APIView):
+    """
+    Returns up to 4 saved card payment methods for the current user
+    using their Stripe Customer ID.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        profile = getattr(user, "profile", None)
+
+        # If no Stripe customer exists, return empty list
+        if profile is None or not profile.stripe_customer_id:
+            return Response({"cards": []})
+
+        try:
+            # Stripe returns a ListObject -> convert to standard dict
+            pm_list = stripe.PaymentMethod.list(
+                customer=profile.stripe_customer_id,
+                type="card",
+                limit=4,
+            )
+
+            pm_list = pm_list.to_dict()  # <--- THIS FIXES THE TYPE ISSUE
+
+        except Exception:
+            return Response(
+                {"detail": "Unable to fetch saved cards from Stripe."},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        cards = []
+
+        # pm_list["data"] is now a Python list of dicts
+        for pm in pm_list.get("data", []):
+            card_info = pm.get("card", {})
+
+            cards.append(
+                {
+                    "id": pm.get("id"),
+                    "brand": card_info.get("brand"),
+                    "last4": card_info.get("last4"),
+                    "exp_month": card_info.get("exp_month"),
+                    "exp_year": card_info.get("exp_year"),
+                }
+            )
+
+        return Response({"cards": cards})
+
+
 
 
 class StripeSuccessView(APIView):

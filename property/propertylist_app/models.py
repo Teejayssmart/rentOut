@@ -557,6 +557,7 @@ class UserProfile(models.Model):
     )
     phone = models.CharField(max_length=15, unique=True, null=True, blank=True)
     avatar = models.ImageField(upload_to="avatars/", null=True, blank=True)
+    stripe_customer_id = models.CharField(max_length=100, blank=True, default="")
 
     ROLE_CHOICES = (("landlord", "Landlord"), ("seeker", "Seeker"))
     role = models.CharField(
