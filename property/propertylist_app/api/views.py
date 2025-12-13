@@ -138,6 +138,23 @@ from .serializers import EmailOTPVerifySerializer, EmailOTPResendSerializer
 
 stripe.api_key = settings.STRIPE_SECRET_KEY
 
+
+def _listing_state_for_room(room):
+    # hidden/unpublished overrides everything
+    if getattr(room, "status", None) == "hidden":
+        return "hidden"
+
+    # no paid_until means draft
+    if not room.paid_until:
+        return "draft"
+
+    # paid_until in the past means expired
+    if room.paid_until < timezone.localdate():
+        return "expired"
+
+    return "active"
+
+
 # --------------------
 # Reviews
 # --------------------
@@ -352,7 +369,11 @@ class RoomDetailAV(APIView):
 
     def get(self, request, pk):
         room = get_object_or_404(Room.objects.alive(), pk=pk)
-        return Response(RoomSerializer(room).data)
+        serializer = RoomSerializer(
+            room,
+            context={"request": request}
+        )
+        return Response(serializer.data)
 
     def put(self, request, pk):
         room = get_object_or_404(Room.objects.alive(), pk=pk)
@@ -492,6 +513,38 @@ class RoomSoftDeleteView(APIView):
         self.check_object_permissions(request, room)
         room.soft_delete()
         return Response({"detail": f"Room {room.id} soft-deleted."})
+
+
+
+# --------------------
+# Rooms: Unpublish (maps to status="hidden")
+# --------------------
+class RoomUnpublishView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        room = get_object_or_404(Room.objects.filter(is_deleted=False), pk=pk)
+
+        # Only the property owner can unpublish
+        if room.property_owner != request.user:
+            return Response(
+                {"detail": "You are not allowed to unpublish this listing."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        # Set hidden (unpublished)
+        room.status = "hidden"
+        room.save(update_fields=["status", "updated_at"])
+
+        return Response(
+            {
+                "id": room.id,
+                "status": room.status,  # "hidden"
+                "listing_state": _listing_state_for_room(room),
+            },
+            status=status.HTTP_200_OK,
+        )
+
 
 
 # --------------------

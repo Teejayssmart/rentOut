@@ -47,7 +47,7 @@ from propertylist_app.api.views import (
     UserAvatarUploadView, ChangeEmailView, ChangePasswordView, DeactivateAccountView, MyRoomsView,GoogleRegisterView,AppleRegisterView,
 
     # Soft delete
-    RoomSoftDeleteView,
+    RoomSoftDeleteView,RoomUnpublishView,
 
     # Payments
     CreateListingCheckoutSessionView, stripe_webhook, StripeSuccessView, StripeCancelView, SavedCardsListView,
@@ -164,6 +164,8 @@ urlpatterns = [
 
     # --- Soft delete room ---
     path("rooms/<int:pk>/soft-delete/", RoomSoftDeleteView.as_view(), name="room-soft-delete"),
+    path("rooms/<int:pk>/unpublish/", RoomUnpublishView.as_view(), name="room-unpublish"),
+
 
         # --- Auth ---
     path("auth/register/",               RegistrationView.as_view(),         name="auth-register"),
