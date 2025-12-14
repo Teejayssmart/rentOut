@@ -762,6 +762,36 @@ class Booking(models.Model):
     end = models.DateTimeField()
     created_at = models.DateTimeField(auto_now_add=True)
     canceled_at = models.DateTimeField(null=True, blank=True)
+    
+    
+    STATUS_ACTIVE = "active"
+    STATUS_CANCELLED = "cancelled"
+    STATUS_SUSPENDED = "suspended"
+
+    STATUS_CHOICES = (
+        (STATUS_ACTIVE, "Active"),
+        (STATUS_CANCELLED, "Cancelled"),
+        (STATUS_SUSPENDED, "Suspended"),
+    )
+
+    
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_ACTIVE)
+    is_deleted = models.BooleanField(default=False)
+    deleted_at = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self):
+        return f"Booking #{self.id} for {self.room} by {self.user}"
+
+    def cancel(self):
+        self.status = self.STATUS_CANCELLED
+        self.canceled_at = timezone.now()
+        self.save(update_fields=["status", "canceled_at"])
+
+    def suspend(self):
+        self.status = self.STATUS_SUSPENDED
+        if not self.canceled_at:
+            self.canceled_at = timezone.now()
+        self.save(update_fields=["status", "canceled_at"])
 
     class Meta:
         indexes = [

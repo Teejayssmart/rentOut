@@ -35,7 +35,8 @@ from propertylist_app.api.views import (
 
     # Bookings & Availability
     create_booking, BookingListCreateView, BookingDetailView, BookingCancelView,
-    RoomAvailabilityView, RoomAvailabilitySlotListCreateView, RoomAvailabilitySlotDeleteView, RoomAvailabilityPublicView,  FindAddressView,
+    RoomAvailabilityView, RoomAvailabilitySlotListCreateView, RoomAvailabilitySlotDeleteView, RoomAvailabilityPublicView,  FindAddressView,BookingDeleteView,
+    BookingSuspendView,
 
     # Photos
     RoomPhotoUploadView, RoomPhotoDeleteView,
@@ -140,6 +141,17 @@ urlpatterns = [
     path("bookings/<int:pk>/",             BookingDetailView.as_view(),     name="booking-detail"),
     path("bookings/<int:pk>/cancel/",      BookingCancelView.as_view(),     name="booking-cancel"),
     path("rooms/<int:pk>/availability/",   RoomAvailabilityView.as_view(),  name="room-availability"),
+    
+    
+     
+    # --- Bookings / suspend---
+    path("bookings/<int:pk>/suspend/", BookingSuspendView.as_view(), name="booking-suspend"),
+    path("bookings/<int:pk>/delete/", BookingDeleteView.as_view(), name="booking-delete"),
+
+
+    
+    # --- Bookings / cancelled ---
+    path("bookings/<int:pk>/delete/", BookingDeleteView.as_view(), name="booking-delete"),
 
     # Landlord manage slots
     path("rooms/<int:pk>/availability/slots/",               RoomAvailabilitySlotListCreateView.as_view(), name="room-slots"),

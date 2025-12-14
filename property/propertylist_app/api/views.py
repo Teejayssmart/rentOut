@@ -2206,6 +2206,11 @@ class StartThreadFromRoomView(APIView):
         return Response(MessageThreadSerializer(thread, context={"request": request}).data)
 
 
+
+
+# --------------------
+# Booking
+# --------------------
 class BookingListCreateView(generics.ListCreateAPIView):
     """GET my bookings / POST create (slot OR direct)."""
     serializer_class = BookingSerializer
@@ -2218,7 +2223,8 @@ class BookingListCreateView(generics.ListCreateAPIView):
     ordering = ["-created_at"]
 
     def get_queryset(self):
-        return Booking.objects.filter(user=self.request.user).order_by("-created_at")
+        return Booking.objects.filter(user=self.request.user, is_deleted=False).order_by("-created_at")
+
 
     def perform_create(self, serializer):
         slot_id = self.request.data.get("slot")
@@ -2277,26 +2283,88 @@ class BookingDetailView(generics.RetrieveAPIView):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        return Booking.objects.all() if self.request.user.is_staff else Booking.objects.filter(user=self.request.user)
+        if self.request.user.is_staff:
+            return Booking.objects.filter(is_deleted=False)
+        return Booking.objects.filter(user=self.request.user, is_deleted=False)
 
+
+
+# ======================================================================
+# 3) OPTIONAL BUT RECOMMENDED: make BookingCancelView ignore deleted bookings
+# FILE: property/propertylist_app/api/views.py
+# WHERE: inside BookingCancelView.post()
+# REPLACE your first qs line with the 2 lines below
+# ======================================================================
 
 class BookingCancelView(APIView):
-    """POST /api/bookings/<id>/cancel/ — soft-cancel a booking."""
     permission_classes = [IsAuthenticated]
 
     def post(self, request, pk):
-        qs = Booking.objects.all() if request.user.is_staff else Booking.objects.filter(user=request.user)
+        # REPLACE your existing qs line with these
+        qs = Booking.objects.filter(is_deleted=False)
+        qs = qs if request.user.is_staff else qs.filter(user=request.user)
+
         booking = get_object_or_404(qs, pk=pk)
 
         if booking.canceled_at:
             return Response({"detail": "Booking already cancelled."})
 
         if booking.start <= timezone.now():
-            return Response({"detail": "Cannot cancel after booking has started."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"detail": "Cannot cancel after booking has started."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         booking.canceled_at = timezone.now()
-        booking.save(update_fields=["canceled_at"])
+        booking.status = Booking.STATUS_CANCELLED  # also set status
+        booking.save(update_fields=["canceled_at", "status"])
+
         return Response({"detail": "Booking cancelled.", "canceled_at": booking.canceled_at})
+
+    
+    
+
+
+class BookingSuspendView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        booking = get_object_or_404(Booking, pk=pk, is_deleted=False)
+
+        if booking.user != request.user:
+            return Response(
+                {"detail": "You are not allowed to suspend this booking."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        # ✅ idempotent
+        if booking.status != Booking.STATUS_SUSPENDED:
+            booking.status = Booking.STATUS_SUSPENDED
+
+            # if you want suspend to behave like cancel, keep this:
+            if not booking.canceled_at:
+                booking.canceled_at = timezone.now()
+
+            booking.save(update_fields=["status", "canceled_at"])
+
+        return Response(
+            {"id": booking.id, "status": booking.status, "canceled_at": booking.canceled_at},
+            status=status.HTTP_200_OK,
+        )
+
+class BookingDeleteView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, pk):
+        qs = Booking.objects.filter(is_deleted=False)
+        qs = qs if request.user.is_staff else qs.filter(user=request.user)
+        booking = get_object_or_404(qs, pk=pk)
+
+        booking.is_deleted = True
+        booking.deleted_at = timezone.now()
+        booking.save(update_fields=["is_deleted", "deleted_at"])
+
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 # --------------------

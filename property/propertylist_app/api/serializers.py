@@ -1012,6 +1012,7 @@ class BookingSerializer(serializers.ModelSerializer):
             "room_title",
             "start",
             "end",
+            "status",
             "created_at",
             "canceled_at",
         ]
