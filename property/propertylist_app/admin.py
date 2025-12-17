@@ -124,10 +124,34 @@ class RoomCategorieAdmin(admin.ModelAdmin):
 
 @admin.register(Review)
 class ReviewAdmin(admin.ModelAdmin):
-    list_display = ("review_user", "room", "rating", "active", "created")
-    list_filter = ("active", "rating")
-    search_fields = ("review_user__username", "room__title")
-    readonly_fields = ("created", "update")
+    list_display = (
+        "id",
+        "role",
+        "booking",
+        "reviewer",
+        "reviewee",
+        "overall_rating",
+        "submitted_at",
+        "reveal_at",
+        "active",
+    )
+
+    list_filter = (
+        "role",
+        "active",
+    )
+
+    search_fields = (
+        "reviewer__username",
+        "reviewee__username",
+    )
+
+    readonly_fields = (
+        "submitted_at",
+        "reveal_at",
+        "overall_rating",
+    )
+
 
 
 @admin.register(UserProfile)

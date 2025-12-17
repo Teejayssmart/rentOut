@@ -4,6 +4,7 @@ User = get_user_model()
 from rest_framework import serializers
 from django.contrib.contenttypes.models import ContentType
 
+
 from propertylist_app.models import (
     Room, RoomCategorie, Review, UserProfile, RoomImage,
     SavedRoom, MessageThread, Message, Booking,
@@ -40,6 +41,147 @@ class ReviewSerializer(serializers.ModelSerializer):
         # Room comes from URL (view), user comes from request; don't require them in POST body
         read_only_fields = ["room", "review_user"]
 
+
+class UserReviewListSerializer(serializers.ModelSerializer):
+    reviewer_name = serializers.CharField(source="reviewer.username", read_only=True)
+    reveal_at = serializers.DateTimeField(read_only=True)
+
+    class Meta:
+        model = Review
+        fields = (
+            "id",
+            "role",
+            "overall_rating",
+            "review_flags",
+            "notes",
+            "submitted_at",
+            "reveal_at",
+            "reviewer_name",
+            "booking",
+        )
+
+
+class BookingReviewCreateSerializer(serializers.ModelSerializer):
+    booking_id = serializers.IntegerField(write_only=True)
+
+    class Meta:
+        model = Review
+        fields = (
+            "booking_id",
+            "review_flags",
+            "notes",
+        )
+
+    def validate(self, attrs):
+        request = self.context["request"]
+        user = request.user
+
+        booking_id = attrs.get("booking_id")
+
+        try:
+            booking = Booking.objects.select_related("room").get(id=booking_id)
+        except Booking.DoesNotExist:
+            raise serializers.ValidationError("Booking does not exist.")
+
+        # booking must have ended
+        if not booking.end or booking.end > timezone.now():
+            raise serializers.ValidationError(
+                "You can only review after the booking has ended."
+            )
+
+        # must be within 30 days
+        review_deadline = booking.end + timezone.timedelta(days=30)
+        if timezone.now() > review_deadline:
+            raise serializers.ValidationError(
+                "The 30-day review window has expired."
+            )
+
+        tenant = booking.user
+        landlord = booking.room.property_owner
+
+        if user != tenant and user != landlord:
+            raise serializers.ValidationError(
+                "You are not allowed to review this booking."
+            )
+
+        # determine role
+        if user == tenant:
+            role = Review.ROLE_TENANT_TO_LANDLORD
+            reviewee = landlord
+        else:
+            role = Review.ROLE_LANDLORD_TO_TENANT
+            reviewee = tenant
+
+        # prevent duplicate review
+        if Review.objects.filter(booking=booking, role=role).exists():
+            raise serializers.ValidationError(
+                "You have already submitted a review for this booking."
+            )
+
+        # must provide at least flags or notes
+        flags = attrs.get("review_flags", [])
+        notes = attrs.get("notes")
+        
+        if flags:
+            unknown = [f for f in flags if f not in self.ALLOWED_FLAGS]
+            if unknown:
+                raise serializers.ValidationError(
+                    {"review_flags": f"Unknown review flag(s): {', '.join(unknown)}"}
+                )
+
+
+        if not flags and not notes:
+            raise serializers.ValidationError(
+                "Please select at least one checkbox or write a short note."
+            )
+
+        # attach server-controlled values
+        attrs["booking"] = booking
+        attrs["reviewer"] = user
+        attrs["reviewee"] = reviewee
+        attrs["role"] = role
+
+        return attrs
+
+    def create(self, validated_data):
+        # booking_id is not a model field
+        validated_data.pop("booking_id")
+
+        return Review.objects.create(**validated_data)
+
+
+
+    ALLOWED_FLAGS = {
+        # Tenant -> Landlord
+        "responsive",
+        "maintenance_good",
+        "accurate_listing",
+        "respectful_fair",
+        "unresponsive",
+        "maintenance_poor",
+        "misleading_listing",
+        "unfair_treatment",
+
+        # Landlord -> Tenant
+        "paid_on_time",
+        "property_care_good",
+        "good_communication",
+        "followed_rules",
+        "late_payment",
+        "property_care_poor",
+        "poor_communication",
+        "broke_rules",
+    }
+    
+    
+class UserReviewSummarySerializer(serializers.Serializer):
+    landlord_count = serializers.IntegerField()
+    landlord_average = serializers.FloatField(allow_null=True)
+
+    tenant_count = serializers.IntegerField()
+    tenant_average = serializers.FloatField(allow_null=True)
+    
+    
 
 # --------------------
 # Room Serializer

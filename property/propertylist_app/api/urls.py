@@ -21,7 +21,7 @@ from propertylist_app.api.views import (
     RoomCategorieAV, RoomCategorieDetailAV, RoomCategorieVS, RoomPreviewView, 
 
     # Reviews
-    ReviewCreate, ReviewList, ReviewDetail, UserReview,
+    UserReview,UserReviewsView,UserReviewSummaryView,
 
     # Search & Nearby
     SearchRoomsView, NearbyRoomsView,
@@ -36,7 +36,7 @@ from propertylist_app.api.views import (
     # Bookings & Availability
     create_booking, BookingListCreateView, BookingDetailView, BookingCancelView,
     RoomAvailabilityView, RoomAvailabilitySlotListCreateView, RoomAvailabilitySlotDeleteView, RoomAvailabilityPublicView,  FindAddressView,BookingDeleteView,
-    BookingSuspendView,
+    BookingSuspendView,BookingReviewCreateView, BookingReviewListView,
 
     # Photos
     RoomPhotoUploadView, RoomPhotoDeleteView,
@@ -98,11 +98,13 @@ urlpatterns = [
     path("room-categories/",           RoomCategorieAV.as_view(),         name="roomcategory-list"),
     path("room-categories/<int:pk>/",  RoomCategorieDetailAV.as_view(),   name="roomcategory-detail"),
 
-    # --- Reviews ---
-    path("rooms/<int:pk>/reviews/",        ReviewList.as_view(),       name="room-reviews"),
-    path("rooms/<int:pk>/reviews/create/", ReviewCreate.as_view(),     name="room-reviews-create"),
-    path("reviews/<int:pk>/",              ReviewDetail.as_view(),     name="review-detail"),
-    path("user-reviews/",                  UserReview.as_view(),       name="user-reviews"),
+    
+   
+    #path("user-reviews/",                  UserReview.as_view(),       name="user-reviews"),
+    path("user-reviews/", UserReview.as_view(), name="legacy-user-reviews"),
+    path("users/<int:user_id>/review-summary/", UserReviewSummaryView.as_view(), name="user-review-summary"),
+    path("users/<int:user_id>/reviews/", UserReviewsView.as_view(), name="user-reviews"),
+
 
     # --- Search & discovery ---
     path("search/rooms/",  cache_page(60)(SearchRoomsView.as_view()),  name="search-rooms"),
@@ -141,6 +143,10 @@ urlpatterns = [
     path("bookings/<int:pk>/",             BookingDetailView.as_view(),     name="booking-detail"),
     path("bookings/<int:pk>/cancel/",      BookingCancelView.as_view(),     name="booking-cancel"),
     path("rooms/<int:pk>/availability/",   RoomAvailabilityView.as_view(),  name="room-availability"),
+    
+    path("bookings/<int:booking_id>/reviews/", BookingReviewListView.as_view(), name="booking-reviews"),
+    path("bookings/<int:booking_id>/reviews/create/", BookingReviewCreateView.as_view(), name="booking-reviews-create"),
+
     
     
      

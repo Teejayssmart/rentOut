@@ -515,35 +515,6 @@ class Room(SoftDeleteModel):
 
 
 
-# ------
-# Review
-# ------
-class Review(models.Model):
-    review_user = models.ForeignKey(User, on_delete=models.CASCADE)
-    rating = models.PositiveIntegerField(
-        validators=[MinValueValidator(1), MaxValueValidator(5)]
-    )
-    description = models.CharField(max_length=200, null=True)
-    created = models.DateTimeField(auto_now_add=True)
-    room = models.ForeignKey(Room, on_delete=models.CASCADE, related_name="reviews")
-    active = models.BooleanField(default=True)
-    update = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        ordering = ["-created"]
-        constraints = [
-            models.UniqueConstraint(
-                fields=["room", "review_user"],
-                name="uq_review_once_per_room",
-            ),
-        ]
-        indexes = [
-            models.Index(fields=["room", "review_user"]),
-            models.Index(fields=["room", "created"]),
-        ]
-
-    def __str__(self):
-        return f"{self.rating} | {self.room.title} | {self.review_user}"
 
 
 # -----------
@@ -797,6 +768,119 @@ class Booking(models.Model):
         indexes = [
             models.Index(fields=["room", "start", "end"]),
         ]
+
+
+
+# ------
+# Review (booking-based, double-blind)
+# ------
+class Review(models.Model):
+
+    ROLE_TENANT_TO_LANDLORD = "tenant_to_landlord"
+    ROLE_LANDLORD_TO_TENANT = "landlord_to_tenant"
+
+    ROLE_CHOICES = (
+        (ROLE_TENANT_TO_LANDLORD, "Tenant → Landlord"),
+        (ROLE_LANDLORD_TO_TENANT, "Landlord → Tenant"),
+    )
+
+    # Booking that ended
+    booking = models.ForeignKey(
+    Booking,
+    on_delete=models.CASCADE,
+    related_name="reviews",
+    null=True,
+    blank=True,
+    )
+
+
+    # Who wrote the review
+    reviewer = models.ForeignKey(
+    settings.AUTH_USER_MODEL,
+    on_delete=models.CASCADE,
+    related_name="reviews_written",
+    null=True,
+    blank=True,
+    )
+
+
+    # Who the review is about
+    reviewee = models.ForeignKey(
+    settings.AUTH_USER_MODEL,
+    on_delete=models.CASCADE,
+    related_name="reviews_received",
+    null=True,
+    blank=True,
+    )
+
+
+    # Direction
+    role = models.CharField(
+    max_length=32,
+    choices=ROLE_CHOICES,
+    null=True,
+    blank=True,
+    )
+
+
+    # Checkbox selections from frontend
+    review_flags = models.JSONField(default=list, blank=True)
+
+    # Auto-computed 1–5 rating
+    overall_rating = models.PositiveIntegerField(
+        default=3,
+        validators=[MinValueValidator(1), MaxValueValidator(5)],
+    )
+
+    notes = models.TextField(blank=True, null=True)
+
+    submitted_at = models.DateTimeField(auto_now_add=True)
+    reveal_at = models.DateTimeField(null=True, blank=True)
+
+
+    active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["-submitted_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["booking", "role"],
+                name="uq_review_once_per_booking_role",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.role} | booking {self.booking_id} | {self.reviewer} → {self.reviewee}"
+    
+    
+    def save(self, *args, **kwargs):
+        # Only auto-set reveal_at if it hasn't been set already.
+        end_dt = None
+        if self.booking:
+            end_dt = getattr(self.booking, "end", None) or getattr(self.booking, "end_date", None)
+
+        if self.reveal_at is None and end_dt:
+            self.reveal_at = end_dt + timedelta(days=30)
+
+        # Compute rating from checkboxes
+        positives = {
+            "responsive", "maintenance_good", "accurate_listing", "respectful_fair",
+            "paid_on_time", "property_care_good", "good_communication", "followed_rules",
+        }
+        negatives = {
+            "unresponsive", "maintenance_poor", "misleading_listing", "unfair_treatment",
+            "late_payment", "property_care_poor", "poor_communication", "broke_rules",
+        }
+
+        flags = self.review_flags or []
+        pos = sum(1 for f in flags if f in positives)
+        neg = sum(1 for f in flags if f in negatives)
+        score = 3 + (pos - neg)
+        self.overall_rating = max(1, min(5, score))
+
+        super().save(*args, **kwargs)
+
+
 
 
 # ---------------

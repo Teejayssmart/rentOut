@@ -5,9 +5,10 @@ import stripe
 from django.conf import settings
 from django.contrib.auth import authenticate, get_user_model
 from django.db import transaction, connection
-from django.db.models import Q, Count, OuterRef, Subquery, Sum,Exists, Case, When, Value, CharField
+from django.db.models import Q, Count, OuterRef, Subquery, Sum,Exists, Case, When, Value, CharField,Avg
 from datetime import date
 from decimal import Decimal
+
 
 
 
@@ -36,6 +37,8 @@ from rest_framework.throttling import UserRateThrottle, AnonRateThrottle, Scoped
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework import status, permissions
+from rest_framework.generics import ListAPIView
+
 
 # Services
 from propertylist_app.services.geo import geocode_postcode_cached
@@ -107,6 +110,9 @@ from propertylist_app.api.serializers import (
     FindAddressSerializer,
     MessageThreadStateUpdateSerializer,
     RoomPreviewSerializer,
+    BookingReviewCreateSerializer,
+    UserReviewListSerializer,
+    UserReviewSummarySerializer,
 )
 from propertylist_app.api.throttling import (
     ReviewCreateThrottle,
@@ -164,6 +170,43 @@ class UserReview(generics.ListAPIView):
     def get_queryset(self):
         username = self.request.query_params.get("username")
         return Review.objects.filter(review_user__username=username)
+    
+    
+class UserReviewSummaryView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request, user_id):
+        revealed = Review.objects.filter(
+            reviewee_id=user_id,
+            active=True,
+            reveal_at__isnull=False,
+            reveal_at__lte=timezone.now(),
+        )
+
+        landlord_stats = revealed.filter(
+            role=Review.ROLE_TENANT_TO_LANDLORD
+        ).aggregate(
+            landlord_count=Count("id"),
+            landlord_average=Avg("overall_rating"),
+        )
+
+        tenant_stats = revealed.filter(
+            role=Review.ROLE_LANDLORD_TO_TENANT
+        ).aggregate(
+            tenant_count=Count("id"),
+            tenant_average=Avg("overall_rating"),
+        )
+
+        data = {
+            "landlord_count": landlord_stats["landlord_count"],
+            "landlord_average": landlord_stats["landlord_average"],
+            "tenant_count": tenant_stats["tenant_count"],
+            "tenant_average": tenant_stats["tenant_average"],
+        }
+
+        serializer = UserReviewSummarySerializer(data)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+    
 
 
 class ReviewCreate(generics.CreateAPIView):
@@ -183,9 +226,9 @@ class ReviewCreate(generics.CreateAPIView):
         if getattr(room, "property_owner_id", None) == user.id:
             raise ValidationError({"detail": "You cannot review your own room."})
 
-        # 2) Block duplicates BEFORE saving
-        if Review.objects.filter(room=room, review_user=user).exists():
-            raise ValidationError({"detail": "You have already reviewed this room!"})
+        # # 2) Block duplicates BEFORE saving
+        # if Review.objects.filter(room=room, review_user=user).exists():
+        #     raise ValidationError({"detail": "You have already reviewed this room!"})
 
         # 3) Save once
         review = serializer.save(review_user=user, room=room)
@@ -202,21 +245,129 @@ class ReviewCreate(generics.CreateAPIView):
         room.save(update_fields=["avg_rating", "number_rating"])
 
 
-class ReviewList(generics.ListAPIView):
-    serializer_class = ReviewSerializer
-    filter_backends = [DjangoFilterBackend]
-    filterset_fields = ["review_user__username", "active"]
+# class ReviewList(generics.ListAPIView):
+#     serializer_class = ReviewSerializer
+#     filter_backends = [DjangoFilterBackend]
+#     filterset_fields = ["review_user__username", "active"]
+
+#     def get_queryset(self):
+#         return Review.objects.filter(room=self.kwargs["pk"])
+
+
+# class ReviewDetail(generics.RetrieveUpdateDestroyAPIView):
+#     queryset = Review.objects.all()
+#     serializer_class = ReviewSerializer
+#     permission_classes = [IsReviewUserOrReadOnly]
+#     throttle_classes = [ScopedRateThrottle, AnonRateThrottle]
+#     throttle_scope = "review-detail"
+
+
+
+
+class BookingReviewCreateView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, booking_id):
+        serializer = BookingReviewCreateSerializer(
+            data={
+                **request.data,
+                "booking_id": booking_id,
+            },
+            context={"request": request},
+        )
+
+        if serializer.is_valid():
+            review = serializer.save()
+            return Response(
+                {
+                    "message": "Review submitted successfully.",
+                    "review_id": review.id,
+                },
+                status=status.HTTP_201_CREATED,
+            )
+
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class BookingReviewListView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, booking_id):
+        user = request.user
+
+        try:
+            booking = Booking.objects.select_related("room").get(id=booking_id)
+        except Booking.DoesNotExist:
+            return Response({"detail": "Booking not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        tenant = booking.user
+        landlord = booking.room.property_owner
+
+        if user != tenant and user != landlord:
+            return Response({"detail": "You are not allowed to view these reviews."}, status=status.HTTP_403_FORBIDDEN)
+
+        # Decide which direction applies for the requester
+        if user == tenant:
+            my_role = "tenant_to_landlord"
+            other_role = "landlord_to_tenant"
+        else:
+            my_role = "landlord_to_tenant"
+            other_role = "tenant_to_landlord"
+
+
+        my_review = Review.objects.filter(booking=booking, role=my_role, active=True).first()
+        other_review = Review.objects.filter(booking=booking, role=other_role, active=True).first()
+
+        now = timezone.now()
+
+        my_review_data = UserReviewListSerializer(my_review).data if my_review else None
+
+        end_dt = getattr(booking, "end_date", None) or getattr(booking, "end", None)
+
+        other_reveal_at = None
+        if other_review:
+            other_reveal_at = other_review.reveal_at or (end_dt + timedelta(days=30) if end_dt else None)
+        else:
+            other_reveal_at = end_dt + timedelta(days=30) if end_dt else None
+
+        other_visible = bool(other_review and other_reveal_at and now >= other_reveal_at)
+        other_review_data = UserReviewListSerializer(other_review).data if other_visible else None
+
+        return Response(
+            {
+                "my_review": my_review_data,
+                "other_review": other_review_data,
+                "other_review_reveal_at": other_reveal_at,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+
+class UserReviewsView(ListAPIView):
+    permission_classes = [permissions.AllowAny]
+    serializer_class = UserReviewListSerializer
 
     def get_queryset(self):
-        return Review.objects.filter(room=self.kwargs["pk"])
+        user_id = self.kwargs["user_id"]
+        for_param = self.request.query_params.get("for")
 
+        qs = Review.objects.filter(
+            reviewee_id=user_id,
+            reveal_at__isnull=False,
+            reveal_at__lte=timezone.now(),
+            active=True,
+        ).order_by("-submitted_at")
 
-class ReviewDetail(generics.RetrieveUpdateDestroyAPIView):
-    queryset = Review.objects.all()
-    serializer_class = ReviewSerializer
-    permission_classes = [IsReviewUserOrReadOnly]
-    throttle_classes = [ScopedRateThrottle, AnonRateThrottle]
-    throttle_scope = "review-detail"
+        if for_param == "landlord":
+            return qs.filter(role=Review.ROLE_TENANT_TO_LANDLORD)
+
+        if for_param == "tenant":
+            return qs.filter(role=Review.ROLE_LANDLORD_TO_TENANT)
+
+        # if not provided or invalid, return nothing to avoid leaking mixed data accidentally
+        return qs.none()
+
 
 
 # --------------------
@@ -2433,8 +2584,12 @@ class RoomAvailabilitySlotDeleteView(generics.DestroyAPIView):
     def perform_destroy(self, instance):
         if Booking.objects.filter(slot=instance, canceled_at__isnull=True).exists():
             raise ValidationError({"detail": "Cannot delete a slot with active bookings."})
+
+        # AvailabilitySlot belongs to a room, so permissions must check the room
         self.check_object_permissions(self.request, instance.room)
+
         return super().perform_destroy(instance)
+
 
 
 class RoomAvailabilityPublicView(generics.ListAPIView):

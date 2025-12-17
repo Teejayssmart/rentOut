@@ -8,8 +8,8 @@ class RoomPagination(PageNumberPagination):
   last_page_strings = 'end'
   
 class RoomLOPagination(LimitOffsetPagination):
-    default_limit = 3
-    max_limit = 3
+    default_limit = 4
+    max_limit = 4
     limit_query_param = 'limit'
     offset_query_param = 'start'
     
