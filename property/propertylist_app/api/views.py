@@ -197,11 +197,26 @@ class UserReviewSummaryView(APIView):
             tenant_average=Avg("overall_rating"),
         )
 
+        landlord_count = int(landlord_stats["landlord_count"] or 0)
+        tenant_count = int(tenant_stats["tenant_count"] or 0)
+        total_count = landlord_count + tenant_count
+
+        landlord_avg = landlord_stats["landlord_average"]
+        tenant_avg = tenant_stats["tenant_average"]
+
+        overall_avg = None
+        if total_count > 0:
+            la = float(landlord_avg or 0)
+            ta = float(tenant_avg or 0)
+            overall_avg = ((la * landlord_count) + (ta * tenant_count)) / total_count
+
         data = {
-            "landlord_count": landlord_stats["landlord_count"],
-            "landlord_average": landlord_stats["landlord_average"],
-            "tenant_count": tenant_stats["tenant_count"],
-            "tenant_average": tenant_stats["tenant_average"],
+            "landlord_count": landlord_count,
+            "landlord_average": landlord_avg,
+            "tenant_count": tenant_count,
+            "tenant_average": tenant_avg,
+            "total_reviews_count": total_count,
+            "overall_rating_average": overall_avg,
         }
 
         serializer = UserReviewSummarySerializer(data)
@@ -308,30 +323,34 @@ class BookingReviewListView(APIView):
 
         # Decide which direction applies for the requester
         if user == tenant:
-            my_role = "tenant_to_landlord"
-            other_role = "landlord_to_tenant"
+            my_role = Review.ROLE_TENANT_TO_LANDLORD
+            other_role = Review.ROLE_LANDLORD_TO_TENANT
         else:
-            my_role = "landlord_to_tenant"
-            other_role = "tenant_to_landlord"
-
+            my_role = Review.ROLE_LANDLORD_TO_TENANT
+            other_role = Review.ROLE_TENANT_TO_LANDLORD
 
         my_review = Review.objects.filter(booking=booking, role=my_role, active=True).first()
         other_review = Review.objects.filter(booking=booking, role=other_role, active=True).first()
 
         now = timezone.now()
 
-        my_review_data = UserReviewListSerializer(my_review).data if my_review else None
+        my_review_data = UserReviewListSerializer(
+            my_review, context={"request": request}
+        ).data if my_review else None
 
-        end_dt = getattr(booking, "end_date", None) or getattr(booking, "end", None)
+        end_dt = getattr(booking, "end", None) or getattr(booking, "end_date", None)
 
-        other_reveal_at = None
-        if other_review:
-            other_reveal_at = other_review.reveal_at or (end_dt + timedelta(days=30) if end_dt else None)
+        # When will the "other" review be visible?
+        if other_review and other_review.reveal_at:
+            other_reveal_at = other_review.reveal_at
         else:
-            other_reveal_at = end_dt + timedelta(days=30) if end_dt else None
+            other_reveal_at = (end_dt + timedelta(days=30)) if end_dt else None
 
         other_visible = bool(other_review and other_reveal_at and now >= other_reveal_at)
-        other_review_data = UserReviewListSerializer(other_review).data if other_visible else None
+
+        other_review_data = UserReviewListSerializer(
+            other_review, context={"request": request}
+        ).data if other_visible else None
 
         return Response(
             {
@@ -341,7 +360,6 @@ class BookingReviewListView(APIView):
             },
             status=status.HTTP_200_OK,
         )
-
 
 
 class UserReviewsView(ListAPIView):
@@ -550,7 +568,7 @@ class RoomDetailAV(APIView):
         # Possible values we expect from the frontend:
         # - "next"       -> Step 2/3 Next
         # - "save_close" -> Save & Close
-        # - "preview"    -> Step 4 Next / Preview  ✅ enforce 3 photos here
+        # - "preview"    -> Step 4 Next / Preview   enforce 3 photos here
         action = (data.get("action") or "").strip().lower()
 
         # Never let the wizard change these directly
@@ -1101,6 +1119,89 @@ class UserProfileView(generics.RetrieveUpdateAPIView):
         self.perform_update(serializer)
         return Response(serializer.data)
 
+
+
+class MyProfilePageView(APIView):
+        permission_classes = [IsAuthenticated]
+
+        def get(self, request):
+            user = request.user
+            profile, _ = UserProfile.objects.get_or_create(user=user)
+
+            # review stats (same logic as UserReviewSummaryView)
+            qs = Review.objects.filter(
+                reviewee_id=user.id,
+                reveal_at__isnull=False,
+                reveal_at__lte=timezone.now(),
+                active=True,
+            )
+
+            landlord_qs = qs.filter(role=Review.ROLE_TENANT_TO_LANDLORD)
+            tenant_qs = qs.filter(role=Review.ROLE_LANDLORD_TO_TENANT)
+
+            landlord_count = landlord_qs.count()
+            tenant_count = tenant_qs.count()
+
+            landlord_avg = landlord_qs.aggregate(a=Avg("overall_rating")).get("a")
+            tenant_avg = tenant_qs.aggregate(a=Avg("overall_rating")).get("a")
+
+            total = landlord_count + tenant_count
+
+            # weighted overall rating to match your single “4.0” on the profile card
+            overall = None
+            if total > 0:
+                la = float(landlord_avg or 0)
+                ta = float(tenant_avg or 0)
+                overall = ((la * landlord_count) + (ta * tenant_count)) / total
+
+            # preview reviews (2 cards)
+            preview = qs.order_by("-submitted_at")[:2]
+
+            # compute age from date_of_birth
+            age = None
+            if profile.date_of_birth:
+                today = timezone.now().date()
+                dob = profile.date_of_birth
+                age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+
+            # location text: prefer address_manual (what UI shows), fallback to postcode
+            location = (profile.address_manual or "").strip()
+            if not location:
+                location = (profile.postcode or "").strip()
+
+            payload = {
+                "id": user.id,
+                "email": user.email,
+                "username": user.username,
+                "date_joined": user.date_joined,
+
+                "avatar": (profile.avatar.url if profile.avatar else None),
+                "role": profile.role,
+
+                "gender": profile.gender or "",
+                "occupation": profile.occupation or "",
+                "postcode": profile.postcode or "",
+                "address_manual": profile.address_manual or "",
+                "date_of_birth": profile.date_of_birth,
+                "about_you": profile.about_you or "",
+
+                "age": age,
+                "location": location,
+
+                "total_reviews": total,
+                "overall_rating": overall,
+
+                "landlord_reviews_count": landlord_count,
+                "landlord_rating_average": landlord_avg,
+
+                "tenant_reviews_count": tenant_count,
+                "tenant_rating_average": tenant_avg,
+
+                "reviews_preview": preview,
+            }
+
+            ser = ProfilePageSerializer(payload, context={"request": request})
+            return Response(ser.data, status=status.HTTP_200_OK)
 
 
 # --------------------
@@ -1712,11 +1813,14 @@ class FindAddressView(APIView):
 
         return Response(
             {
-                "postcode": postcode,
-                "addresses": mock_addresses,
+            "postcode": postcode,
+            "addresses": [
+            {"id": str(i), "label": a}
+            for i, a in enumerate(mock_addresses)
+            ],
             },
             status=status.HTTP_200_OK,
-        )
+            )
 
 
 

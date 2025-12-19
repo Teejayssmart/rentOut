@@ -1,22 +1,44 @@
 import math
+import re
 from django.core.exceptions import ValidationError
 
 _UK_POSTCODE_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 "
+
+# strict UK postcode regex (allows optional single space)
+_UK_POSTCODE_RE = re.compile(
+    r"^(GIR ?0AA|"
+    r"(?:[A-PR-UWYZ][0-9]{1,2}|"
+    r"[A-PR-UWYZ][A-HK-Y][0-9]{1,2}|"
+    r"[A-PR-UWYZ][0-9][A-HJKSTUW]|"
+    r"[A-PR-UWYZ][A-HK-Y][0-9][ABEHMNPRVWXY])"
+    r" ?[0-9][ABD-HJLNP-UW-Z]{2})$"
+)
 
 def normalize_uk_postcode(raw: str) -> str:
     """
     Basic UK postcode normalizer:
       - strips spaces, uppercases, filters invalid chars,
+      - validates format,
       - re-inserts single space before last 3 chars when possible.
     """
     if not raw:
         raise ValidationError("Postcode is required.")
-    s = "".join(ch for ch in str(raw).upper().strip() if ch in _UK_POSTCODE_CHARS).replace(" ", "")
+
+    s = "".join(
+        ch for ch in str(raw).upper().strip()
+        if ch in _UK_POSTCODE_CHARS
+    ).replace(" ", "")
+
+    # must be long enough to be a postcode
     if len(s) < 5:
         raise ValidationError("Postcode looks too short.")
-    # Insert space before last 3 chars if not present
-    if len(s) > 3:
-        s = s[:-3] + " " + s[-3:]
+
+    # validate (space optional)
+    if not _UK_POSTCODE_RE.match(s):
+        raise ValidationError("Invalid UK postcode.")
+
+    # normalise spacing
+    s = s[:-3] + " " + s[-3:]
     return s.strip()
 
 def validate_radius_miles(val, *, max_miles: int = 100) -> int:

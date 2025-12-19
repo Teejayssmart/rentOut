@@ -45,7 +45,7 @@ from propertylist_app.api.views import (
     RegistrationView, LoginView, LogoutView,
     PasswordResetRequestView, PasswordResetConfirmView,
     MeView, UserProfileView,
-    UserAvatarUploadView, ChangeEmailView, ChangePasswordView, DeactivateAccountView, MyRoomsView,GoogleRegisterView,AppleRegisterView,
+    UserAvatarUploadView, ChangeEmailView, ChangePasswordView, DeactivateAccountView, MyRoomsView,GoogleRegisterView,AppleRegisterView,MyProfilePageView,
 
     # Soft delete
     RoomSoftDeleteView,RoomUnpublishView,
@@ -178,8 +178,9 @@ urlpatterns = [
     path("users/me/change-password/", ChangePasswordView.as_view(),   name="user-change-password"),
     path("users/me/deactivate/",      DeactivateAccountView.as_view(), name="user-deactivate"),
     path("users/me/onboarding/complete/", OnboardingCompleteView.as_view(), name="user-onboarding-complete"),
+    path("users/me/profile-page/",    MyProfilePageView.as_view(), name="user-profile-page"),
 
-
+ 
     # --- Soft delete room ---
     path("rooms/<int:pk>/soft-delete/", RoomSoftDeleteView.as_view(), name="room-soft-delete"),
     path("rooms/<int:pk>/unpublish/", RoomUnpublishView.as_view(), name="room-unpublish"),
