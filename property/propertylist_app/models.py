@@ -595,6 +595,8 @@ class UserProfile(models.Model):
 
     email_verified = models.BooleanField(default=False, db_index=True)
     email_verified_at = models.DateTimeField(null=True, blank=True)
+    phone_verified = models.BooleanField(default=False, db_index=True)
+    phone_verified_at = models.DateTimeField(null=True, blank=True)
     terms_accepted_at = models.DateTimeField(null=True, blank=True)
     terms_version = models.CharField(max_length=20, blank=True, default="")
     marketing_consent = models.BooleanField(default=False)
@@ -1319,3 +1321,34 @@ class EmailOTP(models.Model):
             code=str(code).strip(),
             expires_at=expires_at,
         )
+
+
+# -----
+# PhoneOTP
+# ------
+class PhoneOTP(models.Model):
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="phone_otps",
+    )
+    phone = models.CharField(max_length=15)
+    code = models.CharField(max_length=6)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    used_at = models.DateTimeField(null=True, blank=True)
+    attempts = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["user", "created_at"]),
+            models.Index(fields=["phone", "created_at"]),
+        ]
+
+    @property
+    def is_expired(self) -> bool:
+        return timezone.now() >= self.expires_at
+
+    @property
+    def is_used(self) -> bool:
+        return self.used_at is not None

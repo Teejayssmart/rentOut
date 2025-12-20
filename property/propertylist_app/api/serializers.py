@@ -8,11 +8,13 @@ import re
 from rest_framework import serializers
 
 
+
 from propertylist_app.models import (
     Room, RoomCategorie, Review, UserProfile, RoomImage,
     SavedRoom, MessageThread, Message, Booking,
     AvailabilitySlot, Payment, Report, Notification, EmailOTP,
-    MessageThreadState, ContactMessage,
+    MessageThreadState, ContactMessage,PhoneOTP,
+
 )
 from propertylist_app.validators import (
     validate_person_name, validate_age_18_plus, validate_avatar_image,
@@ -23,6 +25,7 @@ from propertylist_app.validators import (
     normalise_price, normalise_phone, normalise_name,
     assert_not_duplicate_listing, assert_no_duplicate_files,
     enforce_user_caps,
+
 )
 
 from django.utils import timezone
@@ -1088,6 +1091,8 @@ class UserProfileSerializer(serializers.ModelSerializer):
             "country",
             "address_manual",
             "email_verified",
+            "phone_verified",
+            "phone_verified_at",
         )
         read_only_fields = (
             "id",
@@ -1561,3 +1566,34 @@ class EmailOTPResendSerializer(serializers.Serializer):
 
 class OnboardingCompleteSerializer(serializers.Serializer):
     confirm = serializers.BooleanField()
+
+
+
+class PhoneOTPStartSerializer(serializers.Serializer):
+    phone = serializers.CharField()
+
+    def validate_phone(self, value):
+        v = (value or "").strip()
+        if v == "":
+            raise serializers.ValidationError("Phone number is required.")
+        # keep simple to match UI; you can tighten later (E.164 etc.)
+        if len(v) < 8:
+            raise serializers.ValidationError("Phone number looks too short.")
+        return v
+
+
+class PhoneOTPVerifySerializer(serializers.Serializer):
+    phone = serializers.CharField()
+    code = serializers.CharField()
+
+    def validate_phone(self, value):
+        v = (value or "").strip()
+        if v == "":
+            raise serializers.ValidationError("Phone number is required.")
+        return v
+
+    def validate_code(self, value):
+        v = (value or "").strip()
+        if len(v) != 6 or not v.isdigit():
+            raise serializers.ValidationError("OTP must be 6 digits.")
+        return v

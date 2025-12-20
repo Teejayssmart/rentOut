@@ -12,7 +12,7 @@ from django.views.decorators.cache import cache_page
 
 from propertylist_app.api import views
 
-from .views import EmailOTPVerifyView, EmailOTPResendView
+from .views import EmailOTPVerifyView, EmailOTPResendView,PhoneOTPStartView, PhoneOTPVerifyView
 
 
 from propertylist_app.api.views import (
@@ -232,8 +232,11 @@ urlpatterns = [
     
     path("health/", HealthCheckView.as_view(), name="health"),
     
+    #----Email & Phone OTP----
     path("auth/verify-otp/", EmailOTPVerifyView.as_view(), name="auth-verify-otp"),
     path("auth/resend-otp/", EmailOTPResendView.as_view(), name="auth-resend-otp"),
+    path("auth/phone/start/", PhoneOTPStartView.as_view(), name="auth-phone-start"),
+    path("auth/phone/verify/", PhoneOTPVerifyView.as_view(), name="auth-phone-verify"),
 
     
     # Home page summary + city list

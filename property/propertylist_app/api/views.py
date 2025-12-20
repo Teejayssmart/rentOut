@@ -1,5 +1,7 @@
 import json
 from datetime import datetime, timedelta
+import random
+
 
 import stripe
 from django.conf import settings
@@ -72,6 +74,7 @@ from propertylist_app.models import (
     UserProfile,
     EmailOTP,
     MessageThreadState,
+    PhoneOTP,
 )
 
 # Validators / helpers
@@ -113,6 +116,9 @@ from propertylist_app.api.serializers import (
     BookingReviewCreateSerializer,
     UserReviewListSerializer,
     UserReviewSummarySerializer,
+    PhoneOTPStartSerializer,
+    PhoneOTPVerifySerializer,
+    ProfilePageSerializer,
 )
 from propertylist_app.api.throttling import (
     ReviewCreateThrottle,
@@ -1948,12 +1954,9 @@ class MySavedRoomsView(generics.ListAPIView):
         ctx["request"] = self.request
         return ctx
 
-
+#---------------------
 # Messaging
 # --------------------
-
-
-
 class MessageThreadListCreateView(generics.ListCreateAPIView):
     """
     GET /api/messages/threads/
@@ -3599,3 +3602,75 @@ class EmailOTPResendView(APIView):
             fail_silently=True,
         )
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class PhoneOTPStartView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        serializer = PhoneOTPStartSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        phone = serializer.validated_data["phone"]
+
+        # generate 6-digit code
+        code = f"{random.randint(0, 999999):06d}"
+
+        PhoneOTP.objects.create(
+            user=request.user,
+            phone=phone,
+            code=code,
+            expires_at=timezone.now() + timedelta(minutes=10),
+        )
+
+        # your real SMS send goes here later (Twilio etc.)
+        # for now we just respond "sent" to match the UI flow
+
+        return Response(
+            {"detail": "OTP sent to phone."},
+            status=status.HTTP_200_OK,
+        )
+
+
+class PhoneOTPVerifyView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        serializer = PhoneOTPVerifySerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        phone = serializer.validated_data["phone"]
+        code = serializer.validated_data["code"]
+
+        otp = (
+            PhoneOTP.objects.filter(user=request.user, phone=phone, used_at__isnull=True)
+            .order_by("-created_at")
+            .first()
+        )
+
+        if not otp:
+            return Response({"detail": "OTP not found."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if otp.is_expired:
+            return Response({"detail": "OTP expired."}, status=status.HTTP_400_BAD_REQUEST)
+
+        otp.attempts = int(otp.attempts or 0) + 1
+        otp.save(update_fields=["attempts"])
+
+        if otp.code != code:
+            return Response({"detail": "Invalid OTP."}, status=status.HTTP_400_BAD_REQUEST)
+
+        otp.used_at = timezone.now()
+        otp.save(update_fields=["used_at"])
+
+        # update profile
+        profile, _ = UserProfile.objects.get_or_create(user=request.user)
+        profile.phone = phone
+        profile.phone_verified = True
+        profile.phone_verified_at = timezone.now()
+        profile.save(update_fields=["phone", "phone_verified", "phone_verified_at"])
+
+        return Response(
+            {"detail": "Phone number verification complete."},
+            status=status.HTTP_200_OK,
+        )
