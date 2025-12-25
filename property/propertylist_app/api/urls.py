@@ -31,7 +31,7 @@ from propertylist_app.api.views import (
 
     # Messaging
     MessageThreadListCreateView, MessageListCreateView, ThreadMarkReadView, StartThreadFromRoomView,ThreadMoveToBinView,ThreadRestoreFromBinView,ThreadSetLabelView,
-    MessageThreadStateView,MessageStatsView,
+    MessageThreadStateView,MessageStatsView,InboxListView,
 
     # Bookings & Availability
     create_booking, BookingListCreateView, BookingDetailView, BookingCancelView,
@@ -64,7 +64,7 @@ from propertylist_app.api.views import (
     DataExportStartView, DataExportLatestView, AccountDeletePreviewView, AccountDeleteConfirmView,
     
     # Notifications
-    NotificationListView, NotificationMarkReadView, NotificationMarkAllReadView,
+    NotificationListView, NotificationMarkReadView, NotificationMarkAllReadView,MyNotificationPreferencesView,
     
     
     HealthCheckView, OnboardingCompleteView,
@@ -133,6 +133,10 @@ urlpatterns = [
 
     #Message statistics (for homepage quick filters)
     path("messages/stats/",                                MessageStatsView.as_view(),             name="messages-stats"),
+    
+    # Inbox (merged notifications + messages)
+    path("inbox/", InboxListView.as_view(), name="inbox-list"),
+
 
 
 
@@ -179,7 +183,7 @@ urlpatterns = [
     path("users/me/deactivate/",      DeactivateAccountView.as_view(), name="user-deactivate"),
     path("users/me/onboarding/complete/", OnboardingCompleteView.as_view(), name="user-onboarding-complete"),
     path("users/me/profile-page/",    MyProfilePageView.as_view(), name="user-profile-page"),
-
+    path("users/me/notification-preferences/", MyNotificationPreferencesView.as_view(),name="my-notification-preferences",),
  
     # --- Soft delete room ---
     path("rooms/<int:pk>/soft-delete/", RoomSoftDeleteView.as_view(), name="room-soft-delete"),
@@ -255,6 +259,8 @@ urlpatterns = [
     
     path("my-listings/", MyListingsView.as_view(), name="my-listings"),
 
+
+    
 
 
 ]

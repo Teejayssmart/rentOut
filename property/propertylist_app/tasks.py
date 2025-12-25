@@ -10,16 +10,23 @@ except Exception:  # pragma: no cover
             class _TaskShim:
                 def delay(self, *a, **kw):
                     return func(*a, **kw)
+
                 def __call__(self, *a, **kw):
                     return func(*a, **kw)
+
             return _TaskShim()
         return decorator
 
 from propertylist_app.services.tasks import send_new_message_email, expire_paid_listings
 
+# ✅ IMPORTANT: import nested tasks so Celery registers them at worker startup
+from propertylist_app.notifications.tasks import notify_completed_viewings  # noqa: F401
+
+
 @shared_task(name="propertylist_app.send_new_message_email")
 def task_send_new_message_email(message_id: int) -> int:
     return send_new_message_email(message_id)
+
 
 @shared_task(name="propertylist_app.expire_paid_listings")
 def task_expire_paid_listings() -> int:

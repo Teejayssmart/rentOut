@@ -7,11 +7,9 @@ import stripe
 from django.conf import settings
 from django.contrib.auth import authenticate, get_user_model
 from django.db import transaction, connection
-from django.db.models import Q, Count, OuterRef, Subquery, Sum,Exists, Case, When, Value, CharField,Avg
+from django.db.models import Q, Count, OuterRef, Subquery, Sum,Exists, Case, When, Value, CharField,Avg,Max
 from datetime import date
 from decimal import Decimal
-
-
 
 
 from django.shortcuts import get_object_or_404
@@ -119,6 +117,8 @@ from propertylist_app.api.serializers import (
     PhoneOTPStartSerializer,
     PhoneOTPVerifySerializer,
     ProfilePageSerializer,
+    NotificationPreferencesSerializer,
+    InboxItemSerializer,
 )
 from propertylist_app.api.throttling import (
     ReviewCreateThrottle,
@@ -850,44 +850,12 @@ class ProviderWebhookView(APIView):
         except Exception:
             return Response({"ok": True, "note": "malformed stripe payload"})
 
-        if evt_type == "checkout.session.completed":
-            session = data_obj
-            payment_intent = session.get("payment_intent") or ""
-            metadata = session.get("metadata") or {}
-            payment_id = metadata.get("payment_id")
+        obj_id = data_obj.get("id")  # now it's accessed
 
-            if payment_id:
-                try:
-                    payment = Payment.objects.select_related("room", "user").get(id=payment_id)
-                except Payment.DoesNotExist:
-                    return Response({"ok": True, "note": "payment not found"})
+        return Response({"ok": True, "note": f"ignored stripe event {evt_type}", "object_id": obj_id})
 
-                # Idempotency: if this payment is already marked succeeded, do nothing.
-                if payment.status != "succeeded":
-                    payment.status = "succeeded"
-                    payment.stripe_payment_intent_id = payment_intent or ""
-                    payment.save(update_fields=["status", "stripe_payment_intent_id"])
 
-                    room = payment.room
-                    if room:
-                        today = timezone.now().date()
-                        base = room.paid_until if room.paid_until and room.paid_until > today else today
-                        room.paid_until = base + timedelta(days=30)
-                        room.save(update_fields=["paid_until"])
-                # If already succeeded, we just acknowledge with 200 without re-extending paid_until.
-
-            return Response({"ok": True})
-
-        if evt_type == "checkout.session.expired":
-            session = data_obj
-            metadata = session.get("metadata") or {}
-            payment_id = metadata.get("payment_id")
-            if payment_id:
-                Payment.objects.filter(id=payment_id, status="created").update(status="canceled")
-            return Response({"ok": True})
-
-        return Response({"ok": True, "note": f"ignored {evt_type}"})
-
+        
 
 # --------------------
 # Auth / Profile
@@ -1404,13 +1372,7 @@ class HomePageView(APIView):
 
 
 
-class ContactMessageCreateView(generics.CreateAPIView):
-    """
-    Public Contact Us endpoint.
-    Used by the Contact Us form on the marketing site.
-    """
-    permission_classes = [AllowAny]
-    serializer_class = ContactMessageSerializer
+
 
 
 class CityListView(APIView):
@@ -1795,6 +1757,97 @@ class MyListingsView(generics.ListAPIView):
 
 
 
+
+class InboxListView(APIView):
+    """
+    GET /api/inbox/
+
+    Returns a merged list:
+      - message threads (latest message per thread)
+      - notifications
+
+    Frontend can render them in one inbox screen.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+
+        # 1) notifications
+        notif_qs = (
+            Notification.objects
+            .filter(user=user)
+            .order_by("-created_at")
+            .values("id", "type", "title", "body", "is_read", "created_at")
+        )
+
+        notif_items = []
+        for n in notif_qs[:200]:
+            notif_items.append(
+                {
+                    "kind": "notification",
+                    "created_at": n["created_at"],
+                    "title": n.get("title") or "Notification",
+                    "preview": (n.get("body") or "")[:140],
+                    "is_read": bool(n.get("is_read")),
+                    "notification_id": n["id"],
+                    "deep_link": "/inbox?focus=notification&id=%s" % n["id"],
+                }
+            )
+
+        # 2) message threads (use latest message timestamp as created_at)
+        #    assumes related name: thread.messages (your code shows thread.messages usage)
+        threads = (
+            MessageThread.objects
+            .filter(participants=user)
+            .annotate(last_msg_at=Max("messages__created_at"))
+            .order_by("-last_msg_at")
+        )[:200]
+
+        # unread count per thread for this user
+        # unread = messages not sent by me AND I have no MessageRead record for them
+        thread_items = []
+        for t in threads:
+            last_msg = (
+                t.messages.order_by("-created_at").first()
+                if hasattr(t, "messages") else None
+            )
+            if not last_msg:
+                continue
+
+            unread = (
+                t.messages
+                .exclude(sender=user)
+                .exclude(reads__user=user)
+                .count()
+            )
+
+            other_party = (
+                t.participants.exclude(id=user.id).first()
+                if hasattr(t, "participants") else None
+            )
+            title = getattr(other_party, "username", None) or "Message"
+
+            thread_items.append(
+                {
+                    "kind": "thread",
+                    "created_at": getattr(last_msg, "created_at", None) or getattr(t, "last_msg_at", None),
+                    "title": title,
+                    "preview": (getattr(last_msg, "body", "") or "")[:140],
+                    "is_read": unread == 0,
+                    "thread_id": t.id,
+                    "deep_link": "/inbox?focus=thread&id=%s" % t.id,
+                }
+            )
+
+        # merge + sort
+        merged = notif_items + thread_items
+        merged.sort(key=lambda x: (x["created_at"] is None, x["created_at"]), reverse=True)
+
+        ser = InboxItemSerializer(merged[:250], many=True)
+        return Response({"results": ser.data}, status=status.HTTP_200_OK)
+
+
 class FindAddressView(APIView):
     """
     GET /api/search/find-address/?postcode=SW1A1AA
@@ -2128,7 +2181,13 @@ class MessageThreadListCreateView(generics.ListCreateAPIView):
         thread.participants.set(participants)
 
 
-
+class ContactMessageCreateView(generics.CreateAPIView):
+    """
+    Public Contact Us endpoint.
+    Used by the Contact Us form on the marketing site.
+    """
+    permission_classes = [AllowAny]
+    serializer_class = ContactMessageSerializer
 
 
 
@@ -2290,6 +2349,9 @@ class MessageListCreateView(generics.ListCreateAPIView):
             id=self.kwargs["thread_id"]
         )
         serializer.save(thread=thread, sender=self.request.user)
+
+        
+
 
 
 class ThreadMarkReadView(APIView):
@@ -2459,7 +2521,24 @@ class StartThreadFromRoomView(APIView):
 
         body = (request.data or {}).get("body", "").strip()
         if body:
-            Message.objects.create(thread=thread, sender=request.user, body=body)
+            msg = Message.objects.create(thread=thread, sender=request.user, body=body)
+
+            # Notification: new message (respects Account -> Notifications -> Messages)
+            try:
+                recipients = thread.participants.exclude(id=request.user.id)
+                for recipient in recipients:
+                    profile, _ = UserProfile.objects.get_or_create(user=recipient)
+                    if getattr(profile, "notify_messages", True):
+                        Notification.objects.create(
+                            user=recipient,
+                            type="message",
+                            title="New message",
+                            body=f"You received a new message from {request.user.get_username()}.",
+                        )
+            except Exception:
+                # Never fail messaging because notification failed
+                pass
+
 
         return Response(MessageThreadSerializer(thread, context={"request": request}).data)
 
@@ -2501,13 +2580,24 @@ class BookingListCreateView(generics.ListCreateAPIView):
                 if active >= slot_locked.max_bookings:
                     raise ValidationError({"detail": "This slot is fully booked."})
 
-                serializer.save(
+                booking = serializer.save(
                     user=self.request.user,
                     room=slot_locked.room,
                     slot=slot_locked,
                     start=slot_locked.start,
                     end=slot_locked.end,
                 )
+
+            # Notification: booking confirmation (respects Account -> Notifications -> Confirmations)
+            profile, _ = UserProfile.objects.get_or_create(user=self.request.user)
+            if getattr(profile, "notify_confirmations", True):
+                Notification.objects.create(
+                    user=self.request.user,
+                    type="confirmation",
+                    title="Booking confirmed",
+                    body="Your booking has been successfully created.",
+                )
+
             return
 
         room_id = self.request.data.get("room")
@@ -2532,7 +2622,17 @@ class BookingListCreateView(generics.ListCreateAPIView):
         if conflicts:
             raise ValidationError({"detail": "Selected dates clash with an existing booking."})
 
-        serializer.save(user=self.request.user, room=room)
+        booking = serializer.save(user=self.request.user, room=room)
+
+        # Notification: booking confirmation (respects Account -> Notifications -> Confirmations)
+        profile, _ = UserProfile.objects.get_or_create(user=self.request.user)
+        if getattr(profile, "notify_confirmations", True):
+            Notification.objects.create(
+                user=self.request.user,
+                type="confirmation",
+                title="Booking confirmed",
+                body="Your booking has been successfully created.",
+            )
 
 
 class BookingDetailView(generics.RetrieveAPIView):
@@ -2963,6 +3063,22 @@ def stripe_webhook(request):
                         base = room.paid_until if (room.paid_until and room.paid_until > today) else today
                         room.paid_until = base + timedelta(days=30)
                         room.save(update_fields=["paid_until"])
+                        # Notification: payment confirmation (respects Account -> Notifications -> Confirmations)
+                        try:
+                            pay_user = getattr(payment, "user", None)
+                            if pay_user:
+                                profile, _ = UserProfile.objects.get_or_create(user=pay_user)
+                                if getattr(profile, "notify_confirmations", True):
+                                    Notification.objects.create(
+                                        user=pay_user,
+                                        type="confirmation",
+                                        title="Payment confirmed",
+                                        body="Your payment was successful and your listing has been updated.",
+                                    )
+                        except Exception:
+                            # Never break webhook processing because of notification issues
+                            pass
+
 
     elif event["type"] == "checkout.session.expired":
         session = event["data"]["object"]
@@ -3674,3 +3790,20 @@ class PhoneOTPVerifyView(APIView):
             {"detail": "Phone number verification complete."},
             status=status.HTTP_200_OK,
         )
+        
+        
+class MyNotificationPreferencesView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        profile, _ = UserProfile.objects.get_or_create(user=request.user)
+        ser = NotificationPreferencesSerializer(profile)
+        return Response(ser.data, status=status.HTTP_200_OK)
+
+    def patch(self, request):
+        profile, _ = UserProfile.objects.get_or_create(user=request.user)
+        ser = NotificationPreferencesSerializer(profile, data=request.data, partial=True)
+        ser.is_valid(raise_exception=True)
+        ser.save()
+        return Response(ser.data, status=status.HTTP_200_OK)
+        

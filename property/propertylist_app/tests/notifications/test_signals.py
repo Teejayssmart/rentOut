@@ -3,6 +3,7 @@ from unittest.mock import patch
 from django.contrib.auth import get_user_model
 from propertylist_app.models import MessageThread, Message, Room, RoomCategorie, Notification as InAppNotification
 from notifications.models import NotificationTemplate, OutboundNotification
+from django.utils import timezone
 
 pytestmark = pytest.mark.django_db
 
@@ -44,7 +45,15 @@ def test_new_booking_signal_queues_owner_and_booker_emails():
 
     from propertylist_app.models import Booking
     with patch("notifications.services.send_mail", return_value=1):
-        Booking.objects.create(user=booker, room=room, start=room.available_from, end=room.available_from)
+            start = timezone.now()
+            end = start + timezone.timedelta(hours=1)
+
+            Booking.objects.create(
+                user=booker,
+                room=room,
+                start=start,
+                end=end,
+            )
 
     assert OutboundNotification.objects.filter(template_key="booking.new", user=owner).exists()
     assert OutboundNotification.objects.filter(template_key="booking.confirmation", user=booker).exists()

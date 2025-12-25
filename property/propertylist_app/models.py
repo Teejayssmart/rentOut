@@ -600,6 +600,11 @@ class UserProfile(models.Model):
     terms_accepted_at = models.DateTimeField(null=True, blank=True)
     terms_version = models.CharField(max_length=20, blank=True, default="")
     marketing_consent = models.BooleanField(default=False)
+    notify_rentout_updates = models.BooleanField(default=True)
+    notify_reminders = models.BooleanField(default=True)
+    notify_messages = models.BooleanField(default=True)
+    notify_confirmations = models.BooleanField(default=True)
+
     onboarding_completed = models.BooleanField(default=False)
 
     def __str__(self):

@@ -1,11 +1,10 @@
 from django.contrib.auth import get_user_model, password_validation
 User = get_user_model()
-
 from rest_framework import serializers
 from django.contrib.contenttypes.models import ContentType
-
 import re
 from rest_framework import serializers
+
 
 
 
@@ -1093,6 +1092,12 @@ class UserProfileSerializer(serializers.ModelSerializer):
             "email_verified",
             "phone_verified",
             "phone_verified_at",
+            "marketing_consent",
+            "notify_rentout_updates",
+            "notify_reminders",
+            "notify_messages",
+            "notify_confirmations",
+
         )
         read_only_fields = (
             "id",
@@ -1597,3 +1602,35 @@ class PhoneOTPVerifySerializer(serializers.Serializer):
         if len(v) != 6 or not v.isdigit():
             raise serializers.ValidationError("OTP must be 6 digits.")
         return v
+    
+    
+class NotificationPreferencesSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = UserProfile
+        fields = (
+            "marketing_consent",
+            "notify_rentout_updates",
+            "notify_reminders",
+            "notify_messages",
+            "notify_confirmations",
+        )
+
+
+
+
+class InboxItemSerializer(serializers.Serializer):
+    kind = serializers.ChoiceField(choices=["thread", "notification"])
+    created_at = serializers.DateTimeField()
+
+    # common display fields
+    title = serializers.CharField(allow_blank=True, required=False)
+    preview = serializers.CharField(allow_blank=True, required=False)
+    is_read = serializers.BooleanField()
+
+    # ids so frontend can open the right thing
+    thread_id = serializers.IntegerField(required=False)
+    notification_id = serializers.IntegerField(required=False)
+
+    # optional helper for routing in frontend
+    deep_link = serializers.CharField(allow_blank=True, required=False)
+    

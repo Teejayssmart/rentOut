@@ -16,6 +16,8 @@ import os
 from dotenv import load_dotenv
 from celery.schedules import crontab
 
+
+
 TESTING = bool(os.environ.get("PYTEST_CURRENT_TEST"))
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -64,6 +66,7 @@ INSTALLED_APPS = [
     
     'drf_spectacular',
     "notifications.apps.NotificationsConfig",
+    "django_celery_beat",
   
     
 ]
@@ -352,6 +355,11 @@ CELERY_TASK_ALWAYS_EAGER = False
 CELERY_TASK_TIME_LIMIT = 60
 CELERY_TASK_SOFT_TIME_LIMIT = 45
 
+CELERY_BROKER_URL = "redis://127.0.0.1:6379/0"
+CELERY_RESULT_BACKEND = "redis://127.0.0.1:6379/1"
+CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
+
+
 # Route classes of tasks to separate queues (optional but helpful)
 CELERY_TASK_ROUTES = {
     "notifications.tasks.*": {"queue": "emails"},
@@ -390,7 +398,30 @@ CACHE_KEY_PREFIX = "rentout"
 CACHE_DEFAULT_TTL = 60  # seconds; safe default for list/detail
 CACHE_SEARCH_TTL = 120  # seconds; search is slightly longer
     
-    
+ 
 
+CELERY_BEAT_SCHEDULE = {
+    "notify-upcoming-bookings-hourly": {
+        "task": "propertylist_app.services.tasks.notify_upcoming_bookings",
+        "schedule": crontab(minute=0),  # every hour
+        "args": (24,),  # look 24 hours ahead
+    },
+}
+
+# Frontend base URL used for links in emails
+FRONTEND_BASE_URL = "https://rentout.co.uk"  # change later
+# property/settings.py
+FRONTEND_BASE_URL = "https://rentout.co.uk"   # change to your real domain
+
+   
+
+
+CELERY_BEAT_SCHEDULE = {
+    "notify-completed-viewings-hourly": {
+        "task": "propertylist_app.notifications.tasks.notify_completed_viewings",
+        "schedule": crontab(minute=0),  # every hour
+        "args": (),
+    },
+}
 
 

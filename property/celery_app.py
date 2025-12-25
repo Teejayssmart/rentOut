@@ -11,7 +11,10 @@ app = Celery("property")
 app.config_from_object("django.conf:settings", namespace="CELERY")
 
 # Auto-discover tasks.py in installed apps
-app.autodiscover_tasks()
+app.autodiscover_tasks([
+    "propertylist_app",
+    "propertylist_app.notifications",
+])
 
 # (Optional) Define schedules here if you prefer centralised config
 # NOTE: You can also keep schedules in settings.py; choose ONE place.
