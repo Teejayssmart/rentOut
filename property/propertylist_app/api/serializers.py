@@ -252,6 +252,8 @@ class RoomSerializer(serializers.ModelSerializer):
     )
     is_saved = serializers.SerializerMethodField(read_only=True)
     distance_miles = serializers.SerializerMethodField(read_only=True)
+    allow_search_indexing_effective = serializers.SerializerMethodField(read_only=True)
+
 
     # extra fields for Find a Room cards
     owner_name = serializers.SerializerMethodField(read_only=True)
@@ -373,11 +375,22 @@ class RoomSerializer(serializers.ModelSerializer):
 
 
     def validate_location(self, value):
-        parts = str(value or "").strip().split()
-        if not parts:
+        text = str(value or "").strip()
+        if not text:
             raise serializers.ValidationError("Location is required.")
-        normalize_uk_postcode(parts[-1])
+
+        parts = text.split()
+
+        #  Accept both "... SW1A2AA" and "... SW1A 2AA"
+        if len(parts) >= 2 and len(parts[-1]) <= 3:
+            # last token looks like inward code ("2AA"), so combine last two tokens
+            candidate = f"{parts[-2]} {parts[-1]}"
+        else:
+            candidate = parts[-1]
+
+        normalize_uk_postcode(candidate)
         return value
+
 
     def validate_property_type(self, value):
         allowed = {c[0] for c in Room._meta.get_field("property_type").choices}
@@ -674,6 +687,23 @@ class RoomSerializer(serializers.ModelSerializer):
             )
 
         return normalised
+    
+    def get_allow_search_indexing_effective(self, obj):
+        """
+        Effective indexing rule:
+        - if listing override is set (True/False), use it
+        - else fall back to owner's profile default
+        """
+        override = getattr(obj, "allow_search_indexing_override", None)
+        if override is not None:
+            return bool(override)
+
+        owner = getattr(obj, "property_owner", None)
+        profile = getattr(owner, "profile", None) if owner else None
+        if profile is None:
+            return True  # safe default
+        return bool(getattr(profile, "allow_search_indexing_default", True))
+
 
 
 # --------------------
@@ -1010,10 +1040,17 @@ class PasswordResetConfirmSerializer(serializers.Serializer):
     new_password = serializers.CharField(write_only=True)
 
 
+        
 class UserSerializer(serializers.ModelSerializer):
+    has_password = serializers.SerializerMethodField()
+
     class Meta:
         model = User
-        fields = ["id", "username", "email", "first_name", "last_name"]
+        fields = ["id", "username", "email", "first_name", "last_name", "has_password"]
+
+    def get_has_password(self, obj):
+        return obj.has_usable_password()
+        
 
 
 
@@ -1451,6 +1488,46 @@ class PaymentSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
+
+
+class PaymentTransactionListSerializer(serializers.ModelSerializer):
+    listing_title = serializers.CharField(source="room.title", read_only=True)
+    transaction_id = serializers.CharField(source="stripe_payment_intent_id", read_only=True)
+
+    class Meta:
+        model = Payment
+        fields = [
+            "id",
+            "listing_title",
+            "transaction_id",
+            "status",
+            "amount",
+            "currency",
+            "created_at",
+        ]
+
+
+
+class PaymentTransactionDetailSerializer(serializers.ModelSerializer):
+    listing_title = serializers.CharField(source="room.title", read_only=True)
+    transaction_id = serializers.CharField(source="stripe_payment_intent_id", read_only=True)
+
+    class Meta:
+        model = Payment
+        fields = [
+            "id",
+            "listing_title",
+            "transaction_id",
+            "status",
+            "amount",
+            "currency",
+            "created_at",
+            "stripe_checkout_session_id",
+        ]
+
+
+
+
 class NotificationSerializer(serializers.ModelSerializer):
     class Meta:
         model = Notification
@@ -1533,6 +1610,21 @@ class GDPRDeleteConfirmSerializer(serializers.Serializer):
     idempotency_key = serializers.CharField(
         required=False, allow_blank=True, max_length=64
     )
+
+
+class PrivacyPreferencesSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = UserProfile
+        fields = (
+            "read_receipts_enabled",
+            "allow_search_indexing_default",
+            "preferred_language",
+        )
+
+
+        # And ensure it's included in Meta.fields, e.g.
+        # fields = ("read_receipts_enabled", "allow_search_indexing_default", "preferred_language", ...)
+
 
 
 # --- OTP Serializers (single, final versions) ---

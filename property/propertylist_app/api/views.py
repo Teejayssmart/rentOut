@@ -38,6 +38,8 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework import status, permissions
 from rest_framework.generics import ListAPIView
+from rest_framework.generics import RetrieveAPIView
+
 
 
 # Services
@@ -49,6 +51,8 @@ from propertylist_app.services.captcha import verify_captcha
 from propertylist_app.services.gdpr import build_export_zip, preview_erasure, perform_erasure
 from propertylist_app.utils.cached_views import CachedAnonymousGETMixin
 from propertylist_app.utils.cache import make_cache_key, get_cached_json, set_cached_json
+
+
 
 # Models
 from propertylist_app.models import (
@@ -119,6 +123,8 @@ from propertylist_app.api.serializers import (
     ProfilePageSerializer,
     NotificationPreferencesSerializer,
     InboxItemSerializer,
+    PaymentTransactionListSerializer,
+    PrivacyPreferencesSerializer,
 )
 from propertylist_app.api.throttling import (
     ReviewCreateThrottle,
@@ -144,6 +150,7 @@ from .serializers import (
     SearchFiltersSerializer,
     OnboardingCompleteSerializer,
     ContactMessageSerializer,
+    PaymentTransactionDetailSerializer,
 )
 
 from .serializers import EmailOTPVerifySerializer, EmailOTPResendSerializer
@@ -897,46 +904,47 @@ class RegistrationView(generics.CreateAPIView):
 
 
 # ---------- Social sign-up stubs (Google / Apple) ----------  
-class GoogleRegisterView(APIView):                             
-    """                                                         
-    POST /api/auth/register/google/                             
-    Stub endpoint for 'Register with Google' button.            
-    For now it just returns 501 so FE can wire the button and   
-    you can implement real Google OAuth later.                  
-    """                                                         
-    permission_classes = [AllowAny]                             
-    throttle_classes = [RegisterAnonThrottle]                   
-                                                                
-    def post(self, request, *args, **kwargs):                   
-        return Response(                                        
-            {                                                   
-                "detail": "Google sign-up not implemented yet.",
-                "hint": "Button is wired. Implement OAuth later",
-            },                                                  
-            status=status.HTTP_501_NOT_IMPLEMENTED,             
-        )                                                       #
-                                                                
-                                                                
-class AppleRegisterView(APIView):                               
-    """                                                         
-    POST /api/auth/register/apple/                              
-    Stub endpoint for 'Register with Apple' button.             
-    Same behaviour as Google stub (501 for now).                
-    """                                                         
-    permission_classes = [AllowAny]                             
-    throttle_classes = [RegisterAnonThrottle]                   
-                                                                
-    def post(self, request, *args, **kwargs):                   
-        return Response(                                        
-            {                                                   
-                "detail": "Apple sign-up not implemented yet.", 
-                "hint": "Button is wired. Implement OAuth later",
-            },                                                  
-            status=status.HTTP_501_NOT_IMPLEMENTED,             
-        )                                                       
+class GoogleRegisterView(APIView):
+    permission_classes = [AllowAny]
+    throttle_classes = [RegisterAnonThrottle]
 
+    def post(self, request, *args, **kwargs):
+        # PROD: keep stub
+        if not getattr(settings, "ENABLE_SOCIAL_AUTH_STUB", False):
+            return Response(
+                {"detail": "Google sign-up not implemented yet."},
+                status=status.HTTP_501_NOT_IMPLEMENTED,
+            )
 
+        # DEV/TEST mock: accept email, create user if needed, return JWT tokens
+        email = (request.data.get("email") or "").strip().lower()
+        if not email:
+            return Response({"email": ["This field is required."]}, status=status.HTTP_400_BAD_REQUEST)
 
+        User = get_user_model()
+        user, created = User.objects.get_or_create(
+            email=email,
+            defaults={"username": email.split("@")[0]},
+        )
+
+        # ensure profile exists and mark email verified (so LoginView rules don’t block)
+        profile, _ = UserProfile.objects.get_or_create(user=user)
+        if not profile.email_verified:
+            profile.email_verified = True
+            profile.save(update_fields=["email_verified"])
+
+        # social users should not have a password by default
+        if created or user.has_usable_password():
+            user.set_unusable_password()
+            user.save(update_fields=["password"])
+
+        refresh = RefreshToken.for_user(user)
+        return Response({"refresh": str(refresh), "access": str(refresh.access_token)}, status=status.HTTP_200_OK)                                                     #
+                                                                
+                                                                
+class AppleRegisterView(GoogleRegisterView):
+    pass
+            
 
 
 # --------------------
@@ -2695,7 +2703,7 @@ class BookingSuspendView(APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        # ✅ idempotent
+        #  idempotent
         if booking.status != Booking.STATUS_SUSPENDED:
             booking.status = Booking.STATUS_SUSPENDED
 
@@ -2913,6 +2921,49 @@ class ChangePasswordView(APIView):
         return Response({"detail": "Password updated. Please log in again."})
 
 
+class CreatePasswordView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        user = request.user
+
+        # Social users may have no password yet
+        if user.has_usable_password():
+            return Response(
+                {"detail": "Password already exists. Use change password instead."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        new_password = request.data.get("new_password")
+        confirm_password = request.data.get("confirm_password")
+
+        if not new_password or not confirm_password:
+            return Response(
+                {"detail": "new_password and confirm_password are required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if new_password != confirm_password:
+            return Response(
+                {"confirm_password": "Passwords do not match."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        from django.contrib.auth.password_validation import validate_password
+        from django.core.exceptions import ValidationError as DjangoValidationError
+
+        try:
+            validate_password(new_password, user=user)
+        except DjangoValidationError as e:
+            return Response({"new_password": list(e.messages)}, status=status.HTTP_400_BAD_REQUEST)
+
+        user.set_password(new_password)
+        user.save(update_fields=["password"])
+
+        return Response({"detail": "Password created. You can now log in with email and password."})
+
+
+
 class DeactivateAccountView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -2975,7 +3026,7 @@ class CreateListingCheckoutSessionView(APIView):
 
 
         # Optional: read a selected saved card id from the body (for future use)
-        payment_method_id = request.data.get("payment_method_id")  # may be None
+        _payment_method_id = request.data.get("payment_method_id")  # may be None
         # (Not yet used, but here for future extension.)
 
         # Create the Stripe Checkout Session
@@ -3139,6 +3190,177 @@ class SavedCardsListView(APIView):
             )
 
         return Response({"cards": cards})
+
+
+class DetachSavedCardView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pm_id):
+        profile = getattr(request.user, "profile", None)
+        if not profile or not profile.stripe_customer_id:
+            return Response(
+                {"detail": "No Stripe customer found for this user."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            stripe.PaymentMethod.detach(pm_id)
+        except Exception:
+            return Response(
+                {"detail": "Unable to detach saved card."},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        return Response({"detail": "Card removed."}, status=status.HTTP_200_OK)
+
+
+
+
+class PaymentTransactionsListView(ListAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = PaymentTransactionListSerializer
+
+    def get_queryset(self):
+        qs = Payment.objects.filter(user=self.request.user).select_related("room").order_by("-created_at")
+
+        q = self.request.query_params.get("q")
+        if q:
+            qs = qs.filter(
+                Q(room__title__icontains=q) |
+                Q(stripe_payment_intent_id__icontains=q) |
+                Q(stripe_checkout_session_id__icontains=q)
+            )
+
+        range_key = self.request.query_params.get("range")
+        now = timezone.now()
+
+        if range_key == "today":
+            start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            end = now
+            qs = qs.filter(created_at__gte=start, created_at__lte=end)
+
+        elif range_key == "yesterday":
+            start = (now - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+            end = start + timedelta(days=1)
+            qs = qs.filter(created_at__gte=start, created_at__lt=end)
+
+        elif range_key == "last_7_days":
+            qs = qs.filter(created_at__gte=now - timedelta(days=7), created_at__lte=now)
+
+        elif range_key == "this_month":
+            start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            qs = qs.filter(created_at__gte=start, created_at__lte=now)
+
+        elif range_key == "custom":
+            start = self.request.query_params.get("start")
+            end = self.request.query_params.get("end")
+            if start and end:
+                qs = qs.filter(created_at__date__gte=start, created_at__date__lte=end)
+
+        return qs
+
+
+
+class PaymentTransactionDetailView(RetrieveAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = PaymentTransactionDetailSerializer
+
+    def get_queryset(self):
+        return Payment.objects.filter(user=self.request.user).select_related("room")
+
+
+class CreateSetupIntentView(APIView):
+    """
+    Creates a Stripe SetupIntent for the logged-in user so they can add/save a card
+    using Stripe Elements (do NOT send raw card details to backend).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        user = request.user
+
+        # Ensure profile exists (same pattern you used in checkout)
+        profile = getattr(user, "profile", None)
+        if profile is None:
+            profile = user.profile = UserProfile.objects.create(user=user)
+
+        # Ensure Stripe Customer exists
+        if not profile.stripe_customer_id:
+            stripe_customer = stripe.Customer.create(
+                email=user.email or None,
+                name=user.get_full_name() or user.username,
+            )
+
+            stripe_customer_id = getattr(stripe_customer, "id", None)
+            if not stripe_customer_id:
+                return Response(
+                    {"detail": "Unable to create Stripe customer."},
+                    status=status.HTTP_502_BAD_GATEWAY,
+                )
+
+            profile.stripe_customer_id = str(stripe_customer_id)
+            profile.save(update_fields=["stripe_customer_id"])
+
+        # Create SetupIntent (used by Stripe Elements to save a card)
+        try:
+            setup_intent = stripe.SetupIntent.create(
+                customer=profile.stripe_customer_id,
+                payment_method_types=["card"],
+                usage="off_session",
+            )
+        except Exception:
+            return Response(
+                {"detail": "Unable to create setup intent."},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        client_secret = getattr(setup_intent, "client_secret", None)
+        if not client_secret:
+            # if stripe returned a dict instead of an object in some mocks
+            client_secret = setup_intent.get("client_secret") if isinstance(setup_intent, dict) else None
+
+        if not client_secret:
+            return Response(
+                {"detail": "Setup intent missing client secret."},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        return Response(
+            {
+                "clientSecret": client_secret,
+                "publishableKey": getattr(settings, "STRIPE_PUBLISHABLE_KEY", ""),
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+
+class SetDefaultSavedCardView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pm_id):
+        profile = getattr(request.user, "profile", None)
+        if not profile or not profile.stripe_customer_id:
+            return Response(
+                {"detail": "No Stripe customer found for this user."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            stripe.Customer.modify(
+                profile.stripe_customer_id,
+                invoice_settings={"default_payment_method": pm_id},
+            )
+        except Exception:
+            return Response(
+                {"detail": "Unable to set default card."},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        return Response({"detail": "Default card updated."}, status=status.HTTP_200_OK)
+
+
+
 
 
 
@@ -3806,4 +4028,22 @@ class MyNotificationPreferencesView(APIView):
         ser.is_valid(raise_exception=True)
         ser.save()
         return Response(ser.data, status=status.HTTP_200_OK)
+
+
+
+
+
+class MyPrivacyPreferencesView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        profile = request.user.profile
+        return Response(PrivacyPreferencesSerializer(profile).data)
+
+    def patch(self, request):
+        profile = request.user.profile
+        serializer = PrivacyPreferencesSerializer(profile, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data, status=status.HTTP_200_OK)
         

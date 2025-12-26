@@ -46,12 +46,15 @@ from propertylist_app.api.views import (
     PasswordResetRequestView, PasswordResetConfirmView,
     MeView, UserProfileView,
     UserAvatarUploadView, ChangeEmailView, ChangePasswordView, DeactivateAccountView, MyRoomsView,GoogleRegisterView,AppleRegisterView,MyProfilePageView,
+    CreatePasswordView,
+    
 
     # Soft delete
     RoomSoftDeleteView,RoomUnpublishView,
 
     # Payments
-    CreateListingCheckoutSessionView, stripe_webhook, StripeSuccessView, StripeCancelView, SavedCardsListView,
+    CreateListingCheckoutSessionView, stripe_webhook, StripeSuccessView, StripeCancelView, SavedCardsListView, CreateSetupIntentView,DetachSavedCardView,
+    PaymentTransactionsListView,PaymentTransactionDetailView,SetDefaultSavedCardView,
 
     # Webhooks
     webhook_in, ProviderWebhookView,
@@ -61,7 +64,8 @@ from propertylist_app.api.views import (
     RoomModerationStatusView, OpsStatsView,
     
     # --- GDPR / Privacy ---
-    DataExportStartView, DataExportLatestView, AccountDeletePreviewView, AccountDeleteConfirmView,
+    DataExportStartView, DataExportLatestView, AccountDeletePreviewView, AccountDeleteConfirmView,MyPrivacyPreferencesView,
+
     
     # Notifications
     NotificationListView, NotificationMarkReadView, NotificationMarkAllReadView,MyNotificationPreferencesView,
@@ -184,6 +188,8 @@ urlpatterns = [
     path("users/me/onboarding/complete/", OnboardingCompleteView.as_view(), name="user-onboarding-complete"),
     path("users/me/profile-page/",    MyProfilePageView.as_view(), name="user-profile-page"),
     path("users/me/notification-preferences/", MyNotificationPreferencesView.as_view(),name="my-notification-preferences",),
+    path("users/me/create-password/", CreatePasswordView.as_view(), name="user-create-password"),
+
  
     # --- Soft delete room ---
     path("rooms/<int:pk>/soft-delete/", RoomSoftDeleteView.as_view(), name="room-soft-delete"),
@@ -208,6 +214,13 @@ urlpatterns = [
     path("payments/success/",                 StripeSuccessView.as_view(),            name="payments-success"),
     path("payments/cancel/",                  StripeCancelView.as_view(),             name="payments-cancel"),
     path("payments/saved-cards/",             SavedCardsListView.as_view(),           name="payments-saved-cards"),
+    path("payments/setup-intent/",            CreateSetupIntentView.as_view(), name="payments-setup-intent"),
+    path("payments/saved-cards/<str:pm_id>/detach/",DetachSavedCardView.as_view(), name="payments-saved-card-detach",),
+    path("payments/transactions/",            PaymentTransactionsListView.as_view(), name="payments-transactions"),
+    path("payments/transactions/<int:pk>/",   PaymentTransactionDetailView.as_view(),name="payments-transaction-detail",),
+    path("payments/saved-cards/<str:pm_id>/set-default/",SetDefaultSavedCardView.as_view(), name="payments-saved-card-set-default",),
+
+
 
     # --- Webhooks ---
     path("webhooks/incoming/",                webhook_in,                    name="webhook-incoming"),
@@ -227,6 +240,8 @@ urlpatterns = [
     path("users/me/export/latest/",  DataExportLatestView.as_view(),    name="me-export-latest"),
     path("users/me/delete/preview/", AccountDeletePreviewView.as_view(), name="me-delete-preview"),
     path("users/me/delete/confirm/", AccountDeleteConfirmView.as_view(), name="me-delete-confirm"),
+    path("users/me/privacy-preferences/",MyPrivacyPreferencesView.as_view(),name="my-privacy-preferences",),
+
 
     # --- Notifications ---
     path("notifications/",               NotificationListView.as_view(),        name="notifications-list"),

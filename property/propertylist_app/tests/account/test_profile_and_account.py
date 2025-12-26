@@ -99,12 +99,20 @@ def test_change_password_success_mismatch_and_bad_current_and_login_with_new_pas
     })
     assert r_ok.status_code == 200
 
-    # Can log in with new password
+   # Can log in with new password
+    # Ensure profile exists + email is verified (your login flow can require this)
+    UserProfile.objects.update_or_create(user=u, defaults={"email_verified": True})
+
     login_url = reverse("v1:auth-login")
     c2 = APIClient()
-    r_login = c2.post(login_url, {"username": "pwuser", "password": "Newpass12345!"}, format="json")
+    r_login = c2.post(
+        login_url,
+        {"identifier": "pwuser", "password": "Newpass12345!"},
+        format="json",
+    )
     assert r_login.status_code == 200
     assert "access" in r_login.data and "refresh" in r_login.data
+
 
 
 @pytest.mark.django_db

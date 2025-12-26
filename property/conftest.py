@@ -5,6 +5,8 @@ import pytest
 from django.core.cache import cache
 from rest_framework.test import APIClient
 from django.contrib.auth import get_user_model
+from propertylist_app.models import UserProfile
+
 
 
 @pytest.fixture(autouse=True)
@@ -39,20 +41,36 @@ def api_client():
 @pytest.fixture
 def user(db):
     User = get_user_model()
-    return User.objects.create_user(
+    u = User.objects.create_user(
         username="alice",
         email="alice@example.com",
         password="pass12345",
         first_name="Alice",
     )
+    UserProfile.objects.get_or_create(user=u)
+    return u
+
 
 
 @pytest.fixture
 def user2(db):
     User = get_user_model()
-    return User.objects.create_user(
+    u = User.objects.create_user(
         username="bob",
         email="bob@example.com",
         password="pass12345",
         first_name="Bob",
     )
+    UserProfile.objects.get_or_create(user=u)
+    return u
+
+
+
+@pytest.fixture
+def auth_client(api_client, user):
+    """
+    Returns an APIClient already authenticated as `user`.
+    Uses force_authenticate so we don’t depend on OTP/email verification.
+    """
+    api_client.force_authenticate(user=user)
+    return api_client

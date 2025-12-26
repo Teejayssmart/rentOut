@@ -21,26 +21,29 @@ from drf_spectacular.views import (
 urlpatterns = [
     path("admin/", admin.site.urls),
 
-    # 1) Plain include with NO namespace (so tests can reverse simple names)
-    #    The ", None" prevents Django from auto-using app_name as a namespace.
-    path("api/", include(("propertylist_app.api.urls", None))),
+    # Primary API (namespaced)
+    path(
+        "api/",
+        include(("propertylist_app.api.urls", "api"), namespace="api"),
+    ),
 
-    # 2) Explicit namespace "api" at the same base path
-    path("api/", include(("propertylist_app.api.urls", "api"), namespace="api")),
+    # Optional versioned API (safe to keep)
+    path(
+        "api/v1/",
+        include(("propertylist_app.api.urls", "api"), namespace="v1"),
+    ),
 
-    # 3) Versioned include with its own unique namespace
-    path("api/v1/", include(("propertylist_app.api.urls", "api"), namespace="v1")),
-
-    # JWT-only auth routes
+    # JWT auth routes
     path("api/auth/token/", TokenObtainPairView.as_view(), name="token_obtain_pair"),
     path("api/auth/token/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
     path("api/auth/token/verify/", TokenVerifyView.as_view(), name="token_verify"),
 
-    # OpenAPI schema + UIs
+    # OpenAPI schema + docs
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
     path("api/docs/", SpectacularSwaggerView.as_view(url_name="schema"), name="swagger-ui"),
     path("api/redoc/", SpectacularRedocView.as_view(url_name="schema"), name="redoc"),
 ]
+
 
 
 if settings.DEBUG:

@@ -5,6 +5,9 @@ from .settings import *  # noqa
 DEBUG = True
 ENABLE_CAPTCHA = False  # tests toggle this explicitly where needed
 
+ENABLE_SOCIAL_AUTH_STUB = True
+
+
 # Faster hashing for tests
 PASSWORD_HASHERS = [
     "django.contrib.auth.hashers.MD5PasswordHasher",
@@ -93,3 +96,5 @@ CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
 
 TIME_ZONE = "Europe/London"
 USE_TZ = True
+
+

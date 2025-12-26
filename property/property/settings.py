@@ -240,6 +240,9 @@ SIMPLE_JWT = {
 # Toggle CAPTCHA for sensitive endpoints (login/register/password-reset, report)
 ENABLE_CAPTCHA = os.getenv("ENABLE_CAPTCHA", "false").lower() in {"1", "true", "yes"}
 
+ENABLE_SOCIAL_AUTH_STUB = False
+
+
 # Choose "recaptcha" or "hcaptcha" if you wire a real provider later.
 CAPTCHA_PROVIDER = os.getenv("CAPTCHA_PROVIDER", "recaptcha")
 CAPTCHA_SECRET   = os.getenv("CAPTCHA_SECRET", "")   # e.g., reCAPTCHA secret key
