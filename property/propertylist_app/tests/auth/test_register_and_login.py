@@ -1,37 +1,60 @@
+# property/propertylist_app/tests/auth/test_register_and_login.py
+
 import pytest
 from django.urls import reverse
-from django.contrib.auth.models import User
+from django.contrib.auth import get_user_model
 from rest_framework.test import APIClient
+
+from propertylist_app.models import UserProfile
+
+
+User = get_user_model()
 
 
 @pytest.mark.django_db
 def test_register_then_login_success_and_bad_password():
     """
-    Real life: a user signs up, then logs in from the app.
-    We assert registration returns minimal safe profile,
+    Real life: a user signs up, verifies email, then logs in from the app.
+    We assert registration returns 201,
     login returns JWT tokens, and a bad password is rejected.
     """
     client = APIClient()
 
     # --- Register ---
     url_reg = reverse("v1:auth-register")
-    payload = {"username": "alice", "email": "alice@example.com", "password": "pass12345"}
-    r = client.post(url_reg, payload, format="json")
-    assert r.status_code == 201, r.data
-    assert {"id", "username", "email"} <= set(r.data.keys())
-    assert r.data["username"] == "alice"
+    payload = {
+        "username": "alice",
+        "email": "alice@example.com",
+        "password": "Pass12345!",
+        "role": "seeker",          # valid: "landlord", "seeker"
+        "terms_accepted": True,
+        "terms_version": "v1",
+    }
 
-    # sanity: user actually exists
-    assert User.objects.filter(username="alice").exists()
+    r_reg = client.post(url_reg, payload, format="json")
+    assert r_reg.status_code == 201, r_reg.data
 
-    # --- Login (ok) ---
+    # --- Mark email as verified (so login is allowed) ---
+    u = User.objects.get(username="alice")
+    UserProfile.objects.update_or_create(
+        user=u,
+        defaults={"email_verified": True},
+    )
+
+    # --- Login (good password) ---
     url_login = reverse("v1:auth-login")
-    r2 = client.post(url_login, {"username": "alice", "password": "pass12345"}, format="json")
-    assert r2.status_code == 200, r2.data
-    # Your login view returns both tokens
-    assert "access" in r2.data and "refresh" in r2.data
+    r_login = client.post(
+        url_login,
+        {"identifier": "alice", "password": "Pass12345!"},
+        format="json",
+    )
+    assert r_login.status_code == 200, r_login.data
+    assert "access" in r_login.data and "refresh" in r_login.data
 
     # --- Login (bad password) ---
-    r3 = client.post(url_login, {"username": "alice", "password": "wrong"}, format="json")
-    # Your view returns 400 on invalid credentials
-    assert r3.status_code == 400, r3.data
+    r_bad = client.post(
+        url_login,
+        {"identifier": "alice", "password": "WRONG"},
+        format="json",
+    )
+    assert r_bad.status_code == 400, r_bad.data

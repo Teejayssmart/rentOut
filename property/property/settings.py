@@ -18,6 +18,8 @@ from celery.schedules import crontab
 
 
 
+
+
 TESTING = bool(os.environ.get("PYTEST_CURRENT_TEST"))
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -242,6 +244,9 @@ ENABLE_CAPTCHA = os.getenv("ENABLE_CAPTCHA", "false").lower() in {"1", "true", "
 
 ENABLE_SOCIAL_AUTH_STUB = False
 
+#Account deletion
+ACCOUNT_DELETION_GRACE_DAYS = 7
+
 
 # Choose "recaptcha" or "hcaptcha" if you wire a real provider later.
 CAPTCHA_PROVIDER = os.getenv("CAPTCHA_PROVIDER", "recaptcha")
@@ -388,9 +393,14 @@ try:
         "expire-paid-listings-daily-03:00": {
         "task": "propertylist_app.expire_paid_listings",
         "schedule": crontab(hour=3, minute=0),
-},
-
-    }
+        },
+        # run every day at 03:10 (UK time if your server TZ is Europe/London + USE_TZ properly handled)
+        "delete_scheduled_accounts_daily": {
+            "task": "propertylist_app.delete_scheduled_accounts",
+            "schedule": crontab(hour=3, minute=10),
+        },
+        
+        }
 except Exception:
     # Celery not installed yet? No problem — run without beat for now.
     CELERY_BEAT_SCHEDULE = {}

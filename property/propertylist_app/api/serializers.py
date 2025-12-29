@@ -1,4 +1,4 @@
-from django.contrib.auth import get_user_model, password_validation
+from django.contrib.auth import get_user_model, password_validation,authenticate
 User = get_user_model()
 from rest_framework import serializers
 from django.contrib.contenttypes.models import ContentType
@@ -798,6 +798,8 @@ class SearchFiltersSerializer(serializers.Serializer):
     min_price = serializers.DecimalField(required=False, max_digits=10, decimal_places=2)
     max_price = serializers.DecimalField(required=False, max_digits=10, decimal_places=2)
     postcode = serializers.CharField(required=False)
+    street = serializers.CharField(required=False, allow_blank=True)
+    city = serializers.CharField(required=False, allow_blank=True)
     radius_miles = serializers.FloatField(required=False)
     limit = serializers.IntegerField(required=False)
     page = serializers.IntegerField(required=False)
@@ -836,7 +838,84 @@ class SearchFiltersSerializer(serializers.Serializer):
         required=False,
     )
 
+
+
     ALLOWED_ORDER_FIELDS = {"price_per_month", "available_from", "created_at", "updated_at"}
+    
+    # -----------------------------
+    # Advanced Search II - Step 2/3
+    # -----------------------------
+
+    move_in_date = serializers.DateField(required=False)
+
+    bathroom_type = serializers.ChoiceField(
+        choices=["private", "shared", "no_preference"],
+        required=False,
+    )
+
+    shared_living_space = serializers.ChoiceField(
+        choices=["yes", "no", "no_preference"],
+        required=False,
+    )
+
+
+    suitable_for = serializers.ChoiceField(
+        choices=["one_person", "couple", "max_occupants", "no_preference"],
+        required=False,
+    )
+
+    max_occupants = serializers.IntegerField(required=False, min_value=1, max_value=10)
+
+    household_bedrooms_min = serializers.IntegerField(required=False, min_value=0)
+    household_bedrooms_max = serializers.IntegerField(required=False, min_value=0)
+
+    household_type = serializers.ChoiceField(
+        choices=["professional", "student", "mixed", "no_preference"],
+        required=False,
+    )
+
+    household_environment = serializers.ChoiceField(
+        choices=["quiet", "sociable", "mixed", "no_preference"],
+        required=False,
+    )
+
+    pets_allowed = serializers.ChoiceField(
+        choices=["yes", "no", "no_preference"],
+        required=False,
+    )
+
+    inclusive_household = serializers.ChoiceField(
+        choices=["yes", "no", "no_preference"],
+        required=False,
+    )
+
+    accessible_entry = serializers.ChoiceField(
+        choices=["yes", "no", "no_preference"],
+        required=False,
+    )
+
+    free_to_contact = serializers.BooleanField(required=False)
+
+    photos_only = serializers.BooleanField(required=False)
+    verified_advertisers_only = serializers.BooleanField(required=False)
+    advert_by_household = serializers.ChoiceField(
+        choices=[
+            "live_in_landlord",
+            "live_out_landlord",
+            "current_flatmate",
+            "no_preference",
+        ],
+        required=False,
+    )
+    posted_within_days = serializers.IntegerField(required=False, min_value=1, max_value=365)
+    # make “false” meaningful (currently view only filters when true)
+    furnished = serializers.BooleanField(required=False)
+    bills_included = serializers.BooleanField(required=False)
+    parking_available = serializers.BooleanField(required=False)
+
+    
+    
+    
 
     def validate(self, attrs):
         # existing price / pagination rules
@@ -972,17 +1051,16 @@ class RegistrationSerializer(serializers.ModelSerializer):
 
         return attrs
 
-    def create(self, validated):
-        validated.pop("password2", None)
-        role = validated.pop("role")
-        terms_accepted = validated.pop("terms_accepted")
-        terms_version = validated.pop("terms_version")
-        marketing = validated.pop("marketing_consent", False)
+    def create(self, validated_data):
+        validated_data.pop("password2", None)
+        role = validated_data.pop("role")
+        terms_accepted = validated_data.pop("terms_accepted")
+        terms_version = validated_data.pop("terms_version")
+        marketing = validated_data.pop("marketing_consent", False)
 
-        password = validated.pop("password")
-        user = User.objects.create_user(**validated, password=password)
+        password = validated_data.pop("password")
+        user = User.objects.create_user(**validated_data, password=password)
 
-        # ensure profile and set flags
         profile, _ = UserProfile.objects.get_or_create(user=user)
         profile.role = role
         profile.marketing_consent = bool(marketing)
@@ -991,14 +1069,12 @@ class RegistrationSerializer(serializers.ModelSerializer):
         profile.email_verified = False
         profile.save()
 
-        # generate 6-digit OTP and email it
         code = get_random_string(6, allowed_chars="0123456789")
         EmailOTP.objects.filter(user=user, used_at__isnull=True).update(
             used_at=timezone.now()
         )
         EmailOTP.create_for(user, code, ttl_minutes=10)
 
-        # simple email (console backend ok for now)
         mail.send_mail(
             subject="Verify your email (RentOut)",
             message=f"Your verification code is: {code}",
@@ -1006,6 +1082,7 @@ class RegistrationSerializer(serializers.ModelSerializer):
             recipient_list=[user.email],
             fail_silently=True,
         )
+
         return user
 
     def to_representation(self, instance):
@@ -1036,8 +1113,55 @@ class PasswordResetRequestSerializer(serializers.Serializer):
 
 
 class PasswordResetConfirmSerializer(serializers.Serializer):
-    token = serializers.CharField()
+    email = serializers.EmailField()
+    token = serializers.CharField()  # we will use the 6-digit OTP code
     new_password = serializers.CharField(write_only=True)
+    confirm_password = serializers.CharField(write_only=True)
+
+    def validate(self, attrs):
+        pw1 = attrs.get("new_password") or ""
+        pw2 = attrs.get("confirm_password") or ""
+        if pw1 != pw2:
+            raise serializers.ValidationError({"confirm_password": "Passwords do not match."})
+
+        # Reuse Django validators (strong password rules)
+        password_validation.validate_password(pw1)
+        return attrs
+
+
+
+
+class AccountDeleteRequestSerializer(serializers.Serializer):
+    confirm = serializers.BooleanField()
+    current_password = serializers.CharField(required=False, allow_blank=True, write_only=True)
+
+    def validate(self, attrs):
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+
+        if not attrs.get("confirm"):
+            raise serializers.ValidationError({"confirm": "You must confirm account deletion."})
+
+        # if user has a password, require it (extra safety)
+        if user and user.has_usable_password():
+            pw = (attrs.get("current_password") or "").strip()
+            if not pw:
+                raise serializers.ValidationError({"current_password": "This field is required."})
+
+            authed = authenticate(username=user.username, password=pw)
+            if not authed:
+                raise serializers.ValidationError({"current_password": "Password is incorrect."})
+
+        return attrs
+
+
+class AccountDeleteCancelSerializer(serializers.Serializer):
+    confirm = serializers.BooleanField()
+
+    def validate(self, attrs):
+        if not attrs.get("confirm"):
+            raise serializers.ValidationError({"confirm": "You must confirm cancellation."})
+        return attrs
 
 
         

@@ -51,6 +51,9 @@ from propertylist_app.api.views import (
 
     # Soft delete
     RoomSoftDeleteView,RoomUnpublishView,
+    
+    #Account deletion
+    DeleteAccountRequestView,DeleteAccountCancelView,
 
     # Payments
     CreateListingCheckoutSessionView, stripe_webhook, StripeSuccessView, StripeCancelView, SavedCardsListView, CreateSetupIntentView,DetachSavedCardView,
@@ -194,6 +197,11 @@ urlpatterns = [
     # --- Soft delete room ---
     path("rooms/<int:pk>/soft-delete/", RoomSoftDeleteView.as_view(), name="room-soft-delete"),
     path("rooms/<int:pk>/unpublish/", RoomUnpublishView.as_view(), name="room-unpublish"),
+    
+    # --- Account deletion ---
+    path("users/me/delete-account/", DeleteAccountRequestView.as_view(), name="user-delete-account"),
+    path("users/me/delete-account/cancel/", DeleteAccountCancelView.as_view(), name="user-delete-account-cancel"),
+
 
 
         # --- Auth ---

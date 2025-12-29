@@ -150,3 +150,50 @@ def booking_created_queue_emails(sender, instance: Booking, created, **kwargs):
                 "booking_id": instance.id,
             },
         )
+        
+
+@receiver(post_save, sender=Message)
+def message_created_create_notifications(sender, instance: Message, created, **kwargs):
+    if not created:
+        return
+
+    thread: MessageThread = instance.thread
+    recipients = thread.participants.exclude(pk=instance.sender_id).all()
+
+    notifs = []
+    queued_any_email = False  # <-- add this
+
+    for user in recipients:
+        profile, _ = UserProfile.objects.get_or_create(user=user)
+        if not getattr(profile, "notify_messages", True):
+            continue
+
+        notifs.append(
+            Notification(
+                user=user,
+                type=Notification.Type.MESSAGE,
+                thread=thread,
+                message=instance,
+                title="New message",
+                body=(instance.body[:200] or ""),
+            )
+        )
+
+        _queue_email(
+            user=user,
+            template_key="message.new",
+            context={
+                "user": {"first_name": user.first_name},
+                "sender": {"name": instance.sender.get_username()},
+                "thread_id": thread.id,
+                "message_id": instance.id,
+            },
+        )
+        queued_any_email = True  # <-- add this
+
+    if notifs:
+        Notification.objects.bulk_create(notifs, ignore_conflicts=True)
+
+    if queued_any_email:
+        task_send_new_message_email.delay(instance.id)  # <-- add this
+        

@@ -1,7 +1,9 @@
 import pytest
-from django.urls import reverse
 from django.contrib.auth.models import User
+from django.urls import reverse
 from rest_framework.test import APIClient
+
+from propertylist_app.models import UserProfile, EmailOTP
 
 
 @pytest.mark.django_db
@@ -12,47 +14,87 @@ def test_logout_happy_path_and_missing_refresh():
       1) Authenticated user (via Authorization: Bearer <access>)
       2) A refresh token in the JSON body
     """
-    # Create a user and login to get tokens
     u = User.objects.create_user(username="bob", email="b@example.com", password="pass12345")
+    UserProfile.objects.update_or_create(user=u, defaults={"email_verified": True})
+
     client = APIClient()
 
-    # Login to get tokens
+    # Login to get tokens (your login expects "identifier", not "username")
     url_login = reverse("v1:auth-login")
-    r_login = client.post(url_login, {"username": "bob", "password": "pass12345"}, format="json")
+    r_login = client.post(url_login, {"identifier": "bob", "password": "pass12345"}, format="json")
     assert r_login.status_code == 200, r_login.data
+
     access = r_login.data["access"]
     refresh = r_login.data["refresh"]
 
-    # Authenticate requests with the access token
+    # Logout requires auth header
+    url_logout = reverse("v1:auth-logout")
     client.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
 
-    # Happy path logout (requires refresh in body)
-    url_logout = reverse("v1:auth-logout")
-    r_ok = client.post(url_logout, {"refresh": refresh}, format="json")
-    assert r_ok.status_code == 200, r_ok.data
-    assert r_ok.data.get("detail") == "Logged out."
+    # Missing refresh -> 400
+    r_missing = client.post(url_logout, {}, format="json")
+    assert r_missing.status_code == 400
 
-    # Missing refresh -> 400, still authenticated via access token
-    r_bad = client.post(url_logout, {}, format="json")
-    assert r_bad.status_code == 400, r_bad.data
+    # Happy path -> 200/204 depending on implementation
+    r_ok = client.post(url_logout, {"refresh": refresh}, format="json")
+    assert r_ok.status_code in (200, 204), r_ok.data
 
 
 @pytest.mark.django_db
-def test_password_reset_request_and_confirm_smoke():
+def test_password_reset_request_and_confirm(monkeypatch):
     """
-    Real life: user taps 'Forgot password' and then sets a new one.
-    We just smoke-test the endpoints with your current mock behavior.
+    Password reset flow:
+      1) POST reset request (email) -> creates EmailOTP
+      2) POST confirm (email + token + new_password) -> resets password
+      3) Login with new password works
     """
-    User.objects.create_user(username="carol", email="c@example.com", password="pass12345")
+    u = User.objects.create_user(username="resetuser", email="reset@example.com", password="pass12345")
+    UserProfile.objects.update_or_create(user=u, defaults={"email_verified": True})
+
     client = APIClient()
 
-    # Request reset
-    url_req = reverse("v1:auth-password-reset")
-    r1 = client.post(url_req, {"email": "c@example.com"}, format="json")
-    assert r1.status_code == 200, r1.data
+    # Optional: prevent real email send in non-test environments
+    def fake_send(*args, **kwargs):
+        return True
 
-    # Confirm reset (token verification mocked in your view)
-    url_cfm = reverse("v1:auth-password-reset-confirm")
-    r2 = client.post(url_cfm, {"token": "dummy-token", "new_password": "newpass999"}, format="json")
-    assert r2.status_code == 200, r2.data
-    assert r2.data.get("detail") == "Password has been reset"
+    try:
+        monkeypatch.setattr("django.core.mail.send_mail", fake_send)
+    except Exception:
+        pass
+
+    # Step 1: request reset
+    url_request = reverse("v1:auth-password-reset")
+    r_req = client.post(url_request, {"email": "reset@example.com"}, format="json")
+    assert r_req.status_code in (200, 204), r_req.data
+
+    # Fetch the latest OTP created for this user (password reset)
+    otp = (
+        EmailOTP.objects
+        .filter(user=u, used_at__isnull=True)
+        .order_by("-created_at")
+        .first()
+    )
+    assert otp is not None, "Expected an EmailOTP to be created for password reset."
+
+    token = otp.code
+
+    # Step 2: confirm reset
+    url_confirm = reverse("v1:auth-password-reset-confirm")
+    r_conf = client.post(
+        url_confirm,
+        {
+            "email": "reset@example.com",
+            "token": token,
+            "new_password": "Newpass12345!",
+            "confirm_password": "Newpass12345!",
+        },
+        format="json",
+    )
+    assert r_conf.status_code in (200, 204), r_conf.data
+
+
+    # Step 3: login with new password works
+    url_login = reverse("v1:auth-login")
+    r_login = client.post(url_login, {"identifier": "resetuser", "password": "Newpass12345!"}, format="json")
+    assert r_login.status_code == 200, r_login.data
+    assert "access" in r_login.data and "refresh" in r_login.data

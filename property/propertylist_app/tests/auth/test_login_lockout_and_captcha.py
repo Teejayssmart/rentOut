@@ -5,6 +5,8 @@ from django.contrib.auth.models import User
 from django.urls import reverse
 from rest_framework.test import APIClient
 
+from propertylist_app.models import UserProfile
+
 
 def _ip_headers(ip="203.0.113.55"):
     # Consistent IP for lockout keying and CAPTCHA validation
@@ -14,7 +16,7 @@ def _ip_headers(ip="203.0.113.55"):
 @pytest.mark.django_db
 def test_login_lockout_after_repeated_failures(settings):
     """
-    Lockout kicks in after N failed attempts from the same IP+username.
+    Lockout kicks in after N failed attempts from the same IP+identifier.
 
     Flow:
       1) Create user.
@@ -28,15 +30,17 @@ def test_login_lockout_after_repeated_failures(settings):
     settings.ENABLE_CAPTCHA = False  # not testing CAPTCHA here
 
     user = User.objects.create_user(username="lockuser", password="pass12345", email="l@example.com")
+    # Ensure profile exists + verified (your login flow can require this)
+    UserProfile.objects.update_or_create(user=user, defaults={"email_verified": True})
 
     client = APIClient()
     url = reverse("v1:auth-login")
 
-    # 3 failed attempts (wrong password)
-    for i in range(settings.LOGIN_FAIL_LIMIT):
+    # N failed attempts (wrong password)
+    for _ in range(settings.LOGIN_FAIL_LIMIT):
         r = client.post(
             url,
-            {"username": "lockuser", "password": "WRONG"},
+            {"identifier": "lockuser", "password": "WRONG"},
             format="json",
             **_ip_headers(),
         )
@@ -46,7 +50,7 @@ def test_login_lockout_after_repeated_failures(settings):
     # Next attempt (still wrong) should be locked out
     r_locked = client.post(
         url,
-        {"username": "lockuser", "password": "WRONG"},
+        {"identifier": "lockuser", "password": "WRONG"},
         format="json",
         **_ip_headers(),
     )
@@ -54,18 +58,15 @@ def test_login_lockout_after_repeated_failures(settings):
     # Optional: precise message
     assert "Too many failed attempts" in str(r_locked.data)
 
-    # Now try a correct login (from same IP+username).
-    # If your lockout implementation clears only on success and isn't time-based here,
-    # you may still get 429. But your LoginView clears failures on success,
-    # so once we succeed once, future attempts should be fine.
+    # Try a correct login (same IP+identifier). Some implementations still block until time passes.
+    # If your view clears failures only after a successful login AND allows success while locked,
+    # this should be 200. If your lockout blocks all attempts, expect 429 here.
     r_ok = client.post(
         url,
-        {"username": "lockuser", "password": "pass12345"},
+        {"identifier": "lockuser", "password": "pass12345"},
         format="json",
         **_ip_headers(),
     )
-    # If your lockout says "still locked" on success, this would be 429.
-    # In your LoginView the success path clears failures and returns 200 with tokens.
     assert r_ok.status_code == 200, r_ok.data
     assert "access" in r_ok.data and "refresh" in r_ok.data
 
@@ -80,11 +81,13 @@ def test_login_requires_captcha_when_enabled(settings, monkeypatch):
     settings.ENABLE_CAPTCHA = True
     settings.LOGIN_FAIL_LIMIT = 10  # irrelevant here
     settings.LOGIN_LOCKOUT_SECONDS = 600
-    
+
     settings.REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"]["login"] = "100/hour"
 
-
     user = User.objects.create_user(username="catuser", password="pass12345", email="c@example.com")
+    # Ensure profile exists + verified (your login flow can require this)
+    UserProfile.objects.update_or_create(user=user, defaults={"email_verified": True})
+
     client = APIClient()
     url = reverse("v1:auth-login")
 
@@ -97,7 +100,7 @@ def test_login_requires_captcha_when_enabled(settings, monkeypatch):
 
     r_bad = client.post(
         url,
-        {"username": "catuser", "password": "pass12345", "captcha_token": "token123"},
+        {"identifier": "catuser", "password": "pass12345", "captcha_token": "token123"},
         format="json",
         **_ip_headers(),
     )
@@ -112,7 +115,7 @@ def test_login_requires_captcha_when_enabled(settings, monkeypatch):
 
     r_ok = client.post(
         url,
-        {"username": "catuser", "password": "pass12345", "captcha_token": "token123"},
+        {"identifier": "catuser", "password": "pass12345", "captcha_token": "token123"},
         format="json",
         **_ip_headers(),
     )

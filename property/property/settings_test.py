@@ -1,5 +1,6 @@
 # property/settings_test.py
 from .settings import *  # noqa
+from celery.schedules import crontab
 
 # Make tests predictable
 DEBUG = True
@@ -21,6 +22,11 @@ CACHES = {
         "LOCATION": "throttle-cache",  # required by test_environment_config.py
     }
 }
+
+
+
+
+
 
 # Media to a tmp dir (so photo tests don’t touch your real media)
 import os, tempfile
@@ -75,6 +81,9 @@ SITE_URL = "http://testserver"
 # Keep test DB speedy
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
+#Account deletion
+ACCOUNT_DELETION_GRACE_DAYS = 7
+
 
 # ---- Celery: run tasks eagerly in tests; no external broker needed ----
 # Celery 5 reads lowercase keys; some libs still look for the CELERY_* variants,
@@ -89,12 +98,19 @@ CELERY_RESULT_BACKEND = result_backend
 CELERY_TASK_ALWAYS_EAGER = task_always_eager
 CELERY_TASK_EAGER_PROPAGATES = task_eager_propagates
 
-CELERY_BROKER_URL = "redis://127.0.0.1:6379/0"
-CELERY_RESULT_BACKEND = "redis://127.0.0.1:6379/1"
-CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
+
 
 
 TIME_ZONE = "Europe/London"
 USE_TZ = True
+
+
+
+CELERY_BEAT_SCHEDULE = {
+    "delete_scheduled_accounts_daily": {
+        "task": "propertylist_app.delete_scheduled_accounts",
+        "schedule": crontab(hour=3, minute=10),
+    },
+}
 
 

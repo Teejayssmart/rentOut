@@ -131,6 +131,115 @@ class Room(SoftDeleteModel):
     image = models.ImageField(upload_to="room_images/", null=True, blank=True)
     number_of_bedrooms = models.IntegerField(default=1)
     number_of_bathrooms = models.IntegerField(default=1)
+        # ---- Advanced Search II (Option A) - explicit UI-matching fields ----
+
+    YES_NO_PREF_CHOICES = [
+        ("yes", "Yes"),
+        ("no", "No"),
+        ("no_preference", "No preference"),
+    ]
+
+    BATHROOM_TYPE_CHOICES = [
+        ("private", "Private"),
+        ("shared", "Shared"),
+        ("no_preference", "No preference"),
+    ]
+
+    SUITABLE_FOR_CHOICES = [
+        ("one_person", "One person"),
+        ("couple", "Couple"),
+        ("max_occupants", "Maximum occupants"),
+        ("no_preference", "No preference"),
+    ]
+
+    HOUSEHOLD_TYPE_CHOICES = [
+        ("professional", "Professional"),
+        ("student", "Student"),
+        ("mixed", "Mixed"),
+        ("no_preference", "No preference"),
+    ]
+
+    HOUSEHOLD_ENVIRONMENT_CHOICES = [
+        ("quiet", "Quiet"),
+        ("sociable", "Sociable"),
+        ("mixed", "Mixed"),
+        ("no_preference", "No preference"),
+    ]
+
+    bathroom_type = models.CharField(
+        max_length=32,
+        choices=BATHROOM_TYPE_CHOICES,
+        default="no_preference",
+        blank=True,
+    )
+
+    shared_living_space = models.CharField(
+        max_length=32,
+        choices=YES_NO_PREF_CHOICES,
+        default="no_preference",
+        blank=True,
+    )
+
+    smoking_allowed_in_property = models.CharField(
+        max_length=32,
+        choices=YES_NO_PREF_CHOICES,
+        default="no_preference",
+        blank=True,
+    )
+
+    suitable_for = models.CharField(
+        max_length=32,
+        choices=SUITABLE_FOR_CHOICES,
+        default="no_preference",
+        blank=True,
+    )
+
+    max_occupants = models.PositiveSmallIntegerField(
+        null=True,
+        blank=True,
+        validators=[MinValueValidator(1), MaxValueValidator(10)],
+    )
+
+    household_bedrooms_min = models.PositiveSmallIntegerField(null=True, blank=True)
+    household_bedrooms_max = models.PositiveSmallIntegerField(null=True, blank=True)
+
+    household_type = models.CharField(
+        max_length=32,
+        choices=HOUSEHOLD_TYPE_CHOICES,
+        default="no_preference",
+        blank=True,
+    )
+
+    household_environment = models.CharField(
+        max_length=32,
+        choices=HOUSEHOLD_ENVIRONMENT_CHOICES,
+        default="no_preference",
+        blank=True,
+    )
+
+    pets_allowed = models.CharField(
+        max_length=32,
+        choices=YES_NO_PREF_CHOICES,
+        default="no_preference",
+        blank=True,
+    )
+
+    inclusive_household = models.CharField(
+        max_length=32,
+        choices=YES_NO_PREF_CHOICES,
+        default="no_preference",
+        blank=True,
+    )
+
+    accessible_entry = models.CharField(
+        max_length=32,
+        choices=YES_NO_PREF_CHOICES,
+        default="no_preference",
+        blank=True,
+    )
+
+    free_to_contact = models.BooleanField(default=False)
+
     property_type = models.CharField(
         max_length=100,
         choices=[
@@ -454,6 +563,9 @@ class UserProfile(models.Model):
 
     ROLE_CHOICES = (("landlord", "Landlord"), ("seeker", "Seeker"))
     role = models.CharField(max_length=20, choices=ROLE_CHOICES, default="seeker", db_index=True)
+    
+    pending_deletion_requested_at = models.DateTimeField(null=True, blank=True)
+    pending_deletion_scheduled_for = models.DateTimeField(null=True, blank=True)
 
     ROLE_DETAIL_CHOICES = (
         ("live_in_landlord", "Live in Landlord"),
@@ -483,6 +595,7 @@ class UserProfile(models.Model):
     email_verified_at = models.DateTimeField(null=True, blank=True)
     phone_verified = models.BooleanField(default=False, db_index=True)
     phone_verified_at = models.DateTimeField(null=True, blank=True)
+    advertiser_verified = models.BooleanField(default=False, db_index=True)
     terms_accepted_at = models.DateTimeField(null=True, blank=True)
     terms_version = models.CharField(max_length=20, blank=True, default="")
     marketing_consent = models.BooleanField(default=False)
@@ -1037,7 +1150,20 @@ class GDPRTombstone(models.Model):
 # EmailOTP
 # -----
 class EmailOTP(models.Model):
+    PURPOSE_EMAIL_VERIFY = "email_verify"
+    PURPOSE_PASSWORD_RESET = "password_reset"
+
+    PURPOSE_CHOICES = [
+        (PURPOSE_EMAIL_VERIFY, "Email verification"),
+        (PURPOSE_PASSWORD_RESET, "Password reset"),
+    ]
+
     user = models.ForeignKey(get_user_model(), on_delete=models.CASCADE, related_name="email_otps")
+    purpose = models.CharField(
+        max_length=32,
+        choices=PURPOSE_CHOICES,
+        default=PURPOSE_EMAIL_VERIFY,
+    )
     code = models.CharField(max_length=6)
     created_at = models.DateTimeField(auto_now_add=True)
     expires_at = models.DateTimeField()
@@ -1046,7 +1172,7 @@ class EmailOTP(models.Model):
 
     class Meta:
         indexes = [
-            models.Index(fields=["user", "created_at"]),
+            models.Index(fields=["user", "purpose", "created_at"]),
         ]
 
     @property
@@ -1061,9 +1187,15 @@ class EmailOTP(models.Model):
         self.save(update_fields=["used_at"])
 
     @classmethod
-    def create_for(cls, user, code: str, ttl_minutes: int = 10):
+    def create_for(cls, user, code: str, ttl_minutes: int = 10, purpose: str = PURPOSE_EMAIL_VERIFY):
         expires_at = timezone.now() + timedelta(minutes=ttl_minutes)
-        return cls.objects.create(user=user, code=str(code).strip(), expires_at=expires_at)
+        return cls.objects.create(
+            user=user,
+            purpose=purpose,
+            code=str(code).strip(),
+            expires_at=expires_at,
+        )
+
 
 
 # -----
