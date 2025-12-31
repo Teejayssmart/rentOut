@@ -1,9 +1,10 @@
 import pytest
 from rest_framework.test import APIClient
 from django.utils import timezone
+from datetime import timedelta
 
 from django.contrib.auth import get_user_model
-from propertylist_app.models import Room, RoomCategorie, Review
+from propertylist_app.models import Room, RoomCategorie, Review, Booking
 
 User = get_user_model()
 
@@ -31,13 +32,31 @@ def test_delete_confirm_erases_pii_and_soft_hides_content():
         status="active",
         paid_until=timezone.now().date(),
     )
-    review = Review.objects.create(
+    tenant = User.objects.create_user(
+    username="tenant_user",
+    password="pass123",
+    email="tenant@example.com",
+    )
+
+    # booking must exist because Review links to Booking
+    booking = Booking.objects.create(
+        user=tenant,
         room=room,
-        review_user=owner,
-        rating=5,
-        description="Great",
+        start=timezone.now() - timedelta(days=40),
+        end=timezone.now() - timedelta(days=35),
+        status=Booking.STATUS_ACTIVE,
+    )
+
+    review = Review.objects.create(
+        booking=booking,
+        reviewer=tenant,
+        reviewee=owner,
+        role=Review.ROLE_TENANT_TO_LANDLORD,
+        review_flags=["responsive"],   # any allowed flag is fine
+        notes="Great",
         active=True,
     )
+
 
     client = APIClient()
     client.force_authenticate(user=owner)

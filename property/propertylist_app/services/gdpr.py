@@ -4,6 +4,9 @@ from django.db import transaction
 from django.utils import timezone
 from django.conf import settings
 from django.core.files.storage import default_storage
+from django.db.models import Q
+from django.core.files.storage import FileSystemStorage
+
 
 from propertylist_app.models import (
     Room, Review, RoomImage, SavedRoom, MessageThread, Message, MessageRead,
@@ -36,7 +39,7 @@ def collect_user_data(user):
         },
         "profile": {},
         "rooms": list(Room.objects.filter(property_owner=user).values()),
-        "reviews": list(Review.objects.filter(review_user=user).values()),
+        "reviews": list(Review.objects.filter(Q(reviewer=user) | Q(reviewee=user)).values()),
         "saved_rooms": list(SavedRoom.objects.filter(user=user).values()),
         "threads": list(MessageThread.objects.filter(participants=user).values("id", "created_at")),
         "messages": list(Message.objects.filter(thread__participants=user, sender=user).values()),
@@ -60,57 +63,6 @@ def collect_user_data(user):
         pass
     return data
 
-def build_export_zip(user, export_obj: DataExport) -> str:
-    """
-    Create ZIP under MEDIA_ROOT/exports/<user_id>/export_<ts>.zip.
-    Returns the media-relative path.
-    """
-    ts = timezone.now().strftime("%Y%m%dT%H%M%S")
-    rel_dir = os.path.join("exports", str(user.id))
-    rel_zip = os.path.join(rel_dir, f"export_{ts}.zip")
-
-    # Ensure directory exists (if storage has a filesystem path)
-    try:
-        abs_path = default_storage.path(rel_zip)
-        os.makedirs(os.path.dirname(abs_path), exist_ok=True)
-    except Exception:
-        abs_path = rel_zip  # storage without local path
-
-    payload = collect_user_data(user)
-
-    # Optional: include avatar if exists
-    media_to_embed = []
-    avatar_rel = (payload.get("profile") or {}).get("avatar")
-    if avatar_rel:
-        media_to_embed.append(("media/" + avatar_rel, avatar_rel))
-
-    # Write the zip
-    if abs_path == rel_zip:
-        # storage without .path – write to a temp file in memory then save
-        import io
-        mem = io.BytesIO()
-        with zipfile.ZipFile(mem, "w", zipfile.ZIP_DEFLATED) as zf:
-            zf.writestr("manifest.json", json.dumps(payload, default=str, indent=2))
-            for arcname, storage_path in media_to_embed:
-                blob = _safe_media_read(storage_path)
-                if blob:
-                    zf.writestr(arcname, blob)
-        mem.seek(0)
-        default_storage.save(rel_zip, mem)
-    else:
-        with zipfile.ZipFile(abs_path, "w", zipfile.ZIP_DEFLATED) as zf:
-            zf.writestr("manifest.json", json.dumps(payload, default=str, indent=2))
-            for arcname, storage_path in media_to_embed:
-                blob = _safe_media_read(storage_path)
-                if blob:
-                    zf.writestr(arcname, blob)
-
-    export_obj.status = "ready"
-    export_obj.file_path = rel_zip
-    export_obj.expires_at = timezone.now() + timedelta(days=_retention_days("export_link_days", 7))
-    export_obj.save(update_fields=["status", "file_path", "expires_at"])
-    return rel_zip
-
 @transaction.atomic
 def preview_erasure(user):
     return {
@@ -120,7 +72,7 @@ def preview_erasure(user):
         },
         "anonymise": {
             "rooms": Room.objects.filter(property_owner=user, is_deleted=False).count(),
-            "reviews": Review.objects.filter(review_user=user).count(),
+            "reviews": Review.objects.filter(Q(reviewer=user) | Q(reviewee=user)).count(),
             "messages": Message.objects.filter(sender=user).count(),
         },
         "retain_non_pii": {
@@ -158,7 +110,8 @@ def perform_erasure(user):
 
     # Content → anonymise (keep useful marketplace data)
     Room.objects.filter(property_owner=user).update(property_owner=None)
-    Review.objects.filter(review_user=user).update(review_user=None)
+    Review.objects.filter(reviewer=user).update(reviewer=None)
+    Review.objects.filter(reviewee=user).update(reviewee=None)
     Message.objects.filter(sender=user).update(sender=None)
 
     # Accounting/booking → drop personal link but keep record
@@ -167,3 +120,38 @@ def perform_erasure(user):
 
     GDPRTombstone.objects.create(user_id_hash=_user_hash(user), note="GDPR erasure")
     return True
+
+
+def build_export_zip(user, export_obj: DataExport) -> str:
+    """
+    Create ZIP under MEDIA_ROOT/exports/<user_id>/export_<ts>.zip.
+    Returns the media-relative path.
+    """
+    ts = timezone.now().strftime("%Y%m%dT%H%M%S")
+    rel_dir = os.path.join("exports", str(user.id))
+    rel_zip = os.path.join(rel_dir, f"export_{ts}.zip")
+
+    storage = FileSystemStorage(location=settings.MEDIA_ROOT, base_url=settings.MEDIA_URL)
+
+    abs_path = storage.path(rel_zip)
+    os.makedirs(os.path.dirname(abs_path), exist_ok=True)
+
+    payload = collect_user_data(user)
+
+    media_to_embed = []
+    avatar_rel = (payload.get("profile") or {}).get("avatar")
+    if avatar_rel:
+        media_to_embed.append(("media/" + avatar_rel, avatar_rel))
+
+    with zipfile.ZipFile(abs_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("manifest.json", json.dumps(payload, default=str, indent=2))
+        for arcname, storage_path in media_to_embed:
+            blob = _safe_media_read(storage_path)
+            if blob:
+                zf.writestr(arcname, blob)
+
+    export_obj.status = "ready"
+    export_obj.file_path = rel_zip
+    export_obj.expires_at = timezone.now() + timedelta(days=_retention_days("export_link_days", 7))
+    export_obj.save(update_fields=["status", "file_path", "expires_at"])
+    return rel_zip

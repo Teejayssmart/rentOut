@@ -2,6 +2,9 @@ import pytest
 from rest_framework.test import APIClient
 from django.contrib.auth import get_user_model
 from propertylist_app.models import Room, RoomCategorie, Review
+from datetime import timedelta
+from django.utils import timezone
+from propertylist_app.models import Booking
 
 User = get_user_model()
 
@@ -18,7 +21,33 @@ def test_delete_preview_counts():
     room = Room.objects.create(
         title="Room to Erase", category=cat, price_per_month=700, property_owner=user
     )
-    Review.objects.create(room=room, review_user=user, rating=5, description="Great!")
+    # propertylist_app/tests/privacy/test_delete_preview_counts.py
+    # PASTE this block EXACTLY where you deleted the old Review.objects.create(...)
+
+    tenant = User.objects.create_user(
+        username="preview_tenant",
+        password="pass123",
+        email="preview_tenant@example.com",
+    )
+
+    booking = Booking.objects.create(
+        user=tenant,
+        room=room,
+        start=timezone.now() - timedelta(days=40),
+        end=timezone.now() - timedelta(days=35),
+        status=Booking.STATUS_ACTIVE,
+    )
+
+    Review.objects.create(
+        booking=booking,
+        reviewer=tenant,
+        reviewee=user,
+        role=Review.ROLE_TENANT_TO_LANDLORD,
+        review_flags=["responsive"],
+        notes="Great!",
+        active=True,
+    )
+
 
     client = APIClient()
     client.force_authenticate(user=user)

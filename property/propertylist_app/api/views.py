@@ -2641,23 +2641,6 @@ class StartThreadFromRoomView(APIView):
         if body:
             msg = Message.objects.create(thread=thread, sender=request.user, body=body)
 
-            # Notification: new message (respects Account -> Notifications -> Messages)
-            try:
-                recipients = thread.participants.exclude(id=request.user.id)
-                for recipient in recipients:
-                    profile, _ = UserProfile.objects.get_or_create(user=recipient)
-                    if getattr(profile, "notify_messages", True):
-                        Notification.objects.create(
-                            user=recipient,
-                            type="message",
-                            title="New message",
-                            body=f"You received a new message from {request.user.get_username()}.",
-                        )
-            except Exception:
-                # Never fail messaging because notification failed
-                pass
-
-
         return Response(MessageThreadSerializer(thread, context={"request": request}).data)
 
 

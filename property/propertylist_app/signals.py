@@ -2,12 +2,12 @@ from django.db.models.signals import post_save, post_delete
 from django.dispatch import receiver
 from django.db.models import Avg, Count
 
-from .models import Message, Notification, MessageThread
-from .models import Review, Room
+from .models import Message, Notification, MessageThread, Review, Room
+
 
 
 from django.db.models.signals import post_save
-from django.dispatch import receiver
+
 
 from propertylist_app.models import (
     Review,
@@ -67,52 +67,6 @@ def _queue_email(*, user, template_key: str, context: dict | None = None) -> Non
         context=context or {},
     )
 
-
-@receiver(post_save, sender=Message)
-def message_created_create_notifications(sender, instance: Message, created, **kwargs):
-    """
-    When a new message is created:
-    - create in-app Notification for other participants (respects notify_messages)
-    - queue OutboundNotification email for other participants (template_key="message.new")
-    """
-    if not created:
-        return
-
-    thread: MessageThread = instance.thread
-    recipients = thread.participants.exclude(pk=instance.sender_id).all()
-
-    notifs = []
-    for user in recipients:
-        profile, _ = UserProfile.objects.get_or_create(user=user)
-        if not getattr(profile, "notify_messages", True):
-            continue
-
-        # in-app notification
-        notifs.append(
-            Notification(
-                user=user,
-                type=Notification.Type.MESSAGE,
-                thread=thread,
-                message=instance,
-                title="New message",
-                body=(instance.body[:200] or ""),
-            )
-        )
-
-        # email queue (for celery task to send later)
-        _queue_email(
-            user=user,
-            template_key="message.new",
-            context={
-                "user": {"first_name": user.first_name},
-                "sender": {"name": instance.sender.get_username()},
-                "thread_id": thread.id,
-                "message_id": instance.id,
-            },
-        )
-
-    if notifs:
-        Notification.objects.bulk_create(notifs, ignore_conflicts=True)
 
 
 @receiver(post_save, sender=Booking)

@@ -10,6 +10,7 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 from django.contrib.auth.models import User
 
+from datetime import timedelta
 from propertylist_app.models import (
     Room,
     RoomCategorie,
@@ -17,6 +18,7 @@ from propertylist_app.models import (
     MessageThread,
     Message,
     DataExport,
+    Booking,
 )
 
 # NOTE: We call concrete URLs to avoid depending on URL names.
@@ -76,7 +78,30 @@ def test_delete_preview_counts():
     cat = RoomCategorie.objects.create(name="MyCat", active=True)
     room = Room.objects.create(title="My Room", category=cat, price_per_month=500, property_owner=owner)
     # Some content tied to the user
-    Review.objects.create(room=room, review_user=owner, rating=4, description="Good")
+    tenant = User.objects.create_user(
+    username="del_tenant",
+    password="pass123",
+    email="del_tenant@example.com",
+    )
+
+    booking = Booking.objects.create(
+        user=tenant,
+        room=room,
+        start=timezone.now() - timedelta(days=40),
+        end=timezone.now() - timedelta(days=35),
+        status=Booking.STATUS_ACTIVE,
+    )
+
+    Review.objects.create(
+        booking=booking,
+        reviewer=tenant,
+        reviewee=owner,
+        role=Review.ROLE_TENANT_TO_LANDLORD,
+        review_flags=["responsive"],
+        notes="Good",
+        active=True,
+    )
+
     th = MessageThread.objects.create()
     th.participants.set([owner])
     Message.objects.create(thread=th, sender=owner, body="Hello")
@@ -108,7 +133,30 @@ def test_delete_confirm_erases_pii_and_soft_hides_content():
     owner = User.objects.create_user(username="erase_me", password="pass123", email="erase@example.com")
     cat = RoomCategorie.objects.create(name="GDPR", active=True)
     room = Room.objects.create(title="GDPR Room", category=cat, price_per_month=700, property_owner=owner)
-    Review.objects.create(room=room, review_user=owner, rating=5, description="Great")
+    tenant2 = User.objects.create_user(
+    username="erase_tenant",
+    password="pass123",
+    email="erase_tenant@example.com",
+    )
+
+    booking2 = Booking.objects.create(
+        user=tenant2,
+        room=room,
+        start=timezone.now() - timedelta(days=40),
+        end=timezone.now() - timedelta(days=35),
+        status=Booking.STATUS_ACTIVE,
+    )
+
+    Review.objects.create(
+        booking=booking2,
+        reviewer=tenant2,
+        reviewee=owner,
+        role=Review.ROLE_TENANT_TO_LANDLORD,
+        review_flags=["responsive"],
+        notes="Great",
+        active=True,
+    )
+
 
     client = APIClient()
     client.force_authenticate(user=owner)
