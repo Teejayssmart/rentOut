@@ -26,7 +26,7 @@ def test_booking_delete_requires_authentication():
 
     client = APIClient()
     url = reverse("v1:booking-delete", kwargs={"pk": b.pk})
-    r = client.post(url, {}, format="json")
+    r = client.delete(url)
     assert r.status_code in (401, 403)
 
 
@@ -45,13 +45,17 @@ def test_owner_can_delete_future_booking_204():
     )
 
     client = APIClient()
-    client.force_authenticate(user=user)
+    client.force_authenticate(user=owner)
+
 
     url = reverse("v1:booking-delete", kwargs={"pk": b.pk})
-    r = client.post(url, {}, format="json")
+    r = client.delete(url)
+
 
     assert r.status_code == 204
-    assert Booking.objects.filter(pk=b.pk).exists() is False
+    b.refresh_from_db()
+    assert b.is_deleted is True
+
 
 
 @pytest.mark.django_db
@@ -72,8 +76,11 @@ def test_non_owner_cannot_delete_booking_404():
     client = APIClient()
     client.force_authenticate(user=user2)
 
+
+
     url = reverse("v1:booking-delete", kwargs={"pk": b.pk})
-    r = client.post(url, {}, format="json")
+    r = client.delete(url)
+
 
     # because queryset is filtered by user, non-owner gets 404
     assert r.status_code == 404
@@ -94,9 +101,11 @@ def test_cannot_delete_started_booking_400():
     )
 
     client = APIClient()
-    client.force_authenticate(user=user)
+    client.force_authenticate(user=owner)
+
 
     url = reverse("v1:booking-delete", kwargs={"pk": b.pk})
-    r = client.post(url, {}, format="json")
+    r = client.delete(url)
+
 
     assert r.status_code == 400

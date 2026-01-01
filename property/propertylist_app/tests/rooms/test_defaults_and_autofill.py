@@ -48,13 +48,10 @@ def valid_step1_payload():
 
     return {
         "title": "Nice double room in shared flat",
-        "description": (
-        "Bright double room in a friendly flat near the city centre with easy "
-        "access to transport, shops, and parks. Suitable for a tidy professional "
-        "or student looking for a comfortable and peaceful home." ),
+        "description": "This is a bright and spacious room with plenty of natural light, modern furnishings, fast broadband, secure entry, and excellent transport links to shops and the city centre.",
+        "location": "SW1A 1AA",
         "price_per_month": "750.00",
         "security_deposit": "750.00",
-        "location": "SW1A 1AA, London",
         "available_from": future_available_from,
         "availability_from_time": "10:00",
         "availability_to_time": "18:00",

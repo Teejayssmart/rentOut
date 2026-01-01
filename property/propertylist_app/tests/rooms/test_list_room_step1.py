@@ -69,11 +69,10 @@ def valid_step1_payload():
 
     return {
         "title": "Nice double room in shared flat",
-        "description": "Bright double room close to city centre.",
+        "description": "This is a bright and spacious room with plenty of natural light, modern furnishings, fast broadband, secure entry, and excellent transport links to shops and the city centre.",
+        "location": "SW1A 1AA",
         "price_per_month": "750.00",
         "security_deposit": "750.00",
-        "location": "SW1A 1AA, London",   # postcode is stored inside location for now
-
         # Always future so Room.clean() doesn’t reject it
         "available_from": future_available_from,
 

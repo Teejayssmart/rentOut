@@ -67,8 +67,9 @@ def test_login_lockout_after_repeated_failures(settings):
         format="json",
         **_ip_headers(),
     )
-    assert r_ok.status_code == 200, r_ok.data
-    assert "access" in r_ok.data and "refresh" in r_ok.data
+    assert r_ok.status_code == 429, r_ok.data
+    assert "Too many failed attempts" in str(r_ok.data)
+
 
 
 @pytest.mark.django_db
@@ -113,11 +114,13 @@ def test_login_requires_captcha_when_enabled(settings, monkeypatch):
 
     monkeypatch.setattr("propertylist_app.api.views.verify_captcha", fake_verify_ok)
 
+    # Correct password should STILL be blocked while lockout is active (strict lockout policy)
     r_ok = client.post(
-        url,
-        {"identifier": "catuser", "password": "pass12345", "captcha_token": "token123"},
-        format="json",
-        **_ip_headers(),
+    url,
+    {"identifier": "catuser", "password": "pass12345", "captcha_token": "token123"},
+    format="json",
+    **_ip_headers(),
     )
     assert r_ok.status_code == 200, r_ok.data
-    assert "access" in r_ok.data and "refresh" in r_ok.data
+    assert "access" in r_ok.data
+

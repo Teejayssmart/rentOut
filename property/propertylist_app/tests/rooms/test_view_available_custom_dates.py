@@ -41,10 +41,10 @@ def valid_step1_payload():
 
     return {
         "title": "Room with custom viewing dates",
-        "description": "Nice room, specific viewing days only.",
+        "description": "This is a bright and spacious room with plenty of natural light, modern furnishings, fast broadband, secure entry, and excellent transport links to shops and the city centre.",
+        "location": "SW1A 1AA",
         "price_per_month": "800.00",
         "security_deposit": "800.00",
-        "location": "SW1A 1AA, London",
         "available_from": future_available_from,
         "availability_from_time": "10:00",
         "availability_to_time": "18:00",

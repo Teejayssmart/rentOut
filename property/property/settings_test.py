@@ -24,6 +24,8 @@ CACHES = {
 }
 
 
+LOGIN_FAIL_LIMIT = 3
+LOGIN_LOCKOUT_SECONDS = 300
 
 
 
@@ -33,6 +35,8 @@ import os, tempfile
 MEDIA_ROOT = os.path.join(tempfile.gettempdir(), "test_media_rentout")
 os.makedirs(MEDIA_ROOT, exist_ok=True)
 
+# DRF: make default throttles generous so they don’t trip unrelated tests.
+# (Tests that *expect* throttling use override_settings to set narrow rates.)
 # DRF: make default throttles generous so they don’t trip unrelated tests.
 # (Tests that *expect* throttling use override_settings to set narrow rates.)
 REST_FRAMEWORK = {
@@ -49,7 +53,6 @@ REST_FRAMEWORK = {
         "otp-verify": "10000/hour",
         "otp-resend": "10000/hour",
 
-
         # Scopes used in your views/tests:
         "login": "10000/hour",
         "register": "10000/hour",
@@ -63,12 +66,11 @@ REST_FRAMEWORK = {
         "report-create": "10000/hour",
         "moderation": "10000/hour",
     },
-    
     "EXCEPTION_HANDLER": "rest_framework.views.exception_handler",
     "TEST_REQUEST_DEFAULT_FORMAT": "json",
+        
+    }
 
-    
-}
 
 # Stripe keys safe defaults
 STRIPE_SECRET_KEY = "sk_test_dummy"
@@ -93,10 +95,12 @@ result_backend = "cache+memory://"
 task_always_eager = True
 task_eager_propagates = True
 
-CELERY_BROKER_URL = broker_url
-CELERY_RESULT_BACKEND = result_backend
-CELERY_TASK_ALWAYS_EAGER = task_always_eager
-CELERY_TASK_EAGER_PROPAGATES = task_eager_propagates
+CELERY_BROKER_URL = "redis://localhost:6379/0"
+CELERY_RESULT_BACKEND = "redis://localhost:6379/1"
+
+CELERY_TASK_ALWAYS_EAGER = True
+CELERY_TASK_EAGER_PROPAGATES = True
+
 
 
 

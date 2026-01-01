@@ -1,39 +1,21 @@
-from django.contrib.auth.models import User
+# user_app/tests.py
 from django.urls import reverse
-
 from rest_framework import status
 from rest_framework.test import APITestCase
-from rest_framework.authtoken.models import Token
-
-class ResgisterTestCase(APITestCase):
-  
-  def test_register(self):
-    data = {
-      "username": "testcase",
-      "email": "testcase@example.com",
-      "password": "NewPassword@123",
-      "password2": "NewPassword@123"
-    }
-    response = self.client.post(reverse('v1:auth-register'), data)  
-    self.assertEqual(response.status_code, status.HTTP_201_CREATED)
 
 
-class LoginLogoutTestCase(APITestCase):
-  
-  def SetUp(self):
-    self.user = User.objects.create_user(username="example",password="NewPassword@123")  
-    
-    def test_login(self):
-      data = {
-        "username": "example",
-        "password": "NewPassword@123"
-      }
-      response = self.client.post(reverse('login'),data)
-      self.assertEqual(response.satus_code, status.HTTP_200_OK)
-      
-     
-    def test_logout(self):
-      self.token = Token.onjects.get(user__username="example")  
-      self.client.credentials(HTTP_AUTHORIZATION='Token' + self.token.key)
-      response = self.client.post(reverse('logout'))
-      self.assertEqual(response.status_code, status.HTTP_200_OK)
+class RegisterTestCase(APITestCase):
+    def test_register(self):
+        data = {
+            "username": "testcase",
+            "email": "testcase@example.com",
+            "password": "NewPassword@123",
+            # include any fields your register serializer requires:
+            "password2": "NewPassword@123",
+            "terms_accepted": True,
+            "terms_version": "v1",
+            "role": "seeker",
+        }
+
+        response = self.client.post(reverse("v1:auth-register"), data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)

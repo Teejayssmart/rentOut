@@ -49,10 +49,10 @@ def valid_step1_payload():
 
     return {
         "title": "Room with viewing window",
-        "description": "Test room used for availability time window tests.",
+        "description": "This is a bright and spacious room with plenty of natural light, modern furnishings, fast broadband, secure entry, and excellent transport links to shops and the city centre.",
+        "location": "SW1A 1AA",
         "price_per_month": "750.00",
         "security_deposit": "750.00",
-        "location": "SW1A 1AA, London",
         "available_from": future_available_from,
         "availability_from_time": "10:00",
         "availability_to_time": "18:00",
@@ -77,11 +77,14 @@ def test_availability_time_valid_window(auth_client, valid_step1_payload):
     url = reverse("api:room-list")
 
     payload = {
-        **valid_step1_payload,
-        "availability_from_time": "09:30",
-        "availability_to_time": "17:45",
-        "action": "next",
+    **valid_step1_payload,
+    "description": "This is a bright and spacious room in a quiet home with fast WiFi, bills included, and good transport links to shops and the city centre.",
+    "location": "SW1A 1AA",
+    "availability_from_time": "09:30",
+    "availability_to_time": "17:45",
+    "action": "next",
     }
+
 
     response = auth_client.post(url, payload, format="json")
 

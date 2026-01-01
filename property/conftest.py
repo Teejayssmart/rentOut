@@ -130,13 +130,14 @@ def room_factory(db, user_factory):
         property_owner=None,
         category_name="Room",
         title="Test room",
-        description="Test description",
+        description="This is a well presented room with plenty of natural light, modern furnishings, good storage space, and excellent transport links nearby.",
         price_per_month="750.00",
-        location="London",
+        location="SW1A 1AA",
         property_type="flat",
         category=None,
         **overrides,
-    ):
+        ):
+        
         if property_owner is None:
             property_owner = user_factory(username="owner", email="owner@example.com")
 

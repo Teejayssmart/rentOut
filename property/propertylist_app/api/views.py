@@ -961,56 +961,72 @@ class LoginView(APIView):
     throttle_scope = "login"
 
     def post(self, request):
-        if settings.ENABLE_CAPTCHA:
-            token = (request.data.get("captcha_token") or "").strip()
-            if not verify_captcha(token, request.META.get("REMOTE_ADDR", "")):
-                return Response({"detail": "CAPTCHA verification failed."},
-                                status=status.HTTP_400_BAD_REQUEST)
+        data = request.data.copy()
 
-        ser = LoginSerializer(data=request.data)  # expects: identifier, password
+        if "identifier" not in data:
+            if "username" in data:
+                data["identifier"] = data.get("username")
+            elif "email" in data:
+                data["identifier"] = data.get("email")
+
+        identifier_for_lock = (data.get("identifier") or "").strip()
+        ip = request.META.get("REMOTE_ADDR", "") or ""
+
+        if identifier_for_lock and is_locked_out(ip, identifier_for_lock):
+            return Response(
+                {"detail": "Too many failed attempts. Try again later."},
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
+
+        if settings.ENABLE_CAPTCHA:
+            token = (data.get("captcha_token") or "").strip()
+            if not verify_captcha(token, ip):
+                return Response(
+                    {"detail": "CAPTCHA verification failed."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        ser = LoginSerializer(data=data)  # expects: identifier, password
         ser.is_valid(raise_exception=True)
 
         identifier = ser.validated_data["identifier"]  # username OR email
         password = ser.validated_data["password"]
-        ip = request.META.get("REMOTE_ADDR", "")
 
-        # Resolve identifier to username if an email was provided
         lookup_username = identifier
         if "@" in identifier:
             try:
                 u = get_user_model().objects.get(email__iexact=identifier)
                 lookup_username = u.username
             except get_user_model().DoesNotExist:
-                pass  # fall through: authenticate will fail
+                pass
 
         user = authenticate(request, username=lookup_username, password=password)
         if user:
-            # Block first login until email verified
             if not getattr(user, "profile", None) or not user.profile.email_verified:
                 return Response(
                     {"detail": "Please verify your email with the 6-digit code we sent."},
                     status=status.HTTP_403_FORBIDDEN,
                 )
 
-            # success
-            clear_login_failures(ip, identifier)
+            clear_login_failures(ip, identifier_for_lock or identifier)
             refresh = RefreshToken.for_user(user)
             return Response(
                 {"refresh": str(refresh), "access": str(refresh.access_token)},
                 status=status.HTTP_200_OK,
             )
 
-        # failure paths
-        if is_locked_out(ip, identifier):
+        register_login_failure(ip, identifier_for_lock or identifier)
+
+        if identifier_for_lock and is_locked_out(ip, identifier_for_lock):
             return Response(
                 {"detail": "Too many failed attempts. Try again later."},
                 status=status.HTTP_429_TOO_MANY_REQUESTS,
             )
 
-        register_login_failure(ip, identifier)
-        return Response({"detail": "Invalid credentials."},
-                        status=status.HTTP_400_BAD_REQUEST)
-
+        return Response(
+            {"detail": "Invalid credentials."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
 
 class LogoutView(APIView):
     permission_classes = [IsAuthenticated]
@@ -2091,7 +2107,7 @@ class MySavedRoomsView(generics.ListAPIView):
             .filter(id__in=saved_qs.values_list("room_id", flat=True))
             .annotate(saved_id=Subquery(latest_saved_id))
             .select_related("category")
-            .prefetch_related("reviews")
+            
         )
 
         ordering = (self.request.query_params.get("ordering") or "-saved_at").strip()
@@ -2816,14 +2832,27 @@ class BookingDeleteView(APIView):
 
     def delete(self, request, pk):
         qs = Booking.objects.filter(is_deleted=False)
-        qs = qs if request.user.is_staff else qs.filter(user=request.user)
+
+        if not request.user.is_staff:
+            qs = qs.filter(
+                Q(user=request.user) | Q(room__property_owner=request.user)
+            )
+
         booking = get_object_or_404(qs, pk=pk)
+
+        now = timezone.now()
+        if booking.start and booking.start <= now:
+            return Response(
+                {"detail": "Cannot delete a booking that has started."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         booking.is_deleted = True
         booking.deleted_at = timezone.now()
         booking.save(update_fields=["is_deleted", "deleted_at"])
 
         return Response(status=status.HTTP_204_NO_CONTENT)
+
 
 
 # --------------------

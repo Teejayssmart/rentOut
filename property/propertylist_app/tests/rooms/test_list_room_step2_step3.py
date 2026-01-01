@@ -41,16 +41,18 @@ def test_step2_next_updates_room_partial_fields(auth_client, valid_step1_payload
     url = reverse("api:room-detail", args=[room.id])
 
     patch_payload = {
-        "description": "Updated description from step 2",
-        "action": "next",
+    "description": "Updated description from step 2 with enough detail to pass validation, including natural light, modern furniture, secure access, fast broadband, and excellent transport links nearby.",
+    "action": "next",
     }
+
 
     response = auth_client.patch(url, patch_payload, format="json")
 
     assert response.status_code == status.HTTP_200_OK, response.data
 
     room.refresh_from_db()
-    assert room.description == "Updated description from step 2"
+    assert room.description == patch_payload["description"]
+
 
 
 @pytest.mark.django_db
@@ -65,16 +67,18 @@ def test_step2_save_and_close_updates_and_returns_200(auth_client, valid_step1_p
     url = reverse("api:room-detail", args=[room.id])
 
     patch_payload = {
-        "description": "Draft description saved from step 2",
-        "action": "save_close",
+    "description": "Draft description saved from step 2 with enough detail to pass validation, including natural light, modern furniture, secure access, fast broadband, and excellent transport links nearby.",
+    "action": "save_close",
     }
+
 
     response = auth_client.patch(url, patch_payload, format="json")
 
     assert response.status_code == status.HTTP_200_OK, response.data
 
     room.refresh_from_db()
-    assert room.description == "Draft description saved from step 2"
+    assert room.description == patch_payload["description"]
+
 
 
 @pytest.mark.django_db
@@ -89,7 +93,7 @@ def test_step3_next_sets_location(auth_client, valid_step1_payload):
     url = reverse("api:room-detail", args=[room.id])
 
     patch_payload = {
-        "location": "London",
+        "location": "SW1A 1AA",
         "action": "next",
     }
 
@@ -98,7 +102,8 @@ def test_step3_next_sets_location(auth_client, valid_step1_payload):
     assert response.status_code == status.HTTP_200_OK, response.data
 
     room.refresh_from_db()
-    assert room.location == "London"
+    assert room.location == patch_payload["location"]
+
 
 
 @pytest.mark.django_db
@@ -113,7 +118,7 @@ def test_step3_save_and_close_sets_location(auth_client, valid_step1_payload):
     url = reverse("api:room-detail", args=[room.id])
 
     patch_payload = {
-        "location": "Manchester",
+        "location": "M1 1AE",
         "action": "save_close",
     }
 
@@ -122,4 +127,5 @@ def test_step3_save_and_close_sets_location(auth_client, valid_step1_payload):
     assert response.status_code == status.HTTP_200_OK, response.data
 
     room.refresh_from_db()
-    assert room.location == "Manchester"
+    assert room.location == patch_payload["location"]
+
