@@ -170,18 +170,7 @@ REST_FRAMEWORK = {
         "rest_framework.throttling.AnonRateThrottle",
         "rest_framework.throttling.ScopedRateThrottle",
     ],
-    # "DEFAULT_THROTTLE_RATES": {
-    #     "user": "1000/day",
-    #     "anon": "1000/day",
-    #     "login": "100/hour" if not TESTING else "10000/hour",
-    #     "register_anon": "20/hour" if not TESTING else "10000/hour",
-    #     "message_user": "2/hour",
-    #     "messaging": "100/hour" if not TESTING else "10000/hour",
-    #     "review-detail": "100/hour" if not TESTING else "10000/hour",
-    #     "report-create": "10/hour" if not TESTING else "10000/hour",
-    #     "password-reset": "10/hour" if not TESTING else "10000/hour",
-    #     "password-reset-confirm": "10/hour" if not TESTING else "10000/hour",
-    # },
+    
     
      "DEFAULT_THROTTLE_RATES": {
         "user": "10000/hour",
@@ -375,37 +364,55 @@ CELERY_TASK_ROUTES = {
     "propertylist_app.expire_paid_listings": {"queue": "maintenance"},
 }
 
-# If you prefer, you can also declare queues, but Celery will create them on demand.
+CELERY_BEAT_SCHEDULE = {
+    # Notifications
+    "send-due-notifications-every-minute": {
+        "task": "notifications.tasks.send_due_notifications",
+        "schedule": crontab(minute="*"),
+    },
+    "notify-listing-expiring-daily-7am": {
+        "task": "notifications.tasks.notify_listing_expiring",
+        "schedule": crontab(hour=7, minute=0),
+    },
+    "notify-upcoming-bookings-hourly": {
+        "task": "propertylist_app.services.tasks.notify_upcoming_bookings",
+        "schedule": crontab(minute=0),  # every hour
+        "args": (24,),
+    },
+    "notify-completed-viewings-hourly": {
+        "task": "propertylist_app.notifications.tasks.notify_completed_viewings",
+        "schedule": crontab(minute=0),  # every hour
+    },
 
-
-try:
-    from celery.schedules import crontab
-    CELERY_BEAT_SCHEDULE = {
-        "send-due-notifications-every-minute": {
-            "task": "notifications.tasks.send_due_notifications",
-            "schedule": crontab(minute="*"),
-        },
-        "notify-listing-expiring-daily-7am": {
-            "task": "notifications.tasks.notify_listing_expiring",
-            "schedule": crontab(hour=7, minute=0),
-        },
-        # Add alongside your other two entries
-        "expire-paid-listings-daily-03:00": {
+    # Listings & accounts
+    "expire-paid-listings-daily-03:00": {
         "task": "propertylist_app.expire_paid_listings",
         "schedule": crontab(hour=3, minute=0),
-        },
-        # run every day at 03:10 (UK time if your server TZ is Europe/London + USE_TZ properly handled)
-        "delete_scheduled_accounts_daily": {
-            "task": "propertylist_app.delete_scheduled_accounts",
-            "schedule": crontab(hour=3, minute=10),
-        },
-        
-        }
-except Exception:
-    # Celery not installed yet? No problem — run without beat for now.
-    CELERY_BEAT_SCHEDULE = {}
+    },
+    "delete-scheduled-accounts-daily-03:10": {
+        "task": "propertylist_app.delete_scheduled_accounts",
+        "schedule": crontab(hour=3, minute=10),
+    },
+
+    # Reviews (nightly refresh, Option A)
+    "refresh-room-ratings-nightly-02:30": {
+        "task": "propertylist_app.refresh_room_ratings_nightly",
+        "schedule": crontab(hour=2, minute=30),
+    },
     
+    "tenancy-prompts-sweep-daily-03:20": {
+    "task": "propertylist_app.tasks.task_tenancy_prompts_sweep",
+    "schedule": crontab(hour=3, minute=20),
+    },
     
+    "refresh_tenancy_status_and_review_windows_daily" : {
+    "task": "propertylist_app.tasks.task_refresh_tenancy_status_and_review_windows",
+    "schedule": 60 * 60 * 24,  # daily
+},
+
+}
+
+ 
 # ---- Caching knobs ----
 CACHE_KEY_PREFIX = "rentout"
 CACHE_DEFAULT_TTL = 60  # seconds; safe default for list/detail
@@ -413,13 +420,7 @@ CACHE_SEARCH_TTL = 120  # seconds; search is slightly longer
     
  
 
-CELERY_BEAT_SCHEDULE = {
-    "notify-upcoming-bookings-hourly": {
-        "task": "propertylist_app.services.tasks.notify_upcoming_bookings",
-        "schedule": crontab(minute=0),  # every hour
-        "args": (24,),  # look 24 hours ahead
-    },
-}
+
 
 # Frontend base URL used for links in emails
 FRONTEND_BASE_URL = "https://rentout.co.uk"  # change later
@@ -428,13 +429,5 @@ FRONTEND_BASE_URL = "https://rentout.co.uk"   # change to your real domain
 
    
 
-
-CELERY_BEAT_SCHEDULE = {
-    "notify-completed-viewings-hourly": {
-        "task": "propertylist_app.notifications.tasks.notify_completed_viewings",
-        "schedule": crontab(minute=0),  # every hour
-        "args": (),
-    },
-}
 
 

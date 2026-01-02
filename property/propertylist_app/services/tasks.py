@@ -162,3 +162,6 @@ def notify_upcoming_bookings(hours_ahead: int = 24):
                     fail_silently=True,
                     html_message=html,
                 )
+                
+                
+                

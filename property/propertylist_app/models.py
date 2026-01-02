@@ -773,6 +773,139 @@ class Booking(models.Model):
         ]
 
 
+
+
+# ----------------
+# Tenancy (Rental)
+# ----------------
+class Tenancy(models.Model):
+    STATUS_PROPOSED = "proposed"          # one side proposed (awaiting other side)
+    STATUS_CONFIRMED = "confirmed"        # both sides confirmed, dates locked
+    STATUS_ACTIVE = "active"              # move-in date reached
+    STATUS_ENDED = "ended"                # end date passed (or marked ended)
+    STATUS_CANCELLED = "cancelled"
+
+    STATUS_CHOICES = (
+        (STATUS_PROPOSED, "Proposed"),
+        (STATUS_CONFIRMED, "Confirmed"),
+        (STATUS_ACTIVE, "Active"),
+        (STATUS_ENDED, "Ended"),
+        (STATUS_CANCELLED, "Cancelled"),
+    )
+
+    room = models.ForeignKey(
+        "Room",
+        on_delete=models.CASCADE,
+        related_name="tenancies",
+    )
+
+    landlord = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="tenancies_as_landlord",
+    )
+
+    tenant = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="tenancies_as_tenant",
+    )
+
+    proposed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="tenancy_proposals_made",
+    )
+
+    move_in_date = models.DateField()
+    duration_months = models.PositiveSmallIntegerField(
+        validators=[MinValueValidator(1), MaxValueValidator(12)]
+    )
+
+    # confirmations (who confirmed + when)
+    landlord_confirmed_at = models.DateTimeField(null=True, blank=True)
+    tenant_confirmed_at = models.DateTimeField(null=True, blank=True)
+
+    # if the other party proposes changes, we overwrite move_in_date/duration_months
+    # and reset confirmations (controlled in serializer logic)
+
+    status = models.CharField(
+        max_length=16,
+        choices=STATUS_CHOICES,
+        default=STATUS_PROPOSED,
+        db_index=True,
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    # review timing
+    review_open_at = models.DateTimeField(null=True, blank=True)   # end + 7 days (your rule)
+    review_deadline_at = models.DateTimeField(null=True, blank=True)  # optional, e.g. end + 60 days
+
+    # still-living check
+    still_living_check_at = models.DateTimeField(null=True, blank=True)  # e.g. end - 7 days
+    still_living_confirmed_at = models.DateTimeField(null=True, blank=True)
+    # propertylist_app/models.py
+
+
+
+    still_living_landlord_confirmed_at = models.DateTimeField(null=True, blank=True)
+    still_living_tenant_confirmed_at = models.DateTimeField(null=True, blank=True)
+
+
+    # --- add this new model (place below Tenancy / near related models) ---
+class TenancyExtension(models.Model):
+    STATUS_PROPOSED = "proposed"
+    STATUS_ACCEPTED = "accepted"
+    STATUS_REJECTED = "rejected"
+    STATUS_CANCELED = "canceled"
+
+    STATUS_CHOICES = (
+        (STATUS_PROPOSED, "Proposed"),
+        (STATUS_ACCEPTED, "Accepted"),
+        (STATUS_REJECTED, "Rejected"),
+        (STATUS_CANCELED, "Canceled"),
+    )
+
+    tenancy = models.ForeignKey(
+        "propertylist_app.Tenancy",
+        on_delete=models.CASCADE,
+        related_name="extensions",
+    )
+    proposed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="tenancy_extensions_proposed",
+    )
+
+    proposed_duration_months = models.PositiveIntegerField()
+
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_PROPOSED)
+    responded_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["tenancy", "status"]),
+        ]
+        constraints = [
+            # Only ONE open extension proposal per tenancy at a time
+            models.UniqueConstraint(
+                fields=["tenancy"],
+                condition=Q(status="proposed"),
+                name="uq_open_extension_per_tenancy",
+            ),
+        ]
+
+    def __str__(self):
+        return f"TenancyExtension(tenancy_id={self.tenancy_id}, status={self.status})"
+
+
+
+
 # ------
 # Review
 # ------
@@ -793,6 +926,16 @@ class Review(models.Model):
         blank=True,
     )
 
+
+    tenancy = models.ForeignKey(
+        "Tenancy",
+        on_delete=models.CASCADE,
+        related_name="reviews",
+        null=True,
+        blank=True,
+    )
+  
+     
     reviewer = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
@@ -829,18 +972,25 @@ class Review(models.Model):
         ordering = ["-submitted_at"]
         constraints = [
             models.UniqueConstraint(fields=["booking", "role"], name="uq_review_once_per_booking_role"),
+            models.UniqueConstraint(fields=["tenancy", "role"], name="uq_review_once_per_tenancy_role"),
         ]
-
-    def __str__(self):
-        return f"{self.role} | booking {self.booking_id} | {self.reviewer} → {self.reviewee}"
 
     def save(self, *args, **kwargs):
         end_dt = None
-        if self.booking:
+
+        # Prefer tenancy end-date flow (new)
+        if self.tenancy and self.tenancy.review_open_at:
+            end_dt = self.tenancy.review_open_at  # reveal at review_open_at (which is end + 7 days)
+        elif self.booking:
             end_dt = getattr(self.booking, "end", None) or getattr(self.booking, "end_date", None)
 
         if self.reveal_at is None and end_dt:
-            self.reveal_at = end_dt + timedelta(days=30)
+            # If tenancy flow, reveal_at == review_open_at
+            # If legacy booking flow, keep your existing “+30 days” rule
+            if self.tenancy and self.tenancy.review_open_at:
+                self.reveal_at = end_dt
+            else:
+                self.reveal_at = end_dt + timedelta(days=30)
 
         positives = {
             "responsive",

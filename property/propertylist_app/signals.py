@@ -1,14 +1,9 @@
 from django.db.models.signals import post_save, post_delete
 from django.dispatch import receiver
 from django.db.models import Avg, Count
-
 from .models import Message, Notification, MessageThread, Review, Room
-
-
-
+from django.utils import timezone
 from django.db.models.signals import post_save
-
-
 from propertylist_app.models import (
     Review,
     Message,
@@ -17,19 +12,25 @@ from propertylist_app.models import (
     UserProfile,
     Booking,
 )
-
 from notifications.models import NotificationTemplate, OutboundNotification
-
 from propertylist_app.tasks import task_send_new_message_email
+from django.db.models import Avg, Count, Q
+from propertylist_app.services.reviews import update_room_rating_from_revealed_reviews
+from django.apps import apps
+
+
 
 
 def _recalc_room_rating(room: Room):
     """
-    Room rating is now derived from BOOKING-based reviews.
+    Room rating is derived from both BOOKING-based and TENANCY-based reviews.
+    Only revealed reviews count (double-blind / reveal_at reached).
     """
     agg = Review.objects.filter(
-        booking__room=room,
+        Q(booking__room=room) | Q(tenancy__room=room),
         active=True,
+        reveal_at__isnull=False,
+        reveal_at__lte=timezone.now(),
     ).aggregate(
         avg=Avg("overall_rating"),
         cnt=Count("id"),
@@ -40,11 +41,21 @@ def _recalc_room_rating(room: Room):
     room.save(update_fields=["avg_rating", "number_rating"])
 
 
-@receiver(post_delete, sender=Review)
-def review_deleted(sender, instance: Review, **kwargs):
-    room = getattr(getattr(instance, "booking", None), "room", None)
-    if room is not None:
-        _recalc_room_rating(room)
+
+@receiver(post_save, sender=apps.get_model("propertylist_app", "Review"))
+def review_saved_update_room_rating(sender, instance, created, **kwargs):
+    if not getattr(instance, "room_id", None):
+        return
+    update_room_rating_from_revealed_reviews(instance.room)
+
+
+@receiver(post_delete, sender=apps.get_model("propertylist_app", "Review"))
+def review_deleted_update_room_rating(sender, instance, **kwargs):
+    if not getattr(instance, "room_id", None):
+        return
+    update_room_rating_from_revealed_reviews(instance.room)
+
+
 
 
 def _queue_email(*, user, template_key: str, context: dict | None = None) -> None:

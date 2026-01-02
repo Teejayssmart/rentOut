@@ -3,16 +3,22 @@ User = get_user_model()
 from rest_framework import serializers
 from django.contrib.contenttypes.models import ContentType
 import re
-from rest_framework import serializers
+from dateutil.relativedelta import relativedelta
+from datetime import date, datetime, time, timedelta
+from datetime import date as _date  # add if not already present
+from django.shortcuts import get_object_or_404
+from django.contrib.auth.models import User
+from django.contrib.auth import get_user_model
+from django.db import transaction
 
 
 
-
+from propertylist_app.models import Room, Booking, Tenancy  # ensure Booking + Tenancy imported
 from propertylist_app.models import (
     Room, RoomCategorie, Review, UserProfile, RoomImage,
     SavedRoom, MessageThread, Message, Booking,
     AvailabilitySlot, Payment, Report, Notification, EmailOTP,
-    MessageThreadState, ContactMessage,PhoneOTP,
+    MessageThreadState, ContactMessage,PhoneOTP,Tenancy,
 
 )
 from propertylist_app.validators import (
@@ -31,51 +37,16 @@ from django.utils import timezone
 from django.core import mail
 from django.utils.crypto import get_random_string
 import re
-from datetime import date
 
 
 
+User = get_user_model()
 
 
 
 # --------------------
 # Review Serializer
 # --------------------
-
-
-from rest_framework import serializers
-from propertylist_app.models import Review
-
-
-class ReviewSerializer(serializers.ModelSerializer):
-    """
-    General review serializer used by ReviewDetail / legacy endpoints.
-    Keep it present because views.py imports it.
-    """
-    class Meta:
-        model = Review
-        fields = (
-            "id",
-            "booking",
-            "reviewer",
-            "reviewee",
-            "role",
-            "overall_rating",
-            "review_flags",
-            "notes",
-            "submitted_at",
-            "reveal_at",
-            "active",
-        )
-        read_only_fields = (
-            "id",
-            "reviewer",
-            "reviewee",
-            "overall_rating",
-            "submitted_at",
-            "reveal_at",
-        )
-
 
 class UserReviewListSerializer(serializers.ModelSerializer):
     reviewer_name = serializers.CharField(source="reviewer.username", read_only=True)
@@ -112,12 +83,14 @@ class UserReviewListSerializer(serializers.ModelSerializer):
             return None
 
 class BookingReviewCreateSerializer(serializers.ModelSerializer):
-    booking_id = serializers.IntegerField(write_only=True)
+    booking_id = serializers.IntegerField(write_only=True, required=False)
+    tenancy_id = serializers.IntegerField(write_only=True, required=False)
 
     class Meta:
         model = Review
         fields = (
             "booking_id",
+            "tenancy_id",
             "review_flags",
             "notes",
         )
@@ -126,79 +99,67 @@ class BookingReviewCreateSerializer(serializers.ModelSerializer):
         request = self.context["request"]
         user = request.user
 
+        tenancy_id = attrs.get("tenancy_id")
         booking_id = attrs.get("booking_id")
 
-        try:
-            booking = Booking.objects.select_related("room").get(id=booking_id)
-        except Booking.DoesNotExist:
-            raise serializers.ValidationError("Booking does not exist.")
-
-        # booking must have ended
-        if not booking.end or booking.end > timezone.now():
+        if not tenancy_id:
+            # Booking is viewing, so block review creation via booking
             raise serializers.ValidationError(
-                "You can only review after the booking has ended."
+                "Reviews can only be created after a tenancy ends. booking/viewing reviews are disabled."
             )
 
-        # must be within 30 days
-        review_deadline = booking.end + timezone.timedelta(days=30)
-        if timezone.now() > review_deadline:
-            raise serializers.ValidationError(
-                "The 30-day review window has expired."
-            )
+        tenancy = Tenancy.objects.select_related("room").filter(id=tenancy_id).first()
+        if not tenancy:
+            raise serializers.ValidationError("Tenancy does not exist.")
 
-        tenant = booking.user
-        landlord = booking.room.property_owner
+        if user.id not in {tenancy.tenant_id, tenancy.landlord_id}:
+            raise serializers.ValidationError("You are not allowed to review this tenancy.")
 
-        if user != tenant and user != landlord:
-            raise serializers.ValidationError(
-                "You are not allowed to review this booking."
-            )
+        if tenancy.status not in {Tenancy.STATUS_CONFIRMED, Tenancy.STATUS_ACTIVE, Tenancy.STATUS_ENDED}:
+            raise serializers.ValidationError("Tenancy is not confirmed yet.")
 
-        # determine role
-        if user == tenant:
+        if not tenancy.review_open_at:
+            raise serializers.ValidationError("Tenancy review schedule is not ready yet.")
+
+        if timezone.now() < tenancy.review_open_at:
+            raise serializers.ValidationError("You can only review after the tenancy ends (plus 7 days).")
+
+        if tenancy.review_deadline_at and timezone.now() > tenancy.review_deadline_at:
+            raise serializers.ValidationError("The review window has expired.")
+
+        # determine role + reviewee
+        if user.id == tenancy.tenant_id:
             role = Review.ROLE_TENANT_TO_LANDLORD
-            reviewee = landlord
+            reviewee = tenancy.landlord
         else:
             role = Review.ROLE_LANDLORD_TO_TENANT
-            reviewee = tenant
+            reviewee = tenancy.tenant
 
-        # prevent duplicate review
-        if Review.objects.filter(booking=booking, role=role).exists():
-            raise serializers.ValidationError(
-                "You have already submitted a review for this booking."
-            )
+        if Review.objects.filter(tenancy=tenancy, role=role).exists():
+            raise serializers.ValidationError("You have already submitted a review for this tenancy.")
 
-        # must provide at least flags or notes
         flags = attrs.get("review_flags", [])
         notes = attrs.get("notes")
-        
+
         if flags:
             unknown = [f for f in flags if f not in self.ALLOWED_FLAGS]
             if unknown:
-                raise serializers.ValidationError(
-                    {"review_flags": f"Unknown review flag(s): {', '.join(unknown)}"}
-                )
-
+                raise serializers.ValidationError({"review_flags": f"Unknown review flag(s): {', '.join(unknown)}"})
 
         if not flags and not notes:
-            raise serializers.ValidationError(
-                "Please select at least one checkbox or write a short note."
-            )
+            raise serializers.ValidationError("Please select at least one checkbox or write a short note.")
 
-        # attach server-controlled values
-        attrs["booking"] = booking
+        attrs["tenancy"] = tenancy
+        attrs["booking"] = None
         attrs["reviewer"] = user
         attrs["reviewee"] = reviewee
         attrs["role"] = role
-
         return attrs
 
     def create(self, validated_data):
-        # booking_id is not a model field
-        validated_data.pop("booking_id")
-
+        validated_data.pop("booking_id", None)
+        validated_data.pop("tenancy_id", None)
         return Review.objects.create(**validated_data)
-
 
 
     ALLOWED_FLAGS = {
@@ -223,6 +184,407 @@ class BookingReviewCreateSerializer(serializers.ModelSerializer):
         "broke_rules",
     }
     
+
+
+
+class ReviewSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Review
+        fields = [
+            "id",
+            "booking",
+            "tenancy",
+            "reviewer",
+            "reviewee",
+            "role",
+            "review_flags",
+            "overall_rating",
+            "notes",
+            "submitted_at",
+            "reveal_at",
+            "active",
+        ]
+        read_only_fields = fields
+
+
+class ReviewCreateSerializer(serializers.Serializer):
+    tenancy_id = serializers.IntegerField()
+    review_flags = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+        default=list,
+        allow_empty=True,
+    )
+    notes = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+
+    def validate(self, attrs):
+        request = self.context["request"]
+        user = request.user
+        now = timezone.now()
+
+        tenancy = (
+            Tenancy.objects.select_related("landlord", "tenant")
+            .filter(id=attrs["tenancy_id"])
+            .first()
+        )
+        if not tenancy:
+            raise serializers.ValidationError({"tenancy_id": "Tenancy not found."})
+
+        is_landlord = (user.id == tenancy.landlord_id)
+        is_tenant = (user.id == tenancy.tenant_id)
+        if not (is_landlord or is_tenant):
+            raise serializers.ValidationError("You are not allowed to review this tenancy.")
+
+        # Eligible tenancy state (adjust if you decide 'confirmed' is enough later)
+        if tenancy.status in [Tenancy.STATUS_PROPOSED, Tenancy.STATUS_CANCELLED]:
+            raise serializers.ValidationError("This tenancy is not eligible for review yet.")
+
+        # Review window gating
+        if not tenancy.review_open_at:
+            raise serializers.ValidationError("Reviews are not open for this tenancy yet.")
+
+        if now < tenancy.review_open_at:
+            raise serializers.ValidationError("Reviews are not open for this tenancy yet.")
+
+        if tenancy.review_deadline_at and now > tenancy.review_deadline_at:
+            raise serializers.ValidationError("The review deadline has passed for this tenancy.")
+
+        # Derive role + reviewee securely (client cannot choose)
+        if is_tenant:
+            role = Review.ROLE_TENANT_TO_LANDLORD
+            reviewee_id = tenancy.landlord_id
+        else:
+            role = Review.ROLE_LANDLORD_TO_TENANT
+            reviewee_id = tenancy.tenant_id
+
+        # Prevent duplicates (also backed by uq_review_once_per_tenancy_role)
+        if Review.objects.filter(tenancy=tenancy, role=role).exists():
+            raise serializers.ValidationError("You have already submitted a review for this tenancy.")
+
+        attrs["tenancy"] = tenancy
+        attrs["role"] = role
+        attrs["reviewee_id"] = reviewee_id
+        return attrs
+
+    def create(self, validated_data):
+        request = self.context["request"]
+        user = request.user
+
+        tenancy = validated_data["tenancy"]
+
+        review = Review.objects.create(
+            tenancy=tenancy,
+            booking=None,
+            reviewer=user,
+            reviewee_id=validated_data["reviewee_id"],
+            role=validated_data["role"],
+            review_flags=validated_data.get("review_flags", []),
+            notes=validated_data.get("notes"),
+            active=True,
+            # reveal_at will be set by Review.save() using tenancy.review_open_at
+        )
+        return review
+
+
+
+
+class StillLivingConfirmResponseSerializer(serializers.Serializer):
+    tenancy_id = serializers.IntegerField()
+    landlord_confirmed = serializers.BooleanField()
+    tenant_confirmed = serializers.BooleanField()
+    still_living_confirmed_at = serializers.DateTimeField(allow_null=True)
+
+
+class TenancyExtensionCreateSerializer(serializers.Serializer):
+    proposed_duration_months = serializers.IntegerField(min_value=1, max_value=24)
+
+
+class TenancyExtensionRespondSerializer(serializers.Serializer):
+    action = serializers.ChoiceField(choices=["accept", "reject"])
+
+
+class TenancyExtensionResponseSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    tenancy_id = serializers.IntegerField()
+    proposed_by_user_id = serializers.IntegerField()
+    proposed_duration_months = serializers.IntegerField()
+    status = serializers.CharField()
+    responded_at = serializers.DateTimeField(allow_null=True)
+    created_at = serializers.DateTimeField()
+
+
+
+
+class TenancyProposalSerializer(serializers.Serializer):
+    """
+    Creates a tenancy proposal between a landlord (room owner) and a tenant (any other user).
+
+    Rules:
+    - room_id must exist
+    - counterparty_user_id must be the "other person" (cannot be yourself)
+    - landlord is always room.property_owner
+    - if the requester is the landlord, counterparty is tenant
+    - if the requester is not the landlord, counterparty must be the landlord (prevents proposing to random users)
+    - move_in_date cannot be in the past
+    - duration_months: 1..12
+    - prevents duplicate open proposals for same room + same landlord + same tenant
+    """
+
+    room_id = serializers.IntegerField()
+    counterparty_user_id = serializers.IntegerField()  # landlord supplies tenant, tenant supplies landlord
+    move_in_date = serializers.DateField()
+    duration_months = serializers.IntegerField(min_value=1, max_value=12)
+
+    def _has_completed_viewing(self, *, room, user):
+        now = timezone.now()
+        return Booking.objects.filter(
+            room=room,
+            user=user,
+            is_deleted=False,
+            status=Booking.STATUS_ACTIVE,
+            canceled_at__isnull=True,
+            end__lte=now,  # viewing completed
+        ).exists()
+
+    def validate(self, attrs):
+        request = self.context["request"]
+        user = request.user
+
+        room = Room.objects.select_related("property_owner").filter(id=attrs["room_id"]).first()
+        if not room:
+            raise serializers.ValidationError({"room_id": "Room not found."})
+
+        landlord = getattr(room, "property_owner", None)
+        if not landlord:
+            raise serializers.ValidationError({"room_id": "Room has no property owner."})
+
+        counterparty_id = attrs["counterparty_user_id"]
+        if counterparty_id == user.id:
+            raise serializers.ValidationError({"counterparty_user_id": "Counterparty cannot be yourself."})
+
+        if attrs["move_in_date"] < timezone.localdate():
+            raise serializers.ValidationError({"move_in_date": "Move-in date cannot be in the past."})
+
+        # role resolution
+        if user.id == landlord.id:
+            tenant = User.objects.filter(id=counterparty_id).first()
+            if not tenant:
+                raise serializers.ValidationError({"counterparty_user_id": "Tenant user not found."})
+
+            # enforce: landlord can only choose a tenant who has completed a viewing
+            if not self._has_completed_viewing(room=room, user=tenant):
+                raise serializers.ValidationError(
+                    {"counterparty_user_id": "Tenant must have completed a viewing for this room before tenancy can be proposed."}
+                )
+
+        else:
+            if counterparty_id != landlord.id:
+                raise serializers.ValidationError(
+                    {"counterparty_user_id": "For this room, the counterparty must be the landlord."}
+                )
+            tenant = user
+
+            # enforce: tenant must have completed a viewing
+            if not self._has_completed_viewing(room=room, user=tenant):
+                raise serializers.ValidationError(
+                    {"room_id": "You must have completed a viewing for this room before proposing a tenancy."}
+                )
+
+        
+
+        attrs["room"] = room
+        attrs["landlord"] = landlord
+        attrs["tenant"] = tenant
+        return attrs
+
+    @transaction.atomic
+    def create(self, validated_data):
+        request = self.context["request"]
+        user = request.user
+        now = timezone.now()
+
+        room = validated_data["room"]
+        landlord = validated_data["landlord"]
+        tenant = validated_data["tenant"]
+
+        # proposer auto-confirms their side
+        landlord_confirmed_at = now if user.id == landlord.id else None
+        tenant_confirmed_at = now if user.id == tenant.id else None
+
+        tenancy, created = Tenancy.objects.get_or_create(
+            room=room,
+            tenant=tenant,
+            defaults={
+                "landlord": landlord,
+                "proposed_by": user,
+                "move_in_date": validated_data["move_in_date"],
+                "duration_months": validated_data["duration_months"],
+                "landlord_confirmed_at": landlord_confirmed_at,
+                "tenant_confirmed_at": tenant_confirmed_at,
+                "status": Tenancy.STATUS_PROPOSED,
+            },
+        )
+
+        if not created:
+            # “last write wins” update
+            tenancy.landlord = landlord  # keep consistent with room owner
+            tenancy.proposed_by = user
+            tenancy.move_in_date = validated_data["move_in_date"]
+            tenancy.duration_months = validated_data["duration_months"]
+
+            # reset confirmations: proposer confirmed, other cleared
+            if user.id == landlord.id:
+                tenancy.landlord_confirmed_at = now
+                tenancy.tenant_confirmed_at = None
+            else:
+                tenancy.tenant_confirmed_at = now
+                tenancy.landlord_confirmed_at = None
+
+            tenancy.status = Tenancy.STATUS_PROPOSED
+
+            # clear schedule fields (recomputed on final confirm)
+            tenancy.review_open_at = None
+            tenancy.review_deadline_at = None
+            tenancy.still_living_check_at = None
+            tenancy.still_living_confirmed_at = None
+
+            tenancy.save()
+
+        return tenancy
+
+    
+class TenancyRespondSerializer(serializers.Serializer):
+    """
+    Handles actions on an existing tenancy proposal:
+    - confirm: sets the confirmer's confirmed_at timestamp. If both confirmed, locks schedule + sets review dates.
+    - propose_changes: updates move_in_date/duration_months, resets confirmations, clears schedule fields.
+    - cancel: cancels the tenancy proposal.
+
+    Expected by tests in propertylist_app/tests/tenancies/test_tenancy_proposal_flow.py
+    """
+
+    action = serializers.ChoiceField(choices=["confirm", "propose_changes", "cancel"])
+    move_in_date = serializers.DateField(required=False)
+    duration_months = serializers.IntegerField(min_value=1, max_value=12, required=False)
+
+    def validate(self, attrs):
+        request = self.context["request"]
+        user = request.user
+        tenancy = self.context.get("tenancy")
+
+        if tenancy is None:
+            raise serializers.ValidationError("Tenancy context is required.")
+
+        # only landlord or tenant can respond
+        if user.id not in (tenancy.landlord_id, tenancy.tenant_id):
+            raise serializers.ValidationError("You are not a party to this tenancy.")
+
+        action = attrs["action"]
+
+        if action == "propose_changes":
+            if "move_in_date" not in attrs or "duration_months" not in attrs:
+                raise serializers.ValidationError(
+                    {"non_field_errors": "move_in_date and duration_months are required for propose_changes."}
+                )
+
+            # basic sanity: cannot propose a move-in date in the past
+            if attrs["move_in_date"] < timezone.localdate():
+                raise serializers.ValidationError({"move_in_date": "Move-in date cannot be in the past."})
+
+        return attrs
+
+    @transaction.atomic
+    def save(self, **kwargs):
+        request = self.context["request"]
+        user = request.user
+        tenancy = self.context["tenancy"]
+
+        action = self.validated_data["action"]
+        now = timezone.now()
+
+        TenancyModel = tenancy.__class__
+        STATUS_PROPOSED = getattr(TenancyModel, "STATUS_PROPOSED", "proposed")
+        STATUS_CONFIRMED = getattr(TenancyModel, "STATUS_CONFIRMED", "confirmed")
+        STATUS_ACTIVE = getattr(TenancyModel, "STATUS_ACTIVE", "active")
+        STATUS_CANCELLED = getattr(TenancyModel, "STATUS_CANCELLED", "cancelled")
+
+        def _compute_end_date(move_in_date, duration_months):
+            # accurate month math
+            return move_in_date + relativedelta(months=+int(duration_months))
+
+        def _set_schedule_fields():
+            end_date = _compute_end_date(tenancy.move_in_date, tenancy.duration_months)
+            # review opens end + 7 days (your rule)
+            tenancy.review_open_at = timezone.make_aware(
+                timezone.datetime.combine(end_date, timezone.datetime.min.time())
+            ) + timedelta(days=7)
+
+            # optional deadline: end + 60 days (safe default)
+            tenancy.review_deadline_at = tenancy.review_open_at + timedelta(days=60)
+
+            # still living check: end - 7 days
+            tenancy.still_living_check_at = timezone.make_aware(
+                timezone.datetime.combine(end_date, timezone.datetime.min.time())
+            ) - timedelta(days=7)
+
+        if action == "cancel":
+            tenancy.status = STATUS_CANCELLED
+            tenancy.save(update_fields=["status", "updated_at"] if hasattr(tenancy, "updated_at") else ["status"])
+            return tenancy
+
+        if action == "propose_changes":
+            tenancy.move_in_date = self.validated_data["move_in_date"]
+            tenancy.duration_months = self.validated_data["duration_months"]
+            tenancy.proposed_by = user
+
+            # reset confirmations
+            tenancy.landlord_confirmed_at = None
+            tenancy.tenant_confirmed_at = None
+            tenancy.status = STATUS_PROPOSED
+
+            # clear schedule-related fields (will be recomputed on confirm)
+            tenancy.review_open_at = None
+            tenancy.review_deadline_at = None
+            tenancy.still_living_check_at = None
+            tenancy.still_living_confirmed_at = None
+
+            tenancy.save()
+            return tenancy
+
+        # action == "confirm"
+        if user.id == tenancy.landlord_id and tenancy.landlord_confirmed_at is None:
+            tenancy.landlord_confirmed_at = now
+        if user.id == tenancy.tenant_id and tenancy.tenant_confirmed_at is None:
+            tenancy.tenant_confirmed_at = now
+
+        # if both confirmed → lock schedule + set status
+        if tenancy.landlord_confirmed_at and tenancy.tenant_confirmed_at:
+            today = timezone.localdate()
+            tenancy.status = STATUS_ACTIVE if tenancy.move_in_date <= today else STATUS_CONFIRMED
+            _set_schedule_fields()
+        else:
+            tenancy.status = STATUS_PROPOSED
+
+        tenancy.save()
+        return tenancy
+
+
+
+    
+class TenancyDetailSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Tenancy
+        fields = [
+            "id", "room", "landlord", "tenant", "proposed_by",
+            "move_in_date", "duration_months",
+            "landlord_confirmed_at", "tenant_confirmed_at",
+            "status",
+            "review_open_at", "review_deadline_at",
+            "still_living_check_at", "still_living_confirmed_at",
+            "created_at", "updated_at",
+        ]
+        read_only_fields = fields
+
 
 
 
@@ -1205,9 +1567,6 @@ def _age_in_years(dob: date) -> int:
     if (today.month, today.day) < (dob.month, dob.day):
         years -= 1
     return years
-
-
-
 
 
 

@@ -21,8 +21,14 @@ from propertylist_app.api.views import (
     RoomCategorieAV, RoomCategorieDetailAV, RoomCategorieVS, RoomPreviewView, 
 
     # Reviews
-    UserReview,UserReviewsView,UserReviewSummaryView,
-
+    UserReviewsView,UserReviewSummaryView, ReviewCreateView, ReviewListView, ReviewDetailView,
+    
+    # Tenancy (rental confirmation)
+    TenancyRespondView,TenancyProposeView, MyTenanciesView,TenancyStillLivingConfirmView,TenancyExtensionCreateView,TenancyExtensionRespondView,
+    
+    # Tenancy-based reviews
+    TenancyReviewCreateView,
+    
     # Search & Nearby
     SearchRoomsView, NearbyRoomsView,
 
@@ -108,9 +114,27 @@ urlpatterns = [
     
    
     #path("user-reviews/",                  UserReview.as_view(),       name="user-reviews"),
-    path("user-reviews/", UserReview.as_view(), name="legacy-user-reviews"),
     path("users/<int:user_id>/review-summary/", UserReviewSummaryView.as_view(), name="user-review-summary"),
     path("users/<int:user_id>/reviews/", UserReviewsView.as_view(), name="user-reviews"),
+    path("reviews/", ReviewListView.as_view(), name="review-list"),
+    path("reviews/create/", ReviewCreateView.as_view(), name="review-create"),
+    path("reviews/<int:pk>/", ReviewDetailView.as_view(), name="review-detail"),
+    
+    # Tenancy-based reviews
+    path("tenancies/<int:tenancy_id>/reviews/", TenancyReviewCreateView.as_view(), name="tenancy-review-create"),
+
+
+    # Tenancy (rental confirmation)
+    path("tenancies/<int:tenancy_id>/respond/", TenancyRespondView.as_view(), name="tenancy-respond"),
+    # Tenancy (rental confirmation)
+    path("tenancies/propose/", TenancyProposeView.as_view(), name="tenancy-propose"),
+    path("tenancies/<int:tenancy_id>/respond/", TenancyRespondView.as_view(), name="tenancy-respond"),
+    path("tenancies/mine/", MyTenanciesView.as_view(), name="my-tenancies"),
+
+    path("tenancies/<int:tenancy_id>/still-living/confirm/",TenancyStillLivingConfirmView.as_view(),name="tenancy-still-living-confirm",),
+    path("tenancies/<int:tenancy_id>/extensions/",TenancyExtensionCreateView.as_view(),name="tenancy-extension-create",),
+    path("tenancies/<int:tenancy_id>/extensions/<int:extension_id>/respond/",TenancyExtensionRespondView.as_view(),name="tenancy-extension-respond",),
+
 
 
     # --- Search & discovery ---
@@ -158,7 +182,6 @@ urlpatterns = [
     path("bookings/<int:booking_id>/reviews/", BookingReviewListView.as_view(), name="booking-reviews"),
     path("bookings/<int:booking_id>/reviews/create/", BookingReviewCreateView.as_view(), name="booking-reviews-create"),
 
-    
     
      
     # --- Bookings / suspend---

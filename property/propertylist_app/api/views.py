@@ -1,164 +1,177 @@
 import json
-from datetime import datetime, timedelta
 import random
+from datetime import date, datetime, timedelta
+from decimal import Decimal
+from django.apps import apps
+
+
+from propertylist_app.api.serializers import TenancyProposalSerializer
+from django.db import models
+
+
+
+
+from rest_framework import status as drf_status
 
 
 import stripe
 from django.conf import settings
 from django.contrib.auth import authenticate, get_user_model
-from django.db import transaction, connection
-from django.db.models import Q, Count, OuterRef, Subquery, Sum,Exists, Case, When, Value, CharField,Avg,Max
-from datetime import date
-from decimal import Decimal
-
-
 from django.core import mail
-from django.utils.crypto import get_random_string
-
-
-
+from django.core.cache import cache
+from django.core.exceptions import ValidationError as DjangoValidationError
+from django.db import connection, transaction
+from django.db.models import (
+    Avg,
+    Case,
+    CharField,
+    Count,
+    Exists,
+    Max,
+    OuterRef,
+    Q,
+    Subquery,
+    Sum,
+    Value,
+    When,
+)
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from django.utils.crypto import get_random_string
 from django.views.decorators.csrf import csrf_exempt
-
 from django_filters.rest_framework import DjangoFilterBackend
-
-from django.core.exceptions import ValidationError as DjangoValidationError
-from django.core.cache import cache
-
-from rest_framework import generics, permissions
-from rest_framework import filters, generics, serializers, status, viewsets
+from propertylist_app.tasks import task_send_tenancy_notification
+from rest_framework import filters, generics, permissions, serializers, status, viewsets
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.exceptions import ValidationError, Throttled
-from rest_framework.parsers import MultiPartParser, FormParser
-from rest_framework.permissions import (
-    IsAuthenticated,
-    IsAuthenticatedOrReadOnly,
-    AllowAny,
-    IsAdminUser,
-)
+from rest_framework.exceptions import Throttled, ValidationError,PermissionDenied
+from rest_framework.generics import ListAPIView, RetrieveAPIView
+from rest_framework.parsers import FormParser, MultiPartParser
+from rest_framework.permissions import AllowAny, IsAdminUser, IsAuthenticated, IsAuthenticatedOrReadOnly
 from rest_framework.response import Response
-from rest_framework.throttling import UserRateThrottle, AnonRateThrottle, ScopedRateThrottle
+from rest_framework.throttling import AnonRateThrottle, ScopedRateThrottle, UserRateThrottle
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
-from rest_framework import status, permissions
-from rest_framework.generics import ListAPIView
-from rest_framework.generics import RetrieveAPIView
-
-
 
 # Services
-from propertylist_app.services.geo import geocode_postcode_cached
-from propertylist_app.services.security import (
-    is_locked_out, register_login_failure, clear_login_failures
-)
 from propertylist_app.services.captcha import verify_captcha
-from propertylist_app.services.gdpr import build_export_zip, preview_erasure, perform_erasure
+from propertylist_app.services.gdpr import build_export_zip, perform_erasure, preview_erasure
+from propertylist_app.services.geo import geocode_postcode_cached
+from propertylist_app.services.security import clear_login_failures, is_locked_out, register_login_failure
+from propertylist_app.utils.cache import get_cached_json, make_cache_key, set_cached_json
 from propertylist_app.utils.cached_views import CachedAnonymousGETMixin
-from propertylist_app.utils.cache import make_cache_key, get_cached_json, set_cached_json
-
-
 
 # Models
 from propertylist_app.models import (
-    Room,
-    RoomCategorie,
-    Review,
-    RoomImage,
-    SavedRoom,
-    MessageThread,
+    AuditLog,
+    AvailabilitySlot,
+    Booking,
+    DataExport,
+    EmailOTP,
+    IdempotencyKey,
     Message,
     MessageRead,
-    Booking,
-    AvailabilitySlot,
-    Payment,
-    IdempotencyKey,
-    WebhookReceipt,
-    Report,
-    AuditLog,
-    DataExport,
-    Notification,
-    UserProfile,
-    EmailOTP,
+    MessageThread,
     MessageThreadState,
+    Notification,
+    Payment,
     PhoneOTP,
+    Report,
+    Review,
+    Room,
+    RoomCategorie,
+    RoomImage,
+    SavedRoom,
+    UserProfile,
+    WebhookReceipt,
+    
 )
 
 # Validators / helpers
 from propertylist_app.validators import (
+    assert_no_duplicate_files,
     ensure_idempotency,
-    validate_no_booking_conflict,
-    verify_webhook_signature,
     ensure_webhook_not_replayed,
     haversine_miles,
-    validate_radius_miles,
-    validate_avatar_image,
     validate_avatar_image,
     validate_listing_photos,
-    assert_no_duplicate_files,
+    validate_no_booking_conflict,
+    validate_radius_miles,
+    verify_webhook_signature,
 )
 
 # API plumbing
-from propertylist_app.api.pagination import RoomLOPagination, RoomCPagination
-from propertylist_app.api.permissions import IsAdminOrReadOnly, IsReviewUserOrReadOnly, IsOwnerOrReadOnly
+from propertylist_app.api.pagination import RoomCPagination, RoomLOPagination
+from propertylist_app.api.permissions import IsAdminOrReadOnly, IsOwnerOrReadOnly
 from propertylist_app.api.serializers import (
-    RoomSerializer,
-    RoomCategorieSerializer,
-    ReviewSerializer,
-    RoomImageSerializer,
-    MessageThreadSerializer,
-    MessageSerializer,
-    BookingSerializer,
     AvailabilitySlotSerializer,
-    PaymentSerializer,
-    ReportSerializer,
-    GDPRExportStartSerializer,
-    GDPRDeleteConfirmSerializer,
-    NotificationSerializer,
-    CitySummarySerializer,
-    HomeSummarySerializer,
-    FindAddressSerializer,
-    MessageThreadStateUpdateSerializer,
-    RoomPreviewSerializer,
     BookingReviewCreateSerializer,
-    UserReviewListSerializer,
-    UserReviewSummarySerializer,
+    BookingSerializer,
+    CitySummarySerializer,
+    FindAddressSerializer,
+    GDPRDeleteConfirmSerializer,
+    GDPRExportStartSerializer,
+    HomeSummarySerializer,
+    InboxItemSerializer,
+    MessageSerializer,
+    MessageThreadSerializer,
+    MessageThreadStateUpdateSerializer,
+    NotificationPreferencesSerializer,
+    NotificationSerializer,
+    PaymentSerializer,
+    PaymentTransactionListSerializer,
     PhoneOTPStartSerializer,
     PhoneOTPVerifySerializer,
-    ProfilePageSerializer,
-    NotificationPreferencesSerializer,
-    InboxItemSerializer,
-    PaymentTransactionListSerializer,
     PrivacyPreferencesSerializer,
-)
+    ProfilePageSerializer,
+    ReportSerializer,
+    RoomCategorieSerializer,
+    RoomImageSerializer,
+    RoomPreviewSerializer,
+    RoomSerializer,
+    TenancyDetailSerializer,
+    TenancyRespondSerializer,
+    TenancyProposalSerializer,
+    UserReviewListSerializer,
+    UserReviewSummarySerializer,
+    ReviewSerializer,
+    ReviewCreateSerializer,
+    StillLivingConfirmResponseSerializer,
+    TenancyExtensionCreateSerializer,
+    TenancyExtensionRespondSerializer,
+    TenancyExtensionResponseSerializer,
+    )
+
 from propertylist_app.api.throttling import (
+    LoginScopedThrottle,
+    MessageUserThrottle,
+    MessagingScopedThrottle,
+    PasswordResetConfirmScopedThrottle,
+    PasswordResetScopedThrottle,
+    RegisterAnonThrottle,
+    RegisterScopedThrottle,
+    ReportCreateScopedThrottle,
     ReviewCreateThrottle,
     ReviewListThrottle,
-    LoginScopedThrottle,
-    RegisterScopedThrottle,
-    PasswordResetScopedThrottle,
-    PasswordResetConfirmScopedThrottle,
-    ReportCreateScopedThrottle,
-    MessagingScopedThrottle,
-    RegisterAnonThrottle,
-    MessageUserThrottle,
 )
 
 # Local serializers
 from .serializers import (
-    RegistrationSerializer,
-    LoginSerializer,
-    PasswordResetRequestSerializer,
-    PasswordResetConfirmSerializer,
-    UserSerializer,
-    UserProfileSerializer,
-    SearchFiltersSerializer,
-    OnboardingCompleteSerializer,
     ContactMessageSerializer,
+    EmailOTPResendSerializer,
+    EmailOTPVerifySerializer,
+    LoginSerializer,
+    OnboardingCompleteSerializer,
+    PasswordResetConfirmSerializer,
+    PasswordResetRequestSerializer,
     PaymentTransactionDetailSerializer,
+    RegistrationSerializer,
+    SearchFiltersSerializer,
+    UserProfileSerializer,
+    UserSerializer,
 )
 
-from .serializers import EmailOTPVerifySerializer, EmailOTPResendSerializer
+
+
 
 stripe.api_key = settings.STRIPE_SECRET_KEY
 
@@ -182,13 +195,6 @@ def _listing_state_for_room(room):
 # --------------------
 # Reviews
 # --------------------
-class UserReview(generics.ListAPIView):
-    serializer_class = ReviewSerializer
-
-    def get_queryset(self):
-        username = self.request.query_params.get("username")
-        return Review.objects.filter(review_user__username=username)
-    
     
 class UserReviewSummaryView(APIView):
     permission_classes = [permissions.AllowAny]
@@ -242,61 +248,6 @@ class UserReviewSummaryView(APIView):
     
 
 
-class ReviewCreate(generics.CreateAPIView):
-    serializer_class = ReviewSerializer
-    permission_classes = [IsAuthenticated]
-    throttle_classes = [ReviewCreateThrottle]
-
-    def get_queryset(self):
-        return Review.objects.all()
-
-    def perform_create(self, serializer):
-        room_pk = self.kwargs.get("pk")
-        room = get_object_or_404(Room, pk=room_pk)
-        user = self.request.user
-
-        # 1) Block owner reviewing own room
-        if getattr(room, "property_owner_id", None) == user.id:
-            raise ValidationError({"detail": "You cannot review your own room."})
-
-        # # 2) Block duplicates BEFORE saving
-        # if Review.objects.filter(room=room, review_user=user).exists():
-        #     raise ValidationError({"detail": "You have already reviewed this room!"})
-
-        # 3) Save once
-        review = serializer.save(review_user=user, room=room)
-
-        # 4) Update rolling average safely
-        current_count = int(getattr(room, "number_rating", 0) or 0)
-        current_avg = float(getattr(room, "avg_rating", 0) or 0.0)
-        new_count = current_count + 1
-        room.avg_rating = (
-            ((current_avg * current_count) + review.rating) / new_count
-            if new_count > 0 else float(review.rating)
-        )
-        room.number_rating = new_count
-        room.save(update_fields=["avg_rating", "number_rating"])
-
-
-# class ReviewList(generics.ListAPIView):
-#     serializer_class = ReviewSerializer
-#     filter_backends = [DjangoFilterBackend]
-#     filterset_fields = ["review_user__username", "active"]
-
-#     def get_queryset(self):
-#         return Review.objects.filter(room=self.kwargs["pk"])
-
-
-# class ReviewDetail(generics.RetrieveUpdateDestroyAPIView):
-#     queryset = Review.objects.all()
-#     serializer_class = ReviewSerializer
-#     permission_classes = [IsReviewUserOrReadOnly]
-#     throttle_classes = [ScopedRateThrottle, AnonRateThrottle]
-#     throttle_scope = "review-detail"
-
-
-
-
 class BookingReviewCreateView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
@@ -320,6 +271,322 @@ class BookingReviewCreateView(APIView):
             )
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+
+class ReviewCreateView(generics.CreateAPIView):
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = ReviewCreateSerializer
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data, context={"request": request})
+        serializer.is_valid(raise_exception=True)
+        review = serializer.save()
+        return Response(ReviewSerializer(review).data, status=status.HTTP_201_CREATED)
+
+
+class ReviewListView(generics.ListAPIView):
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = ReviewSerializer
+
+    def get_queryset(self):
+        user = self.request.user
+        now = timezone.now()
+
+        return (
+            Review.objects.select_related("reviewer", "reviewee", "tenancy")
+            .filter(active=True)
+            .filter(
+                models.Q(reveal_at__lte=now) |
+                models.Q(reviewer_id=user.id) |
+                models.Q(reviewee_id=user.id)
+            )
+            .order_by("-submitted_at")
+        )
+
+
+class ReviewDetailView(generics.RetrieveAPIView):
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = ReviewSerializer
+    queryset = Review.objects.select_related("reviewer", "reviewee", "tenancy").filter(active=True)
+
+    def get_object(self):
+        obj = super().get_object()
+        user = self.request.user
+        now = timezone.now()
+
+        is_visible = (
+            (obj.reveal_at and obj.reveal_at <= now) or
+            (obj.reviewer_id == user.id) or
+            (obj.reviewee_id == user.id)
+        )
+        if not is_visible:
+            raise PermissionDenied("You do not have permission to view this review yet.")
+        return obj
+
+
+
+
+class TenancyReviewCreateView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, tenancy_id):
+        serializer = BookingReviewCreateSerializer(
+            data={**request.data, "tenancy_id": tenancy_id},
+            context={"request": request},
+        )
+
+        if serializer.is_valid():
+            review = serializer.save()
+            return Response(
+                {"message": "Review submitted successfully.", "review_id": review.id},
+                status=status.HTTP_201_CREATED,
+            )
+
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+def _get_model(app_label: str, model_name: str):
+    return apps.get_model(app_label, model_name)
+
+
+class TenancyStillLivingConfirmView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, tenancy_id: int):
+        Tenancy = _get_model("propertylist_app", "Tenancy")
+
+        tenancy = Tenancy.objects.select_related("landlord", "tenant").filter(id=tenancy_id).first()
+        if not tenancy:
+            return Response({"detail": "Tenancy not found."}, status=drf_status.HTTP_404_NOT_FOUND)
+
+        user = request.user
+
+        if user.id not in {tenancy.landlord_id, tenancy.tenant_id}:
+            return Response({"detail": "Forbidden."}, status=drf_status.HTTP_403_FORBIDDEN)
+
+        # Must be active (adjust if your business rules allow confirmed too)
+        if getattr(tenancy, "status", None) not in {getattr(Tenancy, "STATUS_ACTIVE", "active")}:
+            return Response({"detail": "Tenancy must be active."}, status=drf_status.HTTP_400_BAD_REQUEST)
+
+        if not tenancy.still_living_check_at:
+            return Response({"detail": "Still-living check is not scheduled."}, status=drf_status.HTTP_400_BAD_REQUEST)
+
+        if tenancy.still_living_check_at > timezone.now():
+            return Response({"detail": "Still-living check is not due yet."}, status=drf_status.HTTP_400_BAD_REQUEST)
+
+        now = timezone.now()
+        updated_fields = []
+
+        # Idempotent per party
+        if user.id == tenancy.landlord_id and tenancy.still_living_landlord_confirmed_at is None:
+            tenancy.still_living_landlord_confirmed_at = now
+            updated_fields.append("still_living_landlord_confirmed_at")
+
+        if user.id == tenancy.tenant_id and tenancy.still_living_tenant_confirmed_at is None:
+            tenancy.still_living_tenant_confirmed_at = now
+            updated_fields.append("still_living_tenant_confirmed_at")
+
+        # If both done -> confirm
+        if (
+            tenancy.still_living_landlord_confirmed_at
+            and tenancy.still_living_tenant_confirmed_at
+            and tenancy.still_living_confirmed_at is None
+        ):
+            tenancy.still_living_confirmed_at = now
+            updated_fields.append("still_living_confirmed_at")
+
+        if updated_fields:
+            tenancy.save(update_fields=updated_fields)
+
+        payload = {
+            "tenancy_id": tenancy.id,
+            "landlord_confirmed": bool(tenancy.still_living_landlord_confirmed_at),
+            "tenant_confirmed": bool(tenancy.still_living_tenant_confirmed_at),
+            "still_living_confirmed_at": tenancy.still_living_confirmed_at,
+        }
+        return Response(StillLivingConfirmResponseSerializer(payload).data, status=drf_status.HTTP_200_OK)
+
+
+class TenancyExtensionCreateView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, tenancy_id: int):
+        Tenancy = _get_model("propertylist_app", "Tenancy")
+        TenancyExtension = _get_model("propertylist_app", "TenancyExtension")
+
+        tenancy = Tenancy.objects.select_related("landlord", "tenant").filter(id=tenancy_id).first()
+        if not tenancy:
+            return Response({"detail": "Tenancy not found."}, status=drf_status.HTTP_404_NOT_FOUND)
+
+        user = request.user
+        if user.id not in {tenancy.landlord_id, tenancy.tenant_id}:
+            return Response({"detail": "Forbidden."}, status=drf_status.HTTP_403_FORBIDDEN)
+
+        # Disallow if ended
+        ended_statuses = {getattr(Tenancy, "STATUS_ENDED", "ended"), getattr(Tenancy, "STATUS_CANCELED", "canceled")}
+        if getattr(tenancy, "status", None) in ended_statuses:
+            return Response({"detail": "Cannot extend an ended tenancy."}, status=drf_status.HTTP_400_BAD_REQUEST)
+
+        ser = TenancyExtensionCreateSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+
+        # Only one open proposal at a time
+        open_exists = TenancyExtension.objects.filter(
+            tenancy=tenancy,
+            status=TenancyExtension.STATUS_PROPOSED,
+        ).exists()
+        if open_exists:
+            return Response({"detail": "An extension proposal is already open."}, status=drf_status.HTTP_400_BAD_REQUEST)
+
+        ext = TenancyExtension.objects.create(
+            tenancy=tenancy,
+            proposed_by=user,
+            proposed_duration_months=ser.validated_data["proposed_duration_months"],
+            status=TenancyExtension.STATUS_PROPOSED,
+        )
+
+        payload = {
+            "id": ext.id,
+            "tenancy_id": ext.tenancy_id,
+            "proposed_by_user_id": ext.proposed_by_id,
+            "proposed_duration_months": ext.proposed_duration_months,
+            "status": ext.status,
+            "responded_at": ext.responded_at,
+            "created_at": ext.created_at,
+        }
+        return Response(TenancyExtensionResponseSerializer(payload).data, status=drf_status.HTTP_201_CREATED)
+
+
+class TenancyExtensionRespondView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, tenancy_id: int, extension_id: int):
+        Tenancy = _get_model("propertylist_app", "Tenancy")
+        TenancyExtension = _get_model("propertylist_app", "TenancyExtension")
+
+        tenancy = Tenancy.objects.select_related("landlord", "tenant").filter(id=tenancy_id).first()
+        if not tenancy:
+            return Response({"detail": "Tenancy not found."}, status=drf_status.HTTP_404_NOT_FOUND)
+
+        ext = TenancyExtension.objects.select_related("tenancy").filter(id=extension_id, tenancy_id=tenancy_id).first()
+        if not ext:
+            return Response({"detail": "Extension not found."}, status=drf_status.HTTP_404_NOT_FOUND)
+
+        user = request.user
+        if user.id not in {tenancy.landlord_id, tenancy.tenant_id}:
+            return Response({"detail": "Forbidden."}, status=drf_status.HTTP_403_FORBIDDEN)
+
+        # Only counterparty can respond
+        if user.id == ext.proposed_by_id:
+            return Response({"detail": "Proposer cannot respond."}, status=drf_status.HTTP_403_FORBIDDEN)
+
+        if ext.status != TenancyExtension.STATUS_PROPOSED:
+            return Response({"detail": "Extension is not open."}, status=drf_status.HTTP_400_BAD_REQUEST)
+
+        ser = TenancyExtensionRespondSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+
+        now = timezone.now()
+        action = ser.validated_data["action"]
+
+        if action == "reject":
+            ext.status = TenancyExtension.STATUS_REJECTED
+            ext.responded_at = now
+            ext.save(update_fields=["status", "responded_at"])
+
+        if action == "accept":
+            ext.status = TenancyExtension.STATUS_ACCEPTED
+            ext.responded_at = now
+            ext.save(update_fields=["status", "responded_at"])
+
+            # Apply extension to tenancy
+            # This assumes tenancy uses duration_months (as in your existing test helpers)
+            if hasattr(tenancy, "duration_months"):
+                tenancy.duration_months = ext.proposed_duration_months
+                tenancy.save(update_fields=["duration_months"])
+
+        payload = {
+            "id": ext.id,
+            "tenancy_id": ext.tenancy_id,
+            "proposed_by_user_id": ext.proposed_by_id,
+            "proposed_duration_months": ext.proposed_duration_months,
+            "status": ext.status,
+            "responded_at": ext.responded_at,
+            "created_at": ext.created_at,
+        }
+        return Response(TenancyExtensionResponseSerializer(payload).data, status=drf_status.HTTP_200_OK)
+
+
+
+class TenancyProposeView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        serializer = TenancyProposalSerializer(
+            data=request.data,
+            context={"request": request},
+        )
+
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        tenancy = serializer.save()
+
+        # Notify the other party (inbox + email via your existing notification system)
+        from propertylist_app.tasks import task_send_tenancy_notification
+        task_send_tenancy_notification.delay(tenancy.id, "proposed")
+
+        return Response(TenancyDetailSerializer(tenancy).data, status=status.HTTP_201_CREATED)
+
+
+
+class TenancyRespondView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, tenancy_id):
+        Tenancy = apps.get_model("propertylist_app", "Tenancy")
+
+        tenancy = (
+            Tenancy.objects.select_related("room", "landlord", "tenant")
+            .filter(id=tenancy_id)
+            .first()
+        )
+        if not tenancy:
+            return Response({"detail": "Tenancy not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = TenancyRespondSerializer(
+            data=request.data,
+            context={"request": request, "tenancy": tenancy},
+        )
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        tenancy = serializer.save()
+
+        from propertylist_app.tasks import task_send_tenancy_notification
+        if tenancy.status == getattr(Tenancy, "STATUS_CONFIRMED", "confirmed"):
+            task_send_tenancy_notification.delay(tenancy.id, "confirmed")
+        elif tenancy.status == getattr(Tenancy, "STATUS_CANCELLED", "cancelled"):
+            task_send_tenancy_notification.delay(tenancy.id, "cancelled")
+        else:
+            task_send_tenancy_notification.delay(tenancy.id, "updated")
+
+        return Response(TenancyDetailSerializer(tenancy).data, status=status.HTTP_200_OK)
+
+
+
+class MyTenanciesView(ListAPIView):
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = TenancyDetailSerializer
+
+    def get_queryset(self):
+        Tenancy = apps.get_model("propertylist_app", "Tenancy")
+        user = self.request.user
+        return Tenancy.objects.filter(Q(tenant=user) | Q(landlord=user)).order_by("-created_at")
+
+
+
 
 
 class BookingReviewListView(APIView):
@@ -2311,7 +2578,7 @@ class ContactMessageCreateView(generics.CreateAPIView):
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
 
-        # ✅ Wrap DRF field errors into "field_errors" for your tests/UI
+        #  Wrap DRF field errors into "field_errors" for your tests/UI
         if not serializer.is_valid():
             return Response(
                 {"field_errors": serializer.errors},
@@ -2677,7 +2944,30 @@ class BookingListCreateView(generics.ListCreateAPIView):
     ordering = ["-created_at"]
 
     def get_queryset(self):
-        return Booking.objects.filter(user=self.request.user, is_deleted=False).order_by("-created_at")
+        user = self.request.user
+        qs = Booking.objects.filter(is_deleted=False)
+
+        room_id = self.request.query_params.get("room")
+        scope = self.request.query_params.get("scope")
+
+        # Default: tenant sees only their own bookings
+        if not room_id:
+            return qs.filter(user=user).order_by("-created_at")
+
+        # If room is provided, allow two modes:
+        # 1) tenant mode: show my bookings for this room
+        # 2) landlord viewers mode: show viewers of my room (only if I own the room)
+        room = get_object_or_404(Room.objects.alive(), pk=room_id)
+
+        if scope == "viewers":
+            # landlord mode: only the owner of the room can see bookings for that room
+            if room.property_owner_id != user.id:
+                return Booking.objects.none()
+            return qs.filter(room=room).order_by("-created_at")
+
+        # tenant mode: my bookings for this room
+        return qs.filter(user=user, room=room).order_by("-created_at")
+
 
 
     def perform_create(self, serializer):
