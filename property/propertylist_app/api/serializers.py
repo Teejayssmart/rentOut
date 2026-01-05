@@ -12,7 +12,6 @@ from django.contrib.auth import get_user_model
 from django.db import transaction
 
 
-
 from propertylist_app.models import Room, Booking, Tenancy  # ensure Booking + Tenancy imported
 from propertylist_app.models import (
     Room, RoomCategorie, Review, UserProfile, RoomImage,
@@ -82,18 +81,55 @@ class UserReviewListSerializer(serializers.ModelSerializer):
         except Exception:
             return None
 
+# inside propertylist_app/api/serializers.py
+
+
+
+# make sure Review and Tenancy are already imported in this file
+# (your file already uses them in other serializers)
+
+
 class BookingReviewCreateSerializer(serializers.ModelSerializer):
     booking_id = serializers.IntegerField(write_only=True, required=False)
     tenancy_id = serializers.IntegerField(write_only=True, required=False)
+
+    # ✅ IMPORTANT: allow manual rating input (1–5)
+    overall_rating = serializers.IntegerField(min_value=1, max_value=5, required=False)
 
     class Meta:
         model = Review
         fields = (
             "booking_id",
             "tenancy_id",
+            "overall_rating",   # ✅ WAS MISSING -> caused rating to default to 3
             "review_flags",
             "notes",
         )
+
+    ALLOWED_FLAGS = {
+        # Tenant -> Landlord
+        "responsive",
+        "maintenance_good",
+        "accurate_listing",
+        "respectful_fair",
+        "unresponsive",
+        "maintenance_poor",
+        "misleading_listing",
+        "unfair_treatment",
+        # Landlord -> Tenant
+        "clean_and_tidy",
+        "friendly",
+        "good_communication",
+        "paid_on_time",
+        "property_care_good",
+        "followed_rules",
+        "messy",
+        "rude",
+        "poor_communication",
+        "late_payment",
+        "property_care_poor",
+        "broke_rules",
+    }
 
     def validate(self, attrs):
         request = self.context["request"]
@@ -102,13 +138,13 @@ class BookingReviewCreateSerializer(serializers.ModelSerializer):
         tenancy_id = attrs.get("tenancy_id")
         booking_id = attrs.get("booking_id")
 
+        #  Booking/viewing reviews are disabled in your app
         if not tenancy_id:
-            # Booking is viewing, so block review creation via booking
             raise serializers.ValidationError(
                 "Reviews can only be created after a tenancy ends. booking/viewing reviews are disabled."
             )
 
-        tenancy = Tenancy.objects.select_related("room").filter(id=tenancy_id).first()
+        tenancy = Tenancy.objects.select_related("room", "landlord", "tenant").filter(id=tenancy_id).first()
         if not tenancy:
             raise serializers.ValidationError("Tenancy does not exist.")
 
@@ -121,13 +157,15 @@ class BookingReviewCreateSerializer(serializers.ModelSerializer):
         if not tenancy.review_open_at:
             raise serializers.ValidationError("Tenancy review schedule is not ready yet.")
 
-        if timezone.now() < tenancy.review_open_at:
+        now = timezone.now()
+
+        if now < tenancy.review_open_at:
             raise serializers.ValidationError("You can only review after the tenancy ends (plus 7 days).")
 
-        if tenancy.review_deadline_at and timezone.now() > tenancy.review_deadline_at:
+        if tenancy.review_deadline_at and now > tenancy.review_deadline_at:
             raise serializers.ValidationError("The review window has expired.")
 
-        # determine role + reviewee
+        # Determine role + reviewee securely (client cannot choose role)
         if user.id == tenancy.tenant_id:
             role = Review.ROLE_TENANT_TO_LANDLORD
             reviewee = tenancy.landlord
@@ -138,55 +176,41 @@ class BookingReviewCreateSerializer(serializers.ModelSerializer):
         if Review.objects.filter(tenancy=tenancy, role=role).exists():
             raise serializers.ValidationError("You have already submitted a review for this tenancy.")
 
-        flags = attrs.get("review_flags", [])
+        flags = attrs.get("review_flags") or []
         notes = attrs.get("notes")
+        manual_rating = attrs.get("overall_rating")
 
+        # Validate flags if provided
         if flags:
             unknown = [f for f in flags if f not in self.ALLOWED_FLAGS]
             if unknown:
-                raise serializers.ValidationError({"review_flags": f"Unknown review flag(s): {', '.join(unknown)}"})
+                raise serializers.ValidationError({"review_flags": f"Unknown flag(s): {unknown}"})
 
-        if not flags and not notes:
-            raise serializers.ValidationError("Please select at least one checkbox or write a short note.")
+        # RULE:
+        # - If flags provided, rating can be auto-derived by model save()
+        # - If no flags, then manual overall_rating must be provided
+        if not flags and manual_rating is None:
+            raise serializers.ValidationError(
+                {"overall_rating": "Provide overall_rating (1-5) when no review_flags are supplied."}
+            )
 
         attrs["tenancy"] = tenancy
         attrs["booking"] = None
         attrs["reviewer"] = user
         attrs["reviewee"] = reviewee
         attrs["role"] = role
+        attrs["submitted_at"] = now
+
         return attrs
 
     def create(self, validated_data):
         validated_data.pop("booking_id", None)
         validated_data.pop("tenancy_id", None)
         return Review.objects.create(**validated_data)
-
-
-    ALLOWED_FLAGS = {
-        # Tenant -> Landlord
-        "responsive",
-        "maintenance_good",
-        "accurate_listing",
-        "respectful_fair",
-        "unresponsive",
-        "maintenance_poor",
-        "misleading_listing",
-        "unfair_treatment",
-
-        # Landlord -> Tenant
-        "paid_on_time",
-        "property_care_good",
-        "good_communication",
-        "followed_rules",
-        "late_payment",
-        "property_care_poor",
-        "poor_communication",
-        "broke_rules",
-    }
     
-
-
-
+    
+    
+    
 class ReviewSerializer(serializers.ModelSerializer):
     class Meta:
         model = Review
@@ -209,6 +233,10 @@ class ReviewSerializer(serializers.ModelSerializer):
 
 class ReviewCreateSerializer(serializers.Serializer):
     tenancy_id = serializers.IntegerField()
+
+    #  allow manual rating input (1–5) when flags are not provided
+    overall_rating = serializers.IntegerField(min_value=1, max_value=5, required=False)
+
     review_flags = serializers.ListField(
         child=serializers.CharField(),
         required=False,
@@ -235,15 +263,12 @@ class ReviewCreateSerializer(serializers.Serializer):
         if not (is_landlord or is_tenant):
             raise serializers.ValidationError("You are not allowed to review this tenancy.")
 
-        # Eligible tenancy state (adjust if you decide 'confirmed' is enough later)
+        # Eligible tenancy state
         if tenancy.status in [Tenancy.STATUS_PROPOSED, Tenancy.STATUS_CANCELLED]:
             raise serializers.ValidationError("This tenancy is not eligible for review yet.")
 
         # Review window gating
-        if not tenancy.review_open_at:
-            raise serializers.ValidationError("Reviews are not open for this tenancy yet.")
-
-        if now < tenancy.review_open_at:
+        if not tenancy.review_open_at or now < tenancy.review_open_at:
             raise serializers.ValidationError("Reviews are not open for this tenancy yet.")
 
         if tenancy.review_deadline_at and now > tenancy.review_deadline_at:
@@ -252,40 +277,37 @@ class ReviewCreateSerializer(serializers.Serializer):
         # Derive role + reviewee securely (client cannot choose)
         if is_tenant:
             role = Review.ROLE_TENANT_TO_LANDLORD
-            reviewee_id = tenancy.landlord_id
+            reviewee = tenancy.landlord
         else:
             role = Review.ROLE_LANDLORD_TO_TENANT
-            reviewee_id = tenancy.tenant_id
+            reviewee = tenancy.tenant
 
-        # Prevent duplicates (also backed by uq_review_once_per_tenancy_role)
+        # Prevent duplicates
         if Review.objects.filter(tenancy=tenancy, role=role).exists():
             raise serializers.ValidationError("You have already submitted a review for this tenancy.")
 
+        flags = attrs.get("review_flags") or []
+        manual_rating = attrs.get("overall_rating")
+
+        #  if flags not provided, rating must be provided
+        if not flags and manual_rating is None:
+            raise serializers.ValidationError(
+                {"overall_rating": "Provide overall_rating (1-5) when no review_flags are supplied."}
+            )
+
         attrs["tenancy"] = tenancy
+        attrs["booking"] = None
+        attrs["reviewer"] = user
+        attrs["reviewee"] = reviewee
         attrs["role"] = role
-        attrs["reviewee_id"] = reviewee_id
+        attrs["submitted_at"] = now
+
         return attrs
 
     def create(self, validated_data):
-        request = self.context["request"]
-        user = request.user
-
-        tenancy = validated_data["tenancy"]
-
-        review = Review.objects.create(
-            tenancy=tenancy,
-            booking=None,
-            reviewer=user,
-            reviewee_id=validated_data["reviewee_id"],
-            role=validated_data["role"],
-            review_flags=validated_data.get("review_flags", []),
-            notes=validated_data.get("notes"),
-            active=True,
-            # reveal_at will be set by Review.save() using tenancy.review_open_at
-        )
-        return review
-
-
+        # tenancy_id is only an input field; tenancy is already in validated_data
+        validated_data.pop("tenancy_id", None)
+        return Review.objects.create(**validated_data)
 
 
 class StillLivingConfirmResponseSerializer(serializers.Serializer):
@@ -1574,6 +1596,10 @@ def _age_in_years(dob: date) -> int:
 class UserProfileSerializer(serializers.ModelSerializer):
     # tests expect "user" in response
     user = serializers.IntegerField(source="user_id", read_only=True)
+    avg_tenant_rating = serializers.FloatField(read_only=True)
+    number_tenant_ratings = serializers.IntegerField(read_only=True)
+    avg_landlord_rating = serializers.FloatField(read_only=True)
+    number_landlord_ratings = serializers.IntegerField(read_only=True)
 
     # tests send "Female" and expect "Female" back
     gender = serializers.CharField(required=False, allow_blank=True, allow_null=True)
@@ -1617,6 +1643,11 @@ class UserProfileSerializer(serializers.ModelSerializer):
             "notify_reminders",
             "notify_messages",
             "notify_confirmations",
+            "avg_tenant_rating",
+            "number_tenant_ratings",
+            "avg_landlord_rating",
+            "number_landlord_ratings",
+
 
         )
         read_only_fields = (

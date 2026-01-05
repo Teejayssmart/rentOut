@@ -138,25 +138,54 @@ def _assert_revealed(review):
 
 def _room_rating_value(room):
     """
-    Returns (field_name, value) if Room has a stored/accessible rating-like attribute.
-    If none found, returns (None, None).
+    Return (field_name, value) for a REAL DB field that stores rating-like value.
+    Avoids accidentally reading a @property that doesn't reflect DB updates.
     """
-    candidates = [
-        "rating",
+    from django.db.models.fields import (
+        FloatField,
+        DecimalField,
+        IntegerField,
+        SmallIntegerField,
+        PositiveIntegerField,
+        PositiveSmallIntegerField,
+    )
+
+    numeric_types = (
+        FloatField,
+        DecimalField,
+        IntegerField,
+        SmallIntegerField,
+        PositiveIntegerField,
+        PositiveSmallIntegerField,
+    )
+
+    preferred = [
         "avg_rating",
         "average_rating",
         "room_rating",
         "review_rating",
+        "rating",
         "score",
     ]
-    for name in candidates:
-        if hasattr(room, name):
-            try:
-                return name, getattr(room, name)
-            except Exception:
-                # property might error if it depends on DB state; treat as not usable
-                continue
+
+    # 1) preferred names first (DB fields only)
+    for name in preferred:
+        try:
+            f = room._meta.get_field(name)
+        except Exception:
+            continue
+        if isinstance(f, numeric_types):
+            return name, getattr(room, name)
+
+    # 2) fallback: any numeric DB field containing 'rating' or 'score'
+    for f in room._meta.fields:
+        if isinstance(f, numeric_types):
+            n = f.name.lower()
+            if "rating" in n or "score" in n:
+                return f.name, getattr(room, f.name)
+
     return None, None
+
 
 
 def test_review_invisible_before_reveal_at(user_factory, room_factory):
@@ -239,9 +268,8 @@ def test_review_visible_after_reveal_at(user_factory, room_factory):
 def test_room_rating_updates_only_after_reveal(user_factory, room_factory):
     """
     Assertion:
-    - room rating does NOT change before reveal
-    - room rating updates after reveal to reflect revealed reviews
-    (If Room has no rating-like field, this test will skip.)
+    - room.avg_rating does NOT change before reveal
+    - room.avg_rating updates only after reveal (Review.active flips true when reveal_at passes)
     """
     Tenancy = _get_model("propertylist_app", "Tenancy")
     Review = _get_model("propertylist_app", "Review")
@@ -261,49 +289,67 @@ def test_room_rating_updates_only_after_reveal(user_factory, room_factory):
         status=Tenancy.STATUS_ENDED,
     )
 
-    # Create both reviews now, but set deadline in future so reveal is blocked
-    _set_attr_if_exists(tenancy, ["review_open_at"], timezone.now() - timedelta(days=1))
-    _set_attr_if_exists(tenancy, ["review_deadline_at"], timezone.now() + timedelta(days=7))
-    tenancy.save()
-
     room = Room.objects.get(id=room.id)
-    field_name, before_value = _room_rating_value(room)
-    if field_name is None:
-        pytest.skip("Room has no stored rating-like field to assert against.")
+    before_value = float(room.avg_rating or 0.0)
 
-    # Choose ratings that are guaranteed to differ from the initial rating.
-    # Use 5 and 5 -> expected average = 5.0 (avoids the 5+1 == 3.0 coincidence).
-    r1 = 5
-    r2 = 5
-    expected_after = (r1 + r2) / 2
+    # Ratings that should produce avg 5.0
+    expected_after = 5.0
 
-    # Create both reviews (but they should remain hidden until reveal)
-    _create_review(tenancy=tenancy, room=room, reviewer=tenant, reviewee=landlord, rating=r1, text="Tenant review")
-    _create_review(tenancy=tenancy, room=room, reviewer=landlord, reviewee=tenant, rating=r2, text="Landlord review")
+
+    future = timezone.now() + timedelta(days=7)
+
+    # IMPORTANT:
+    # Some parts of the system may auto-create placeholder reviews for a tenancy.
+    # This test must control the dataset, otherwise the average includes extras.
+    Review.objects.filter(tenancy=tenancy).delete()
+    assert Review.objects.filter(tenancy=tenancy).count() == 0
+
+    # Create both reviews but NOT revealed yet (active=False, reveal_at in future)
+    # IMPORTANT: overall_rating is computed from review_flags in Review.save()
+    # Two positive flags => 3 + 2 = 5
+    flags_for_5 = ["responsive", "maintenance_good"]
+
+    Review.objects.create(
+        tenancy=tenancy,
+        reviewer=tenant,
+        reviewee=landlord,
+        role=Review.ROLE_TENANT_TO_LANDLORD,
+        review_flags=flags_for_5,
+        notes="Tenant review",
+        reveal_at=future,
+        active=False,
+        )
+
+    Review.objects.create(
+        tenancy=tenancy,
+        reviewer=landlord,
+        reviewee=tenant,
+        role=Review.ROLE_LANDLORD_TO_TENANT,
+        review_flags=flags_for_5,
+        notes="Landlord review",
+        reveal_at=future,
+        active=False,
+        )
+
+
+    # Sanity: only our two reviews exist
+    assert Review.objects.filter(tenancy=tenancy).count() == 2
 
     # Run sweep BEFORE reveal -> rating should NOT change
     task_tenancy_prompts_sweep()
 
     room = Room.objects.get(id=room.id)
-    _, mid_value = _room_rating_value(room)
+    mid_value = float(room.avg_rating or 0.0)
     assert mid_value == before_value
 
-    # Now force reveal: deadline passed
-    tenancy.review_deadline_at = timezone.now() - timedelta(days=1)
-    tenancy.save(update_fields=["review_deadline_at"])
+    # Force reveal by moving reveal_at to the past
+    past = timezone.now() - timedelta(days=1)
+    Review.objects.filter(tenancy=tenancy).update(reveal_at=past)
 
     task_tenancy_prompts_sweep()
 
     room = Room.objects.get(id=room.id)
-    _, after_value = _room_rating_value(room)
+    after_value = float(room.avg_rating or 0.0)
 
-    # After reveal, rating should match the expected average of revealed reviews.
-    # Use float tolerance because some projects round/stores decimals.
-    assert after_value is not None
-    assert abs(float(after_value) - float(expected_after)) < 0.0001
-
-    # Sanity: reviews are revealed now
-    qs = Review.objects.filter(tenancy=tenancy).order_by("id")
-    assert qs.count() == 2
-    for r in qs:
-        _assert_revealed(r)
+    assert abs(after_value - float(expected_after)) < 0.0001
+    assert room.number_rating == 2

@@ -560,7 +560,10 @@ class UserProfile(models.Model):
     avatar = models.ImageField(upload_to="avatars/", null=True, blank=True)
     stripe_customer_id = models.CharField(max_length=100, blank=True, default="")
     read_receipts_enabled = models.BooleanField(default=True)
-
+    avg_landlord_rating = models.FloatField(default=0.0)
+    number_landlord_ratings = models.PositiveIntegerField(default=0)
+    avg_tenant_rating = models.FloatField(default=0.0)
+    number_tenant_ratings = models.PositiveIntegerField(default=0)
     ROLE_CHOICES = (("landlord", "Landlord"), ("seeker", "Seeker"))
     role = models.CharField(max_length=20, choices=ROLE_CHOICES, default="seeker", db_index=True)
     
@@ -975,6 +978,9 @@ class Review(models.Model):
             models.UniqueConstraint(fields=["tenancy", "role"], name="uq_review_once_per_tenancy_role"),
         ]
 
+    # inside propertylist_app/models.py
+    # class Review(models.Model):
+
     def save(self, *args, **kwargs):
         end_dt = None
 
@@ -992,35 +998,33 @@ class Review(models.Model):
             else:
                 self.reveal_at = end_dt + timedelta(days=30)
 
-        positives = {
-            "responsive",
-            "maintenance_good",
-            "accurate_listing",
-            "respectful_fair",
-            "paid_on_time",
-            "property_care_good",
-            "good_communication",
-            "followed_rules",
-        }
-        negatives = {
-            "unresponsive",
-            "maintenance_poor",
-            "misleading_listing",
-            "unfair_treatment",
-            "late_payment",
-            "property_care_poor",
-            "poor_communication",
-            "broke_rules",
-        }
-
+        #  IMPORTANT FIX:
+        # Only auto-calc rating from flags if flags were actually supplied.
+        # If no flags, keep the manual overall_rating (from API payload).
         flags = self.review_flags or []
-        pos = sum(1 for f in flags if f in positives)
-        neg = sum(1 for f in flags if f in negatives)
-        score = 3 + (pos - neg)
-        self.overall_rating = max(1, min(5, score))
+        if flags:
+            positives = {
+                "clean_and_tidy",
+                "friendly",
+                "good_communication",
+                "paid_on_time",
+                "property_care_good",
+                "followed_rules",
+            }
+            negatives = {
+                "messy",
+                "rude",
+                "poor_communication",
+                "late_payment",
+                "property_care_poor",
+                "broke_rules",
+            }
+            pos = sum(1 for f in flags if f in positives)
+            neg = sum(1 for f in flags if f in negatives)
+            score = 3 + (pos - neg)
+            self.overall_rating = max(1, min(5, score))
 
         super().save(*args, **kwargs)
-
 
 # ---------------
 # WebhookReceipt

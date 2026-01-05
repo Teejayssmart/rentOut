@@ -331,19 +331,20 @@ class TenancyReviewCreateView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request, tenancy_id):
-        serializer = BookingReviewCreateSerializer(
+        # IMPORTANT:
+        # This endpoint is /api/tenancies/<id>/reviews/
+        # It must use ReviewCreateSerializer (NOT BookingReviewCreateSerializer),
+        # otherwise overall_rating is not applied correctly.
+        serializer = ReviewCreateSerializer(
             data={**request.data, "tenancy_id": tenancy_id},
             context={"request": request},
         )
+        serializer.is_valid(raise_exception=True)
+        review = serializer.save()
 
-        if serializer.is_valid():
-            review = serializer.save()
-            return Response(
-                {"message": "Review submitted successfully.", "review_id": review.id},
-                status=status.HTTP_201_CREATED,
-            )
+        # Return the created review payload (use your existing ReviewSerializer)
+        return Response(ReviewSerializer(review).data, status=status.HTTP_201_CREATED)
 
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
 def _get_model(app_label: str, model_name: str):
@@ -353,59 +354,50 @@ def _get_model(app_label: str, model_name: str):
 class TenancyStillLivingConfirmView(APIView):
     permission_classes = [IsAuthenticated]
 
-    def patch(self, request, tenancy_id: int):
-        Tenancy = _get_model("propertylist_app", "Tenancy")
+    def patch(self, request, tenancy_id: int, *args, **kwargs):
+        Tenancy = apps.get_model("propertylist_app", "Tenancy")
 
-        tenancy = Tenancy.objects.select_related("landlord", "tenant").filter(id=tenancy_id).first()
-        if not tenancy:
-            return Response({"detail": "Tenancy not found."}, status=drf_status.HTTP_404_NOT_FOUND)
+        t = Tenancy.objects.select_related("landlord", "tenant", "room").filter(id=tenancy_id).first()
+        if not t:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
 
         user = request.user
-
-        if user.id not in {tenancy.landlord_id, tenancy.tenant_id}:
-            return Response({"detail": "Forbidden."}, status=drf_status.HTTP_403_FORBIDDEN)
-
-        # Must be active (adjust if your business rules allow confirmed too)
-        if getattr(tenancy, "status", None) not in {getattr(Tenancy, "STATUS_ACTIVE", "active")}:
-            return Response({"detail": "Tenancy must be active."}, status=drf_status.HTTP_400_BAD_REQUEST)
-
-        if not tenancy.still_living_check_at:
-            return Response({"detail": "Still-living check is not scheduled."}, status=drf_status.HTTP_400_BAD_REQUEST)
-
-        if tenancy.still_living_check_at > timezone.now():
-            return Response({"detail": "Still-living check is not due yet."}, status=drf_status.HTTP_400_BAD_REQUEST)
+        if user.id not in (t.landlord_id, t.tenant_id):
+            return Response({"detail": "Forbidden."}, status=status.HTTP_403_FORBIDDEN)
 
         now = timezone.now()
+
+        # set per-side confirmation
         updated_fields = []
 
-        # Idempotent per party
-        if user.id == tenancy.landlord_id and tenancy.still_living_landlord_confirmed_at is None:
-            tenancy.still_living_landlord_confirmed_at = now
-            updated_fields.append("still_living_landlord_confirmed_at")
-
-        if user.id == tenancy.tenant_id and tenancy.still_living_tenant_confirmed_at is None:
-            tenancy.still_living_tenant_confirmed_at = now
+        if user.id == t.tenant_id and getattr(t, "still_living_tenant_confirmed_at", None) is None:
+            t.still_living_tenant_confirmed_at = now
             updated_fields.append("still_living_tenant_confirmed_at")
 
-        # If both done -> confirm
-        if (
-            tenancy.still_living_landlord_confirmed_at
-            and tenancy.still_living_tenant_confirmed_at
-            and tenancy.still_living_confirmed_at is None
-        ):
-            tenancy.still_living_confirmed_at = now
+        if user.id == t.landlord_id and getattr(t, "still_living_landlord_confirmed_at", None) is None:
+            t.still_living_landlord_confirmed_at = now
+            updated_fields.append("still_living_landlord_confirmed_at")
+
+        # if both confirmed, set the aggregate confirmed_at (used by sweep filter)
+        landlord_done = bool(getattr(t, "still_living_landlord_confirmed_at", None))
+        tenant_done = bool(getattr(t, "still_living_tenant_confirmed_at", None))
+
+        if landlord_done and tenant_done and getattr(t, "still_living_confirmed_at", None) is None:
+            t.still_living_confirmed_at = now
             updated_fields.append("still_living_confirmed_at")
 
         if updated_fields:
-            tenancy.save(update_fields=updated_fields)
+            t.save(update_fields=updated_fields)
 
-        payload = {
-            "tenancy_id": tenancy.id,
-            "landlord_confirmed": bool(tenancy.still_living_landlord_confirmed_at),
-            "tenant_confirmed": bool(tenancy.still_living_tenant_confirmed_at),
-            "still_living_confirmed_at": tenancy.still_living_confirmed_at,
-        }
-        return Response(StillLivingConfirmResponseSerializer(payload).data, status=drf_status.HTTP_200_OK)
+        return Response(
+            {
+                "tenancy_id": t.id,
+                "tenant_confirmed": bool(getattr(t, "still_living_tenant_confirmed_at", None)),
+                "landlord_confirmed": bool(getattr(t, "still_living_landlord_confirmed_at", None)),
+                "confirmed_at": getattr(t, "still_living_confirmed_at", None),
+            },
+            status=status.HTTP_200_OK,
+        )
 
 
 class TenancyExtensionCreateView(APIView):

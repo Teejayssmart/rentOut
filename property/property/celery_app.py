@@ -20,4 +20,8 @@ except Exception:
             "task": "propertylist_app.tasks.task_expire_paid_listings",
             "schedule": crontab(minute=0, hour=3),
         },
+         "tenancy-prompts-sweep-hourly": {
+        "task": "propertylist_app.tasks.task_tenancy_prompts_sweep",
+        "schedule": crontab(minute=0),  # every hour, on the hour
+    },
     }

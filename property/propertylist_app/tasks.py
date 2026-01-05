@@ -9,12 +9,19 @@ from propertylist_app.services.tasks import (
     send_new_message_email,
     expire_paid_listings,
 )
-from propertylist_app.services.reviews import update_room_rating_from_revealed_reviews
+from propertylist_app.services.tenancy_dates import (
+    compute_end_date,
+    compute_review_window,
+)
+
+
+# from propertylist_app.services.reviews import update_room_rating_from_revealed_reviews
 
 # IMPORTANT: ensure nested notification tasks are registered
-from propertylist_app.notifications.tasks import notify_completed_viewings  # noqa: F401
+# from propertylist_app.notifications.tasks import notify_completed_viewings  # noqa: F401
 
-from django.db.models import Avg
+from django.db.models import Avg, Count
+
 from celery import shared_task
 
 
@@ -174,6 +181,43 @@ def task_send_tenancy_notification(tenancy_id: int, event: str) -> int:
     return 1
 
 
+def _refresh_user_ratings_for_user_ids(user_ids):
+    Review = apps.get_model("propertylist_app", "Review")
+    UserProfile = apps.get_model("propertylist_app", "UserProfile")
+
+    now = timezone.now()
+
+    for user_id in user_ids:
+        tenant_agg = Review.objects.filter(
+            role=Review.ROLE_LANDLORD_TO_TENANT,
+            reviewee_id=user_id,
+            active=True,
+            reveal_at__isnull=False,
+            reveal_at__lte=now,
+            submitted_at__isnull=False,
+        ).aggregate(avg=Avg("overall_rating"), cnt=Count("id"))
+
+        landlord_agg = Review.objects.filter(
+            role=Review.ROLE_TENANT_TO_LANDLORD,
+            reviewee_id=user_id,
+            active=True,
+            reveal_at__isnull=False,
+            reveal_at__lte=now,
+            submitted_at__isnull=False,
+        ).aggregate(avg=Avg("overall_rating"), cnt=Count("id"))
+
+        UserProfile.objects.filter(user_id=user_id).update(
+            avg_tenant_rating=float(tenant_agg["avg"] or 0.0),
+            number_tenant_ratings=int(tenant_agg["cnt"] or 0),
+            avg_landlord_rating=float(landlord_agg["avg"] or 0.0),
+            number_landlord_ratings=int(landlord_agg["cnt"] or 0),
+        )
+
+
+
+
+
+
 # -------------------------------------------------------------------
 # Tenancy prompts sweep (still-living + reviews)
 # -------------------------------------------------------------------
@@ -188,6 +232,9 @@ def task_tenancy_prompts_sweep() -> int:
     now = timezone.now()
     count = 0
 
+    # -------------------------------------------------
+    # 1) still living check -> notifications
+    # -------------------------------------------------
     # still living check
     due_checks = Tenancy.objects.filter(
         status__in=[Tenancy.STATUS_CONFIRMED, Tenancy.STATUS_ACTIVE],
@@ -197,16 +244,38 @@ def task_tenancy_prompts_sweep() -> int:
     )
 
     for t in due_checks:
-        for u in (t.landlord, t.tenant):
+        landlord_done = bool(getattr(t, "still_living_landlord_confirmed_at", None))
+        tenant_done = bool(getattr(t, "still_living_tenant_confirmed_at", None))
+
+        # if both confirmed, close it out and stop prompting
+        if landlord_done and tenant_done:
+            if getattr(t, "still_living_confirmed_at", None) is None:
+                t.still_living_confirmed_at = now
+                t.save(update_fields=["still_living_confirmed_at"])
+            continue
+
+        # notify only the side(s) that have NOT confirmed
+        if not landlord_done:
             Notification.objects.create(
-                user=u,
+                user=t.landlord,
                 type="tenancy_still_living_check",
                 title="Tenancy check",
                 body=f"Is the tenant still living at {t.room.title}?",
             )
             count += 1
 
-    # reviews open
+        if not tenant_done:
+            Notification.objects.create(
+                user=t.tenant,
+                type="tenancy_still_living_check",
+                title="Tenancy check",
+                body=f"Is the tenant still living at {t.room.title}?",
+            )
+            count += 1
+
+    # -------------------------------------------------
+    # 2) reviews open -> notifications (if any side missing)
+    # -------------------------------------------------
     due_reviews = Tenancy.objects.filter(
         status__in=[Tenancy.STATUS_CONFIRMED, Tenancy.STATUS_ACTIVE, Tenancy.STATUS_ENDED],
         review_open_at__isnull=False,
@@ -235,67 +304,87 @@ def task_tenancy_prompts_sweep() -> int:
             )
             count += 1
 
-    # ------------------------------------------------------------------
-    # REVEAL EVENT + RATING UPDATE (tenancy-based, not review-flag-based)
+    # -------------------------------------------------
+    # 3) REVEAL + RATING UPDATE (your schema)
     #
-    # Requirement: rating updates only after reveal.
-    # So we only update rating when:
-    # - tenancy is ENDED
-    # - review_deadline_at has passed
+    # Review is visible when:
+    # - active == True
+    # - reveal_at <= now
     #
-    # We do NOT rely on Review.is_revealed / revealed_at / is_hidden at all.
-    # ------------------------------------------------------------------
-    reveal_candidates = Tenancy.objects.filter(
-        status=Tenancy.STATUS_ENDED,
-        review_deadline_at__isnull=False,
-        review_deadline_at__lte=now,
-    ).select_related("room")
+    # Rating should be calculated from ONLY revealed reviews (active=True).
+    # -------------------------------------------------
 
-    for t in reveal_candidates:
-        qs = Review.objects.filter(tenancy=t)
+    # 3a) Reveal any reviews whose reveal time has passed
+    to_reveal = Review.objects.filter(
+        active=False,
+        reveal_at__isnull=False,
+        reveal_at__lte=now,
+    )
 
-        # ignore deleted if your schema supports it
-        if any(f.name == "is_deleted" for f in Review._meta.fields):
-            qs = qs.filter(is_deleted=False)
+    revealed_count = to_reveal.update(active=True)
+    if revealed_count:
+        # refresh tenant ratings for tenants affected by newly revealed landlord->tenant reviews
+        affected_tenant_ids = (
+            Review.objects.filter(
+                active=True,
+                reveal_at__isnull=False,
+                reveal_at__lte=now,
+                role=Review.ROLE_LANDLORD_TO_TENANT,
+            )
+            .values_list("reviewee_id", flat=True)
+            .distinct()
+        )
 
-        # choose the numeric review rating field that exists in your model
-        review_rating_field = None
-        for name in ("rating", "stars", "score"):
-            if any(f.name == name for f in Review._meta.fields):
-                review_rating_field = name
-                break
+        affected_user_ids = (
+            Review.objects.filter(
+                active=True,
+                reveal_at__isnull=False,
+                reveal_at__lte=now,
+            )
+            .values_list("reviewee_id", flat=True)
+            .distinct()
+        )
 
-        if not review_rating_field:
-            continue
+        _refresh_user_ratings_for_user_ids(affected_user_ids)
 
-        avg_val = qs.aggregate(avg=Avg(review_rating_field))["avg"]
-        if avg_val is None:
-            avg_val = 0.0
 
-        # choose the room rating field that exists in your model
-        room_rating_field = None
-        for name in ("rating", "avg_rating", "average_rating", "room_rating", "review_rating", "score"):
-            if any(f.name == name for f in Room._meta.fields):
-                room_rating_field = name
-                break
 
-        if not room_rating_field:
-            continue
+    # 3b) Recalculate ratings for rooms affected by reveal
+    if revealed_count:
+        # rooms impacted by newly revealed reviews
+        room_ids = (
+            Review.objects.filter(active=True, reveal_at__lte=now)
+            .exclude(tenancy__room_id__isnull=True)
+            .values_list("tenancy__room_id", flat=True)
+            .distinct()
+        )
 
-        # persist rating
-        room = t.room
-        setattr(room, room_rating_field, float(avg_val))
-        room.save(update_fields=[room_rating_field])
+        for room_id in room_ids:
+            agg = Review.objects.filter(
+                    tenancy__room_id=room_id,
+                    booking__isnull=True,          # 🚫 exclude booking reviews
+                    active=True,
+                    reveal_at__isnull=False,
+                    reveal_at__lte=now,
+                ).aggregate(
+                    avg=Avg("overall_rating"),
+                    cnt=Count("id"),
+                )
+
+
+            avg_val = float(agg["avg"] or 0.0)
+            cnt_val = int(agg["cnt"] or 0)
+
+            Room.objects.filter(id=room_id).update(
+                avg_rating=avg_val,
+                number_rating=cnt_val,
+            )
 
     return count
 
 # -------------------------------------------------------------------
 # Tenancy lifecycle + automatic review window
 # -------------------------------------------------------------------
-from propertylist_app.services.tenancy_dates import (
-    compute_end_date,
-    compute_review_window,
-)
 
 
 @shared_task

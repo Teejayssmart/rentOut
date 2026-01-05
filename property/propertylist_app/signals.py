@@ -3,7 +3,7 @@ from django.dispatch import receiver
 from django.db.models import Avg, Count
 from .models import Message, Notification, MessageThread, Review, Room
 from django.utils import timezone
-from django.db.models.signals import post_save
+from django.db.models.signals import post_save,pre_save
 from propertylist_app.models import (
     Review,
     Message,
@@ -17,6 +17,9 @@ from propertylist_app.tasks import task_send_new_message_email
 from django.db.models import Avg, Count, Q
 from propertylist_app.services.reviews import update_room_rating_from_revealed_reviews
 from django.apps import apps
+
+
+
 
 
 
@@ -161,4 +164,84 @@ def message_created_create_notifications(sender, instance: Message, created, **k
 
     if queued_any_email:
         task_send_new_message_email.delay(instance.id)  # <-- add this
+        
+        
+# -------------------------------------------------------------------
+# TenancyExtension -> Notifications (proposal / accept / reject)
+# -------------------------------------------------------------------
+
+
+
+
+def _ext_other_party(ext):
+    """
+    Returns the user who should be notified when an extension is proposed.
+    If landlord proposed -> notify tenant.
+    If tenant proposed -> notify landlord.
+    """
+    t = ext.tenancy
+    if ext.proposed_by_id == getattr(t, "landlord_id", None):
+        return t.tenant
+    return t.landlord
+
+
+@receiver(pre_save, sender=apps.get_model("propertylist_app", "TenancyExtension"))
+def tenancy_extension_cache_old_status(sender, instance, **kwargs):
+    if not instance.pk:
+        instance._old_status = None
+        return
+    old = sender.objects.filter(pk=instance.pk).values_list("status", flat=True).first()
+    instance._old_status = old
+
+
+@receiver(post_save, sender=apps.get_model("propertylist_app", "TenancyExtension"))
+def tenancy_extension_notifications(sender, instance, created, **kwargs):
+    Notification = apps.get_model("propertylist_app", "Notification")
+
+    # safety: tenancy must exist
+    if not getattr(instance, "tenancy_id", None):
+        return
+
+    t = instance.tenancy
+
+    # 1) created -> proposal notification to the other party
+    if created:
+        other = _ext_other_party(instance)
+        Notification.objects.create(
+            user=other,
+            type="tenancy_extension_proposed",
+            title="Tenancy extension proposed",
+            body=f"A tenancy extension was proposed for {t.room.title}.",
+        )
+        return
+
+    # 2) status changed -> accept/reject notifications
+    old = getattr(instance, "_old_status", None)
+    new = instance.status
+    if old == new:
+        return
+
+    if new == instance.STATUS_ACCEPTED:
+        # notify both
+        Notification.objects.create(
+            user=t.landlord,
+            type="tenancy_extension_accepted",
+            title="Tenancy extension accepted",
+            body=f"The tenancy extension for {t.room.title} was accepted.",
+        )
+        Notification.objects.create(
+            user=t.tenant,
+            type="tenancy_extension_accepted",
+            title="Tenancy extension accepted",
+            body=f"The tenancy extension for {t.room.title} was accepted.",
+        )
+
+    elif new == instance.STATUS_REJECTED:
+        # notify proposer only (so they know it was rejected)
+        Notification.objects.create(
+            user=instance.proposed_by,
+            type="tenancy_extension_rejected",
+            title="Tenancy extension rejected",
+            body=f"The tenancy extension for {t.room.title} was rejected.",
+        )
         
