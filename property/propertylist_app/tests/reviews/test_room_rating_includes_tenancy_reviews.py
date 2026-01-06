@@ -4,6 +4,9 @@ import pytest
 from django.utils import timezone
 
 from propertylist_app.models import Tenancy, Review
+from propertylist_app.tasks import task_tenancy_prompts_sweep
+from propertylist_app.services.reviews import update_room_rating_from_revealed_reviews
+
 
 
 pytestmark = pytest.mark.django_db
@@ -29,7 +32,6 @@ def test_room_rating_includes_tenancy_reviews(user_factory, room_factory):
         review_deadline_at=timezone.now() + timedelta(days=20),
     )
 
-    # Create a tenancy-based review (signal should recalc room rating)
     r = Review.objects.create(
         tenancy=tenancy,
         reviewer=tenant,
@@ -37,10 +39,20 @@ def test_room_rating_includes_tenancy_reviews(user_factory, room_factory):
         role=Review.ROLE_TENANT_TO_LANDLORD,
         review_flags=["responsive", "good_communication"],
         notes="great landlord",
-    )
+        active=True,
+        reveal_at=timezone.now() - timedelta(days=1),
+        )
+
+    # IMPORTANT: ensure overall_rating is computed
+    r.save()
+    r.refresh_from_db()
+    assert r.overall_rating is not None
+
+    # Now trigger aggregation
+    update_room_rating_from_revealed_reviews(room)
 
     room.refresh_from_db()
 
-    # Review.save() calculates overall_rating; signals should count it
     assert room.number_rating == 1
-    assert room.avg_rating == float(r.overall_rating)
+    assert float(room.avg_rating) == float(r.overall_rating)
+

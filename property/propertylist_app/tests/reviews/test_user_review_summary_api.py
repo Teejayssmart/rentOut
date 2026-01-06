@@ -42,7 +42,7 @@ def test_review_summary_total_is_sum_of_landlord_and_tenant_counts():
         reviewer=reviewer,
         reviewee=reviewee,
         role=Review.ROLE_TENANT_TO_LANDLORD,
-        review_flags=["responsive", "maintenance_good"],  # pos=2 => score 5
+        review_flags=["friendly", "good_communication"],  # pos=2 => score 5  # pos=2 => score 5
         reveal_at=now,
         active=True,
         notes="Great landlord",
@@ -52,7 +52,7 @@ def test_review_summary_total_is_sum_of_landlord_and_tenant_counts():
       reviewer=reviewer,
       reviewee=reviewee,
       role=Review.ROLE_TENANT_TO_LANDLORD,
-      review_flags=["accurate_listing", "respectful_fair"],  # pos=2 => score 5
+      review_flags=["paid_on_time", "followed_rules"],  # pos=2 => score 5,  # pos=2 => score 5
       reveal_at=now,
       active=True,
       notes="Very responsive",

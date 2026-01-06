@@ -292,8 +292,10 @@ def test_room_rating_updates_only_after_reveal(user_factory, room_factory):
     room = Room.objects.get(id=room.id)
     before_value = float(room.avg_rating or 0.0)
 
-    # Ratings that should produce avg 5.0
-    expected_after = 5.0
+    # Only TENANT -> LANDLORD reviews affect room rating
+    # Landlord -> Tenant review must NOT be included
+    expected_after = 3.0
+
 
 
     future = timezone.now() + timedelta(days=7)

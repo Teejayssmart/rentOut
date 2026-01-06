@@ -366,6 +366,22 @@ class TenancyStillLivingConfirmView(APIView):
             return Response({"detail": "Forbidden."}, status=status.HTTP_403_FORBIDDEN)
 
         now = timezone.now()
+        
+                # --- Guardrails: only allow confirm when due + tenancy is active ---
+        active_status = getattr(Tenancy, "STATUS_ACTIVE", "active")
+        if getattr(t, "status", None) != active_status:
+            return Response(
+                {"detail": "Still-living confirmation is only allowed for active tenancies."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        check_at = getattr(t, "still_living_check_at", None)
+        if check_at and now < check_at:
+            return Response(
+                {"detail": "Still-living confirmation is not due yet."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
 
         # set per-side confirmation
         updated_fields = []

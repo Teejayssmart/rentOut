@@ -35,18 +35,27 @@ def test_user_cannot_review_booking_if_not_participant():
 
 
 @pytest.mark.django_db
-def test_tenant_can_create_review_for_booking():
-    owner = User.objects.create_user(username="owner", password="pass123", email="o@example.com")
+def test_tenant_cannot_create_review_for_booking_viewing():
+    owner = User.objects.create_user(
+        username="owner", password="pass123", email="o@example.com"
+    )
     cat = RoomCategorie.objects.create(name="Flat", active=True)
-    room = Room.objects.create(title="Test Room", category=cat, price_per_month=900, property_owner=owner)
+    room = Room.objects.create(
+        title="Test Room",
+        category=cat,
+        price_per_month=900,
+        property_owner=owner,
+    )
 
-    tenant = User.objects.create_user(username="tenant2", password="pass123", email="t2@example.com")
+    tenant = User.objects.create_user(
+        username="tenant2", password="pass123", email="t2@example.com"
+    )
+
     booking = Booking.objects.create(
         user=tenant,
         room=room,
         start=timezone.now() - timedelta(days=10),
         end=timezone.now() - timedelta(days=5),
-
         status=Booking.STATUS_ACTIVE,
     )
 
@@ -54,7 +63,11 @@ def test_tenant_can_create_review_for_booking():
     client.force_authenticate(user=tenant)
 
     url = reverse("api:booking-reviews-create", kwargs={"booking_id": booking.id})
-    r = client.post(url, {"notes": "Amazing!", "review_flags": ["responsive"]}, format="json")
+    r = client.post(
+        url,
+        {"notes": "Amazing!", "review_flags": ["responsive"]},
+        format="json",
+    )
 
-    assert r.status_code == 201, r.data
-    assert Review.objects.filter(booking=booking, reviewer=tenant).count() == 1
+    assert r.status_code == 400
+    assert "booking/viewing reviews are disabled" in str(r.data).lower()

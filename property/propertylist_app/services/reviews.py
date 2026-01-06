@@ -18,6 +18,9 @@ _NUMERIC_FIELD_TYPES = (
     PositiveSmallIntegerField,
 )
 
+from django.utils import timezone
+
+
 
 def _is_real_model_field(model, name: str) -> bool:
     try:
@@ -43,7 +46,20 @@ def _pick_numeric_field(model, preferred_names):
     return None
 
 
+
+
 def _revealed_only_filter(qs, Review):
+    """
+    Keep only reviews that are revealed and active.
+    Supports current RentOut schema.
+    """
+    now = timezone.now()
+
+    #  Current schema (this project)
+    if _is_real_model_field(Review, "reveal_at") and _is_real_model_field(Review, "active"):
+        return qs.filter(active=True, reveal_at__lte=now)
+
+    # Legacy / alternative schemas (kept for safety)
     if _is_real_model_field(Review, "is_revealed"):
         return qs.filter(is_revealed=True)
 
@@ -53,8 +69,8 @@ def _revealed_only_filter(qs, Review):
     if _is_real_model_field(Review, "is_hidden"):
         return qs.filter(is_hidden=False)
 
-    # if we can't detect reveal fields, do not drop rows
     return qs
+
 
 
 def _reviews_for_room(room, Review):
@@ -99,13 +115,26 @@ def update_room_rating_from_revealed_reviews(room) -> bool:
     if avg_val is None:
         avg_val = 0.0
 
+    count_val = qs.count()
+
     room_rating_field = _pick_numeric_field(
         Room,
-        preferred_names=("rating", "avg_rating", "average_rating", "room_rating", "review_rating", "score"),
+        preferred_names=("avg_rating", "average_rating", "room_rating", "review_rating", "score"),
     )
     if not room_rating_field:
         return False
 
+    # also update number_rating if the Room model has it
+    count_field = None
+    if _is_real_model_field(Room, "number_rating"):
+        count_field = "number_rating"
+
     setattr(room, room_rating_field, float(avg_val))
-    room.save(update_fields=[room_rating_field])
+
+    update_fields = [room_rating_field]
+    if count_field:
+        setattr(room, count_field, int(count_val))
+        update_fields.append(count_field)
+
+    room.save(update_fields=update_fields)
     return True

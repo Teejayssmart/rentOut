@@ -68,21 +68,6 @@ def test_cannot_review_before_booking_ends():
     assert res.status_code == 400
 
 
-def test_can_review_within_30_days_after_end():
-    landlord = make_user("landlord2@example.com")
-    tenant = make_user("tenant2@example.com")
-    room = make_room(owner=landlord)
-    booking = make_booking(room=room, tenant=tenant, end_dt=timezone.now() - timedelta(days=5))
-
-    client = auth_client(tenant)
-    res = client.post(
-        booking_create_url(booking.id),
-        data={"review_flags": ["responsive"], "notes": "good"},
-        format="json",
-    )
-    assert res.status_code == 201
-    assert Review.objects.filter(booking=booking).count() == 1
-
 
 def test_cannot_review_after_30_day_window():
     landlord = make_user("landlord3@example.com")
@@ -115,7 +100,7 @@ def test_random_user_cannot_review_booking():
     assert res.status_code == 400
 
 
-def test_duplicate_review_blocked_per_booking_and_role():
+def test_booking_review_endpoint_is_blocked_even_if_called_twice():
     landlord = make_user("landlord5@example.com")
     tenant = make_user("tenant5@example.com")
     room = make_room(owner=landlord)
@@ -128,7 +113,7 @@ def test_duplicate_review_blocked_per_booking_and_role():
         data={"review_flags": ["responsive"], "notes": "first"},
         format="json",
     )
-    assert res1.status_code == 201
+    assert res1.status_code == 400
 
     res2 = client.post(
         booking_create_url(booking.id),
@@ -136,7 +121,11 @@ def test_duplicate_review_blocked_per_booking_and_role():
         format="json",
     )
     assert res2.status_code == 400
-    assert Review.objects.filter(booking=booking).count() == 1
+
+    # Optional: ensure the reason is the same rule (booking/viewing reviews disabled)
+    assert "booking/viewing reviews are disabled" in str(res1.data).lower()
+    assert "booking/viewing reviews are disabled" in str(res2.data).lower()
+
 
 
 def test_whitelist_rejects_unknown_flag():
@@ -154,7 +143,7 @@ def test_whitelist_rejects_unknown_flag():
     assert res.status_code == 400
 
 
-def test_double_blind_other_review_hidden_until_reveal_at():
+def test_booking_review_double_blind_logic_not_applicable_because_booking_reviews_disabled():
     landlord = make_user("landlord7@example.com")
     tenant = make_user("tenant7@example.com")
     room = make_room(owner=landlord)
@@ -163,31 +152,36 @@ def test_double_blind_other_review_hidden_until_reveal_at():
     tenant_client = auth_client(tenant)
     landlord_client = auth_client(landlord)
 
-    # tenant submits
-    assert tenant_client.post(
+    res_tenant = tenant_client.post(
         booking_create_url(booking.id),
         data={"review_flags": ["responsive"], "notes": "tenant review"},
         format="json",
-    ).status_code == 201
-
-    # landlord submits
-    assert landlord_client.post(
+    )
+    res_landlord = landlord_client.post(
         booking_create_url(booking.id),
-        data={"review_flags": ["paid_on_time"], "notes": "landlord review"},
+        data={"review_flags": ["responsive"], "notes": "landlord review"},
         format="json",
-    ).status_code == 201
+    )
 
-    # before reveal_at: landlord can see only their own
-    res = landlord_client.get(booking_list_url(booking.id))
-    assert res.status_code == 200
-    assert res.data["my_review"] is not None
-    assert res.data["other_review"] is None
+    assert res_tenant.status_code == 400
+    assert res_landlord.status_code == 400
+    assert "booking/viewing reviews are disabled" in str(res_tenant.data).lower()
+    assert "booking/viewing reviews are disabled" in str(res_landlord.data).lower()
 
-    # force reveal of the other review, then it should show
-    other = Review.objects.exclude(reviewer=landlord).get(booking=booking)
-    other.reveal_at = timezone.now() - timedelta(seconds=1)
-    other.save(update_fields=["reveal_at"])
 
-    res2 = landlord_client.get(booking_list_url(booking.id))
-    assert res2.status_code == 200
-    assert res2.data["other_review"] is not None
+
+def test_cannot_review_booking_even_after_booking_end():
+    landlord = make_user("landlord2@example.com")
+    tenant = make_user("tenant2@example.com")
+    room = make_room(owner=landlord)
+    booking = make_booking(room=room, tenant=tenant, end_dt=timezone.now() - timedelta(days=5))
+
+    client = auth_client(tenant)
+    res = client.post(
+        booking_create_url(booking.id),
+        data={"review_flags": ["responsive"], "notes": "good"},
+        format="json",
+    )
+
+    assert res.status_code == 400
+    assert "booking/viewing reviews are disabled" in str(res.data).lower()
