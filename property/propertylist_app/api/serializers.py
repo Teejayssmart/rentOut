@@ -93,7 +93,7 @@ class BookingReviewCreateSerializer(serializers.ModelSerializer):
     booking_id = serializers.IntegerField(write_only=True, required=False)
     tenancy_id = serializers.IntegerField(write_only=True, required=False)
 
-    # ✅ IMPORTANT: allow manual rating input (1–5)
+    #  IMPORTANT: allow manual rating input (1–5)
     overall_rating = serializers.IntegerField(min_value=1, max_value=5, required=False)
 
     class Meta:
@@ -101,7 +101,7 @@ class BookingReviewCreateSerializer(serializers.ModelSerializer):
         fields = (
             "booking_id",
             "tenancy_id",
-            "overall_rating",   # ✅ WAS MISSING -> caused rating to default to 3
+            "overall_rating",   # WAS MISSING -> caused rating to default to 3
             "review_flags",
             "notes",
         )
@@ -175,24 +175,41 @@ class BookingReviewCreateSerializer(serializers.ModelSerializer):
 
         if Review.objects.filter(tenancy=tenancy, role=role).exists():
             raise serializers.ValidationError("You have already submitted a review for this tenancy.")
-
+        
+        # -----------------------------
+        # Enforce XOR review mode (A or B)
+        # A = checklist (review_flags only)
+        # B = text + rating (notes + overall_rating)
+        # -----------------------------
         flags = attrs.get("review_flags") or []
         notes = attrs.get("notes")
         manual_rating = attrs.get("overall_rating")
 
-        # Validate flags if provided
-        if flags:
-            unknown = [f for f in flags if f not in self.ALLOWED_FLAGS]
-            if unknown:
-                raise serializers.ValidationError({"review_flags": f"Unknown flag(s): {unknown}"})
+        has_flags = len(flags) > 0
+        has_text = bool((notes or "").strip())
+        has_manual_rating = manual_rating is not None
 
-        # RULE:
-        # - If flags provided, rating can be auto-derived by model save()
-        # - If no flags, then manual overall_rating must be provided
-        if not flags and manual_rating is None:
-            raise serializers.ValidationError(
-                {"overall_rating": "Provide overall_rating (1-5) when no review_flags are supplied."}
-            )
+        if has_flags:
+            # Option A: flags only
+            if has_text:
+                raise serializers.ValidationError(
+                    {"notes": "Do not send notes when using review_flags (checklist option)."}
+                )
+            if has_manual_rating:
+                raise serializers.ValidationError(
+                    {"overall_rating": "Do not send overall_rating when using review_flags (checklist option)."}
+                )
+        else:
+            # Option B: notes + rating only
+            if not has_text:
+                raise serializers.ValidationError(
+                    {"notes": "Provide notes when not using review_flags (text option)."}
+                )
+            if not has_manual_rating:
+                raise serializers.ValidationError(
+                    {"overall_rating": "Provide overall_rating (1-5) when not using review_flags (text option)."}
+                )
+
 
         attrs["tenancy"] = tenancy
         attrs["booking"] = None
@@ -212,6 +229,11 @@ class BookingReviewCreateSerializer(serializers.ModelSerializer):
     
     
 class ReviewSerializer(serializers.ModelSerializer):
+    review_mode = serializers.SerializerMethodField()
+    display_summary = serializers.SerializerMethodField()
+    positive_labels = serializers.SerializerMethodField()
+    negative_labels = serializers.SerializerMethodField()
+
     class Meta:
         model = Review
         fields = [
@@ -224,11 +246,109 @@ class ReviewSerializer(serializers.ModelSerializer):
             "review_flags",
             "overall_rating",
             "notes",
+            "display_summary",
+            "review_mode",
+            "positive_labels",
+            "negative_labels",
             "submitted_at",
             "reveal_at",
             "active",
         ]
         read_only_fields = fields
+
+    # --- keep the same flag sets as models.py save() logic (must match exactly) ---
+    TENANT_TO_LANDLORD_POS = {"responsive", "maintenance_good", "accurate_listing", "respectful_fair"}
+    TENANT_TO_LANDLORD_NEG = {"unresponsive", "maintenance_poor", "misleading_listing", "unfair_treatment"}
+
+    LANDLORD_TO_TENANT_POS = {
+        "clean_and_tidy",
+        "friendly",
+        "good_communication",
+        "paid_on_time",
+        "property_care_good",
+        "followed_rules",
+    }
+    LANDLORD_TO_TENANT_NEG = {
+        "messy",
+        "rude",
+        "poor_communication",
+        "late_payment",
+        "property_care_poor",
+        "broke_rules",
+    }
+
+    # Optional: label text for flags (frontend-friendly)
+    FLAG_LABELS = {
+        # Tenant -> Landlord
+        "responsive": "Responsive",
+        "maintenance_good": "Good maintenance",
+        "accurate_listing": "Accurate listing",
+        "respectful_fair": "Respectful and fair",
+        "unresponsive": "Unresponsive",
+        "maintenance_poor": "Poor maintenance",
+        "misleading_listing": "Misleading listing",
+        "unfair_treatment": "Unfair treatment",
+
+        # Landlord -> Tenant
+        "clean_and_tidy": "Clean and tidy",
+        "friendly": "Friendly",
+        "good_communication": "Good communication",
+        "paid_on_time": "Paid on time",
+        "property_care_good": "Took care of the property",
+        "followed_rules": "Followed the rules",
+        "messy": "Messy",
+        "rude": "Rude",
+        "poor_communication": "Poor communication",
+        "late_payment": "Late payment",
+        "property_care_poor": "Poor care of the property",
+        "broke_rules": "Broke the rules",
+    }
+
+    def get_review_mode(self, obj):
+        flags = obj.review_flags or []
+        return "checklist" if flags else "text"
+
+    def get_positive_labels(self, obj):
+        flags = set(obj.review_flags or [])
+        if obj.role == Review.ROLE_TENANT_TO_LANDLORD:
+            pos = flags.intersection(self.TENANT_TO_LANDLORD_POS)
+        else:
+            pos = flags.intersection(self.LANDLORD_TO_TENANT_POS)
+        return [self.FLAG_LABELS.get(k, k) for k in sorted(pos)]
+
+    def get_negative_labels(self, obj):
+        flags = set(obj.review_flags or [])
+        if obj.role == Review.ROLE_TENANT_TO_LANDLORD:
+            neg = flags.intersection(self.TENANT_TO_LANDLORD_NEG)
+        else:
+            neg = flags.intersection(self.LANDLORD_TO_TENANT_NEG)
+        return [self.FLAG_LABELS.get(k, k) for k in sorted(neg)]
+
+    def get_display_summary(self, obj):
+        """
+        Hard rule:
+        - If notes exist (text option), return notes EXACTLY as stored (no edits).
+        - If checklist option, generate a short sentence from selected labels.
+        """
+        flags = obj.review_flags or []
+        notes = obj.notes
+
+        # Option B: text + stars (do not tamper)
+        if not flags:
+            return notes if notes is not None else ""
+
+        # Option A: checklist -> backend-generated wording
+        pos = self.get_positive_labels(obj)
+        neg = self.get_negative_labels(obj)
+
+        parts = []
+        if pos:
+            parts.append(", ".join(pos))
+        if neg:
+            parts.append("However: " + ", ".join(neg))
+
+        return ". ".join(parts) if parts else ""
+
 
 
 class ReviewCreateSerializer(serializers.Serializer):
@@ -286,14 +406,40 @@ class ReviewCreateSerializer(serializers.Serializer):
         if Review.objects.filter(tenancy=tenancy, role=role).exists():
             raise serializers.ValidationError("You have already submitted a review for this tenancy.")
 
+        # -----------------------------
+        # Enforce XOR review mode (A or B)
+        # A = checklist (review_flags only)
+        # B = text + rating (notes + overall_rating)
+        # -----------------------------
         flags = attrs.get("review_flags") or []
+        notes = attrs.get("notes")
         manual_rating = attrs.get("overall_rating")
 
-        #  if flags not provided, rating must be provided
-        if not flags and manual_rating is None:
-            raise serializers.ValidationError(
-                {"overall_rating": "Provide overall_rating (1-5) when no review_flags are supplied."}
-            )
+        has_flags = len(flags) > 0
+        has_text = bool((notes or "").strip())
+        has_manual_rating = manual_rating is not None
+
+        if has_flags:
+            # Option A: flags only
+            if has_text:
+                raise serializers.ValidationError(
+                    {"notes": "Do not send notes when using review_flags (checklist option)."}
+                )
+            if has_manual_rating:
+                raise serializers.ValidationError(
+                    {"overall_rating": "Do not send overall_rating when using review_flags (checklist option)."}
+                )
+        else:
+            # Option B: notes + rating only
+            if not has_text:
+                raise serializers.ValidationError(
+                    {"notes": "Provide notes when not using review_flags (text option)."}
+                )
+            if not has_manual_rating:
+                raise serializers.ValidationError(
+                    {"overall_rating": "Provide overall_rating (1-5) when not using review_flags (text option)."}
+                )
+
 
         attrs["tenancy"] = tenancy
         attrs["booking"] = None

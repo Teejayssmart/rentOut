@@ -1,6 +1,6 @@
 from django.utils import timezone
 from django.contrib.auth import get_user_model
-from django.db.models import Exists, OuterRef
+from django.db.models import Exists, OuterRef, Q
 from django.apps import apps
 from django.conf import settings
 
@@ -97,15 +97,17 @@ def task_refresh_room_ratings_nightly() -> int:
     now = timezone.now()
 
     rooms = Room.objects.filter(
-        Exists(
-            Review.objects.filter(
-                booking__room=OuterRef("pk"),
-                active=True,
-                reveal_at__isnull=False,
-                reveal_at__lte=now,
-            )
+    Exists(
+        Review.objects.filter(
+            Q(booking__room=OuterRef("pk")) | Q(tenancy__room=OuterRef("pk")),
+            role=Review.ROLE_TENANT_TO_LANDLORD,
+            active=True,
+            reveal_at__isnull=False,
+            reveal_at__lte=now,
         )
     )
+    )
+
 
     count = 0
     for room in rooms:
@@ -361,15 +363,17 @@ def task_tenancy_prompts_sweep() -> int:
 
         for room_id in room_ids:
             agg = Review.objects.filter(
-                    tenancy__room_id=room_id,
-                    booking__isnull=True,          # 🚫 exclude booking reviews
-                    active=True,
-                    reveal_at__isnull=False,
-                    reveal_at__lte=now,
-                ).aggregate(
-                    avg=Avg("overall_rating"),
-                    cnt=Count("id"),
-                )
+                tenancy__room_id=room_id,
+                booking__isnull=True,          # exclude booking reviews
+                role=Review.ROLE_TENANT_TO_LANDLORD,  #  only tenant -> landlord affects room rating
+                active=True,
+                reveal_at__isnull=False,
+                reveal_at__lte=now,
+            ).aggregate(
+                avg=Avg("overall_rating"),
+                cnt=Count("id"),
+            )
+
 
 
             avg_val = float(agg["avg"] or 0.0)

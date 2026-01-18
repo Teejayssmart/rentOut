@@ -94,17 +94,19 @@ def _discover_review_create_url(client: APIClient, tenancy_id: int) -> str:
     )
 
 
-def _build_payload(*, tenancy_id: int, role: str):
-    """
-    Payload for your create-review API.
-    """
-    return {
-        "tenancy": tenancy_id,
-        "role": role,
-        "overall_rating": 5,
-        "review_flags": ["responsive"],
-        "notes": "test review",
-    }
+def _build_payload(*, tenancy_id=None, role=None):
+    payload = {}
+
+    if tenancy_id is not None:
+        payload["tenancy_id"] = tenancy_id
+    if role is not None:
+        payload["role"] = role
+
+    # checklist mode ONLY
+    payload["review_flags"] = ["responsive"]
+
+    return payload
+
 
 
 def test_tenant_cannot_submit_landlord_to_tenant_review(user_factory, room_factory):

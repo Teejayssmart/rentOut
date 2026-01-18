@@ -1001,28 +1001,45 @@ class Review(models.Model):
         #  IMPORTANT FIX:
         # Only auto-calc rating from flags if flags were actually supplied.
         # If no flags, keep the manual overall_rating (from API payload).
+        # Only auto-calc rating from flags if flags were actually supplied.
         flags = self.review_flags or []
         if flags:
-            positives = {
-                "clean_and_tidy",
-                "friendly",
-                "good_communication",
-                "paid_on_time",
-                "property_care_good",
-                "followed_rules",
-            }
-            negatives = {
-                "messy",
-                "rude",
-                "poor_communication",
-                "late_payment",
-                "property_care_poor",
-                "broke_rules",
-            }
+            if self.role == self.ROLE_TENANT_TO_LANDLORD:
+                positives = {
+                    "responsive",
+                    "maintenance_good",
+                    "accurate_listing",
+                    "respectful_fair",
+                }
+                negatives = {
+                    "unresponsive",
+                    "maintenance_poor",
+                    "misleading_listing",
+                    "unfair_treatment",
+                }
+            else:  # landlord -> tenant
+                positives = {
+                    "clean_and_tidy",
+                    "friendly",
+                    "good_communication",
+                    "paid_on_time",
+                    "property_care_good",
+                    "followed_rules",
+                }
+                negatives = {
+                    "messy",
+                    "rude",
+                    "poor_communication",
+                    "late_payment",
+                    "property_care_poor",
+                    "broke_rules",
+                }
+
             pos = sum(1 for f in flags if f in positives)
             neg = sum(1 for f in flags if f in negatives)
             score = 3 + (pos - neg)
             self.overall_rating = max(1, min(5, score))
+
 
         super().save(*args, **kwargs)
 

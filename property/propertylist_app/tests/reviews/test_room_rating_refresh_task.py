@@ -74,7 +74,7 @@ def test_task_refresh_room_ratings_updates_room_for_revealed_reviews(django_user
         reviewee=landlord,
         role=Review.ROLE_TENANT_TO_LANDLORD,
         reveal_at=now - timedelta(days=1),
-        review_flags=["friendly", "good_communication"],  # forces rating to 5 via save()
+        review_flags=["responsive", "maintenance_good"],  # forces rating to 5 via save()
         notes="Good landlord",
         active=True,
     )
@@ -119,7 +119,7 @@ def test_task_refresh_room_ratings_ignores_unrevealed_reviews(django_user_model)
         reviewee=landlord,
         role=Review.ROLE_TENANT_TO_LANDLORD,
         reveal_at=now + timedelta(days=10),
-        review_flags=["friendly", "good_communication"],
+        review_flags=["responsive", "maintenance_good"],
         active=True,
     )
 

@@ -90,10 +90,6 @@ def _reviews_for_room(room, Review):
 
 
 def update_room_rating_from_revealed_reviews(room) -> bool:
-    """
-    Recalculate room rating using revealed reviews only.
-    Returns True if it updated a real Room DB field, else False.
-    """
     Review = apps.get_model("propertylist_app", "Review")
     Room = apps.get_model("propertylist_app", "Room")
 
@@ -104,17 +100,18 @@ def update_room_rating_from_revealed_reviews(room) -> bool:
 
     qs = _revealed_only_filter(qs, Review)
 
+    # ONLY tenant -> landlord reviews affect room rating
+    if _is_real_model_field(Review, "role"):
+        qs = qs.filter(role=Review.ROLE_TENANT_TO_LANDLORD)
+
     review_rating_field = _pick_numeric_field(
         Review,
-        preferred_names=("rating", "stars", "score"),
+        preferred_names=("overall_rating", "rating", "stars", "score"),
     )
     if not review_rating_field:
         return False
 
-    avg_val = qs.aggregate(avg=Avg(review_rating_field))["avg"]
-    if avg_val is None:
-        avg_val = 0.0
-
+    avg_val = qs.aggregate(avg=Avg(review_rating_field))["avg"] or 0.0
     count_val = qs.count()
 
     room_rating_field = _pick_numeric_field(
@@ -124,17 +121,12 @@ def update_room_rating_from_revealed_reviews(room) -> bool:
     if not room_rating_field:
         return False
 
-    # also update number_rating if the Room model has it
-    count_field = None
-    if _is_real_model_field(Room, "number_rating"):
-        count_field = "number_rating"
-
     setattr(room, room_rating_field, float(avg_val))
 
     update_fields = [room_rating_field]
-    if count_field:
-        setattr(room, count_field, int(count_val))
-        update_fields.append(count_field)
+    if _is_real_model_field(Room, "number_rating"):
+        room.number_rating = int(count_val)
+        update_fields.append("number_rating")
 
     room.save(update_fields=update_fields)
     return True

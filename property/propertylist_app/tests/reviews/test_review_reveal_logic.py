@@ -294,7 +294,8 @@ def test_room_rating_updates_only_after_reveal(user_factory, room_factory):
 
     # Only TENANT -> LANDLORD reviews affect room rating
     # Landlord -> Tenant review must NOT be included
-    expected_after = 3.0
+    expected_after = 5.0
+
 
 
 
@@ -354,4 +355,5 @@ def test_room_rating_updates_only_after_reveal(user_factory, room_factory):
     after_value = float(room.avg_rating or 0.0)
 
     assert abs(after_value - float(expected_after)) < 0.0001
-    assert room.number_rating == 2
+    assert room.number_rating == 1
+

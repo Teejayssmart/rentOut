@@ -67,7 +67,7 @@ def test_booking_review_create_is_blocked_as_viewing_flow():
 
     resp = tenant_client.post(
         f"{API_PREFIX}/bookings/{booking.id}/reviews/create/",
-        data={"review_flags": ["responsive"], "notes": "test"},
+        data={"review_flags": ["responsive"]},
         format="json",
     )
 
@@ -102,7 +102,7 @@ def test_tenancy_review_is_blocked_before_review_open_at():
     tenant_client = _api_client_for(tenant)
     resp = tenant_client.post(
         f"{API_PREFIX}/tenancies/{tenancy.id}/reviews/",
-        data={"review_flags": ["responsive"], "notes": "too early"},
+        data={"review_flags": ["responsive"]},
         format="json",
     )
 
@@ -136,7 +136,7 @@ def test_tenancy_review_succeeds_after_review_open_at_and_blocks_duplicates():
     # First submission should succeed
     resp1 = tenant_client.post(
         f"{API_PREFIX}/tenancies/{tenancy.id}/reviews/",
-        data={"review_flags": ["responsive", "maintenance_good"], "notes": "good"},
+        data={"review_flags": ["responsive", "maintenance_good"]},
         format="json",
     )
     assert resp1.status_code == 201, resp1.data
@@ -150,7 +150,7 @@ def test_tenancy_review_succeeds_after_review_open_at_and_blocks_duplicates():
     # Duplicate submission (same role) should fail
     resp2 = tenant_client.post(
         f"{API_PREFIX}/tenancies/{tenancy.id}/reviews/",
-        data={"review_flags": ["responsive"], "notes": "duplicate"},
+        data={"review_flags": ["responsive"]},
         format="json",
     )
     assert resp2.status_code == 400
@@ -182,7 +182,7 @@ def test_tenancy_review_is_blocked_after_review_deadline_at():
     tenant_client = _api_client_for(tenant)
     resp = tenant_client.post(
         f"{API_PREFIX}/tenancies/{tenancy.id}/reviews/",
-        data={"review_flags": ["responsive"], "notes": "too late"},
+        data={"review_flags": ["responsive"]},
         format="json",
     )
 

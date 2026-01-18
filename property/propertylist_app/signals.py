@@ -26,20 +26,23 @@ from django.apps import apps
 
 def _recalc_room_rating(room: Room):
     """
-    Room rating is derived from both BOOKING-based and TENANCY-based reviews.
-    Only revealed reviews count (double-blind / reveal_at reached).
+    Room rating: ONLY tenant -> landlord reviews about the listing/landlord experience.
+    Only revealed reviews count.
     """
+    now = timezone.now()
+
     agg = Review.objects.filter(
         Q(booking__room=room) | Q(tenancy__room=room),
+        role=Review.ROLE_TENANT_TO_LANDLORD,
         active=True,
         reveal_at__isnull=False,
-        reveal_at__lte=timezone.now(),
+        reveal_at__lte=now,
     ).aggregate(
         avg=Avg("overall_rating"),
         cnt=Count("id"),
     )
 
-    room.avg_rating = float(agg["avg"] or 0)
+    room.avg_rating = float(agg["avg"] or 0.0)
     room.number_rating = int(agg["cnt"] or 0)
     room.save(update_fields=["avg_rating", "number_rating"])
 
@@ -47,16 +50,31 @@ def _recalc_room_rating(room: Room):
 
 @receiver(post_save, sender=apps.get_model("propertylist_app", "Review"))
 def review_saved_update_room_rating(sender, instance, created, **kwargs):
-    if not getattr(instance, "room_id", None):
+    room = None
+    if getattr(instance, "booking_id", None) and getattr(instance.booking, "room_id", None):
+        room = instance.booking.room
+    elif getattr(instance, "tenancy_id", None) and getattr(instance.tenancy, "room_id", None):
+        room = instance.tenancy.room
+
+    if not room:
         return
-    update_room_rating_from_revealed_reviews(instance.room)
+
+    update_room_rating_from_revealed_reviews(room)
 
 
 @receiver(post_delete, sender=apps.get_model("propertylist_app", "Review"))
 def review_deleted_update_room_rating(sender, instance, **kwargs):
-    if not getattr(instance, "room_id", None):
+    room = None
+    if getattr(instance, "booking_id", None) and getattr(instance.booking, "room_id", None):
+        room = instance.booking.room
+    elif getattr(instance, "tenancy_id", None) and getattr(instance.tenancy, "room_id", None):
+        room = instance.tenancy.room
+
+    if not room:
         return
-    update_room_rating_from_revealed_reviews(instance.room)
+
+    update_room_rating_from_revealed_reviews(room)
+
 
 
 

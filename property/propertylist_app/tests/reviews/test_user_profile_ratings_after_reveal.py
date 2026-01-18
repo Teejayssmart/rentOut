@@ -156,7 +156,8 @@ def test_landlord_profile_rating_updates_only_after_reveal(user_factory, room_fa
     assert hasattr(landlord_profile, "number_landlord_ratings"), "Add number_landlord_ratings to UserProfile"
 
     future = timezone.now() + timedelta(days=7)
-    flags_for_5 = ["friendly", "good_communication"]
+    flags_for_5 = ["responsive", "maintenance_good"]
+
 
 
     Review.objects.create(
