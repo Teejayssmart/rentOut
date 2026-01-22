@@ -1327,6 +1327,8 @@ class SearchFiltersSerializer(serializers.Serializer):
     q = serializers.CharField(required=False, allow_blank=True)
     min_price = serializers.DecimalField(required=False, max_digits=10, decimal_places=2)
     max_price = serializers.DecimalField(required=False, max_digits=10, decimal_places=2)
+    min_rating = serializers.FloatField(required=False)
+    max_rating = serializers.FloatField(required=False)
     postcode = serializers.CharField(required=False)
     street = serializers.CharField(required=False, allow_blank=True)
     city = serializers.CharField(required=False, allow_blank=True)
@@ -1458,15 +1460,28 @@ class SearchFiltersSerializer(serializers.Serializer):
                 {"postcode": "Postcode is required when using radius search."}
             )
 
-        # NEW: ages range sanity (simple check)
+        # ages range sanity
         if attrs.get("min_age") is not None or attrs.get("max_age") is not None:
             validate_numeric_range(attrs.get("min_age"), attrs.get("max_age"))
 
-        # NEW: stay length range sanity
+        # stay length range sanity
         if attrs.get("min_stay_months") is not None or attrs.get("max_stay_months") is not None:
             validate_numeric_range(attrs.get("min_stay_months"), attrs.get("max_stay_months"))
 
+        # rating range sanity (1–5)
+        if attrs.get("min_rating") is not None or attrs.get("max_rating") is not None:
+            validate_numeric_range(attrs.get("min_rating"), attrs.get("max_rating"))
+
+            for f in ("min_rating", "max_rating"):
+                v = attrs.get(f)
+                if v is None:
+                    continue
+                if v < 1 or v > 5:
+                    raise serializers.ValidationError({f: "Must be between 1 and 5."})
+
         return attrs
+
+
 
 
 class FindAddressSerializer(serializers.Serializer):
@@ -2234,6 +2249,8 @@ class ReportSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
 
+    # serializers.py
+
     def validate(self, attrs):
         model_map = {
             "room": Room,
@@ -2246,7 +2263,19 @@ class ReportSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 {"object_id": "Invalid object ID for the given target type."}
             )
+
+        # NEW: block reporting your own room
+        if attrs["target_type"] == "room":
+            request = self.context.get("request")
+            if request and request.user and request.user.is_authenticated:
+                room = Room.objects.filter(pk=attrs["object_id"]).select_related("property_owner").first()
+                if room and room.property_owner_id == request.user.id:
+                    raise serializers.ValidationError(
+                        {"object_id": "You cannot report your own room."}
+                    )
+
         return attrs
+
 
     def create(self, validated_data):
         model = {

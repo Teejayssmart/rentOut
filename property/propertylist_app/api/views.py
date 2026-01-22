@@ -1708,6 +1708,9 @@ class SearchRoomsView(generics.ListAPIView):
     - property_types   : flat / house / studio (Advanced Search)
     - rooms_min/max    : minimum / maximum number_of_bedrooms (Advanced Search)
     - move_in_date     : earliest acceptable move-in date (Advanced Search)
+    - min_rating       : minimum average rating (1–5)
+    - max_rating       : maximum average rating (1–5)
+
     """
     serializer_class = RoomSerializer
     permission_classes = [permissions.AllowAny]
@@ -1786,6 +1789,38 @@ class SearchRoomsView(generics.ListAPIView):
                 qs = qs.filter(price_per_month__lte=int(max_price))
             except Exception:
                 raise ValidationError({"max_price": "Must be an integer."})
+
+
+        # ----- rating filters -----
+        min_rating = params.get("min_rating")
+        max_rating = params.get("max_rating")
+
+        def _parse_rating(value, field_name):
+            if value is None or str(value).strip() == "":
+                return None
+            try:
+                r = float(value)
+            except Exception:
+                raise ValidationError({field_name: "Must be a number between 1 and 5."})
+            if r < 1 or r > 5:
+                raise ValidationError({field_name: "Must be between 1 and 5."})
+            return r
+
+        min_rating_val = _parse_rating(min_rating, "min_rating")
+        max_rating_val = _parse_rating(max_rating, "max_rating")
+
+        if min_rating_val is not None and max_rating_val is not None and min_rating_val > max_rating_val:
+            raise ValidationError({"min_rating": "min_rating cannot be greater than max_rating."})
+
+        if min_rating_val is not None:
+            qs = qs.filter(avg_rating__gte=min_rating_val)
+
+        if max_rating_val is not None:
+            qs = qs.filter(avg_rating__lte=max_rating_val)
+
+
+
+
 
         # Property preferences – boolean filters (support true and false)
         def parse_bool(v):
@@ -2739,13 +2774,14 @@ class MessageListCreateView(generics.ListCreateAPIView):
         thread_id = self.kwargs["thread_id"]
         user = self.request.user
 
-        # Base: only messages in this thread, where user is a participant
-        qs = Message.objects.filter(
-            thread__id=thread_id,
-            thread__participants=user,
+        # HARD GUARD: user must be a participant (otherwise 404)
+        get_object_or_404(
+            MessageThread.objects.filter(participants=user),
+            id=thread_id,
         )
 
-        # NEW: free-text search within this thread
+        qs = Message.objects.filter(thread__id=thread_id).order_by("-created")
+
         q = (self.request.query_params.get("q") or "").strip()
         if q:
             qs = qs.filter(body__icontains=q)
@@ -2920,7 +2956,7 @@ class StartThreadFromRoomView(APIView):
         existing = (
             MessageThread.objects.filter(participants=room.property_owner)
             .filter(participants=request.user)
-            .annotate(num_participants=Count("participants"))
+            .annotate(num_participants=Count("participants", distinct=True))
             .filter(num_participants=2)
             .first()
         )
@@ -4013,6 +4049,32 @@ class ModerationReportListView(generics.ListAPIView):
         return qs
 
 
+
+
+def _can_transition_report_status(current: str, new: str) -> bool:
+    """
+    Allowed transitions:
+      open -> in_review/resolved/rejected
+      in_review -> resolved/rejected
+      resolved -> (terminal)
+      rejected -> (terminal)
+    Same-status "updates" are allowed (no-op).
+    """
+    if not current or not new:
+        return False
+    if current == new:
+        return True
+
+    allowed = {
+        "open": {"in_review", "resolved", "rejected"},
+        "in_review": {"resolved", "rejected"},
+        "resolved": set(),
+        "rejected": set(),
+    }
+    return new in allowed.get(current, set())
+
+
+
 class ModerationReportUpdateView(generics.UpdateAPIView):
     """
     PATCH /api/moderation/reports/<id>/
@@ -4029,7 +4091,13 @@ class ModerationReportUpdateView(generics.UpdateAPIView):
         hide_room = bool(request.data.get("hide_room"))
 
         if status_new in {"in_review", "resolved", "rejected"}:
+            if not _can_transition_report_status(report.status, status_new):
+                return Response(
+                    {"status": f"Invalid transition from '{report.status}' to '{status_new}'."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
             report.status = status_new
+
         if notes:
             report.resolution_notes = notes
         report.handled_by = request.user
@@ -4088,6 +4156,15 @@ class ModerationReportModerateActionView(APIView):
         new_status = mapping.get(action)
         if not new_status:
             return Response({"detail": "invalid action"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        
+        # views.py
+        if not _can_transition_report_status(report.status, new_status):
+            return Response(
+                {"status": f"Invalid transition from '{report.status}' to '{new_status}'."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
 
         # update report
         if notes:

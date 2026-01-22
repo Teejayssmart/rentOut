@@ -8,7 +8,7 @@ def test_ops_stats_requires_admin_and_returns_keys():
     # Non-admin → 403
     u = User.objects.create_user(username="user", password="pass123", email="u@example.com")
     c = APIClient(); c.force_authenticate(user=u)
-    url = reverse("v1:ops-stats")
+    url = "/api/v1/ops/stats/"
     r_forbidden = c.get(url)
     assert r_forbidden.status_code == 403
 

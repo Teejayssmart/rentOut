@@ -1041,6 +1041,7 @@ class Review(models.Model):
             self.overall_rating = max(1, min(5, score))
 
 
+
         super().save(*args, **kwargs)
 
 # ---------------
