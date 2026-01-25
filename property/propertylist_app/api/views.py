@@ -2382,21 +2382,22 @@ class RoomSaveView(APIView):
         SavedRoom.objects.filter(user=request.user, room=room).delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
-
 class RoomSaveToggleView(APIView):
-    """
-    POST /api/rooms/<pk>/save-toggle/
-    First call saves, second call unsaves.
-    """
     permission_classes = [IsAuthenticated]
 
     def post(self, request, pk):
         room = get_object_or_404(Room.objects.alive(), pk=pk)
-        obj, created = SavedRoom.objects.get_or_create(user=request.user, room=room)
-        if created:
-            return Response({"saved": True, "saved_at": timezone.now().isoformat()}, status=status.HTTP_201_CREATED)
-        obj.delete()
-        return Response({"saved": False, "saved_at": None})
+        SavedRoom.objects.get_or_create(user=request.user, room=room)
+        return Response(
+            {"saved": True, "saved_at": timezone.now().isoformat()},
+            status=status.HTTP_200_OK,
+        )
+
+    def delete(self, request, pk):
+        room = get_object_or_404(Room.objects.alive(), pk=pk)
+        SavedRoom.objects.filter(user=request.user, room=room).delete()
+        return Response({"saved": False, "saved_at": None}, status=status.HTTP_200_OK)
+
 
 
 class MySavedRoomsView(generics.ListAPIView):

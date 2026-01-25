@@ -6,28 +6,39 @@ from rest_framework.test import APIClient
 from propertylist_app.models import Room, RoomCategorie, SavedRoom
 
 
+
 @pytest.mark.django_db
-def test_save_toggle_creates_and_deletes():
+def test_save_is_idempotent_and_unsave_is_idempotent():
     user = User.objects.create_user(username="tee", password="pass123", email="t@example.com")
+    owner = User.objects.create_user(username="owner", password="pass123", email="o@example.com")
     cat = RoomCategorie.objects.create(name="Central", active=True)
-    room = Room.objects.create(title="Nice Room", category=cat, price_per_month=900, property_owner=user)
+    room = Room.objects.create(title="Nice Room", category=cat, price_per_month=900, property_owner=owner)
 
     client = APIClient()
     client.force_authenticate(user=user)
 
-    toggle_url = reverse("v1:room-save-toggle", kwargs={"pk": room.pk})
+    url = reverse("v1:room-save-toggle", kwargs={"pk": room.pk})
 
-    # 1) First toggle -> saved
-    r1 = client.post(toggle_url)
+    # POST save twice -> still only one SavedRoom
+    r1 = client.post(url)
     assert r1.status_code in (200, 201), r1.data
     assert r1.data.get("saved") is True
-    assert SavedRoom.objects.filter(user=user, room=room).exists()
+    assert SavedRoom.objects.filter(user=user, room=room).count() == 1
 
-    # 2) Second toggle -> unsaved
-    r2 = client.post(toggle_url)
+    r2 = client.post(url)
     assert r2.status_code in (200, 201), r2.data
-    assert r2.data.get("saved") is False
-    assert not SavedRoom.objects.filter(user=user, room=room).exists()
+    assert r2.data.get("saved") is True
+    assert SavedRoom.objects.filter(user=user, room=room).count() == 1
+
+    # DELETE unsave twice -> no-op, stays unsaved
+    r3 = client.delete(url)
+    assert r3.status_code in (200, 204), getattr(r3, "data", None)
+    assert SavedRoom.objects.filter(user=user, room=room).count() == 0
+
+    r4 = client.delete(url)
+    assert r4.status_code in (200, 204), getattr(r4, "data", None)
+    assert SavedRoom.objects.filter(user=user, room=room).count() == 0
+
 
 
 @pytest.mark.django_db
