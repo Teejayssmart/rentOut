@@ -47,18 +47,10 @@ def _csv_env(name: str, default: str = ""):
     raw = os.getenv(name, default)
     return [x.strip() for x in raw.split(",") if x.strip()]
 
-
-# ALLOWED_HOSTS = _csv_env(
-#     "DJANGO_ALLOWED_HOSTS",
-#     "127.0.0.1,localhost,.ngrok-free.dev,.ngrok-free.app,.ngrok.io",
-# )
-
-
-ALLOWED_HOSTS = [
-    "rentout-my5r.onrender.com",
-    "localhost",
-    "127.0.0.1",
-]
+ALLOWED_HOSTS = _csv_env(
+    "DJANGO_ALLOWED_HOSTS",
+    "127.0.0.1,localhost,.onrender.com",
+)
 
 
 # -----------------------------
