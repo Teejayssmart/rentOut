@@ -14,11 +14,7 @@ from pathlib import Path
 from datetime import timedelta
 import os
 from dotenv import load_dotenv
-from celery.schedules import crontab
-
-
-
-
+from django.core.exceptions import ImproperlyConfigured
 
 TESTING = bool(os.environ.get("PYTEST_CURRENT_TEST"))
 
@@ -31,24 +27,54 @@ load_dotenv(BASE_DIR / ".env")
 # Cache TTL for geocode results (seconds)
 GEO_CACHE_TTL_SECONDS = 60 * 60 * 24 * 7  # 7 days
 
-# Quick-start development settings - unsuitable for production
-# See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
+# -----------------------------
+# Core security / environment
+# -----------------------------
+SECRET_KEY = os.getenv("DJANGO_SECRET_KEY")
+if not SECRET_KEY:
+    # Safe behaviour:
+    # - local/dev/testing: allow a temporary key so you can still run
+    # - production: you MUST set DJANGO_SECRET_KEY
+    if os.getenv("DJANGO_DEBUG", "true").lower() in {"1", "true", "yes"} or TESTING:
+        SECRET_KEY = "dev-only-unsafe-secret-key-change-me"
+    else:
+        raise ImproperlyConfigured("DJANGO_SECRET_KEY is required in production.")
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-_qgif_5w0pmw8juvw!vk(a^^l3k!@ffmtut!s2@1#qjv2hrl7y'
+DEBUG = os.getenv("DJANGO_DEBUG", "true").lower() in {"1", "true", "yes"}
 
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
 
-ALLOWED_HOSTS = []
+def _csv_env(name: str, default: str = ""):
+    raw = os.getenv(name, default)
+    return [x.strip() for x in raw.split(",") if x.strip()]
 
+
+# ALLOWED_HOSTS = _csv_env(
+#     "DJANGO_ALLOWED_HOSTS",
+#     "127.0.0.1,localhost,.ngrok-free.dev,.ngrok-free.app,.ngrok.io",
+# )
+
+
+ALLOWED_HOSTS = [
+    "rentout-my5r.onrender.com",
+    "localhost",
+    "127.0.0.1",
+]
+
+
+# -----------------------------
+# Stripe / site URLs
+# -----------------------------
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")
 STRIPE_PUBLISHABLE_KEY = os.getenv("STRIPE_PUBLISHABLE_KEY", "")
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
 SITE_URL = os.getenv("SITE_URL", "http://127.0.0.1:8000")
 
-# Application definition
+# Frontend base URL used for links in emails
+FRONTEND_BASE_URL = os.getenv("FRONTEND_BASE_URL", "https://rentout.co.uk")
 
+# -----------------------------
+# Application definition
+# -----------------------------
 INSTALLED_APPS = [
     "django.contrib.admin",
     "django.contrib.auth",
@@ -56,26 +82,21 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
-
-    'propertylist_app.apps.PropertylistAppConfig',
-
+    "propertylist_app.apps.PropertylistAppConfig",
     "rest_framework",
     "rest_framework_simplejwt",
     "rest_framework_simplejwt.token_blacklist",
-
     "django_filters",
     "corsheaders",
-    
-    'drf_spectacular',
+    "drf_spectacular",
     "notifications.apps.NotificationsConfig",
     "django_celery_beat",
-  
-    
 ]
 
 MIDDLEWARE = [
-    "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware",
+    "corsheaders.middleware.CorsMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -84,91 +105,78 @@ MIDDLEWARE = [
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
 
-ROOT_URLCONF = 'property.urls'
+ROOT_URLCONF = "property.urls"
 
 TEMPLATES = [
     {
-        'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
-        'APP_DIRS': True,
-        'OPTIONS': {
-            'context_processors': [
-                'django.template.context_processors.request',
-                'django.contrib.auth.context_processors.auth',
-                'django.contrib.messages.context_processors.messages',
+        "BACKEND": "django.template.backends.django.DjangoTemplates",
+        "DIRS": [],
+        "APP_DIRS": True,
+        "OPTIONS": {
+            "context_processors": [
+                "django.template.context_processors.request",
+                "django.contrib.auth.context_processors.auth",
+                "django.contrib.messages.context_processors.messages",
             ],
         },
     },
 ]
 
-WSGI_APPLICATION = 'property.wsgi.application'
+WSGI_APPLICATION = "property.wsgi.application"
 
-# Database
-# https://docs.djangoproject.com/en/5.2/ref/settings/#databases
-
-# DATABASES = {
-#     'default': {
-#         'ENGINE': 'django.db.backends.sqlite3',
-#         'NAME': BASE_DIR / 'db.sqlite3',
-#     }
-# }
-
+# -----------------------------
+# Database (PostgreSQL via env vars)
+# -----------------------------
 DATABASES = {
-'default': {
-'ENGINE': 'django.db.backends.postgresql',
-'NAME': 'rentout_db',
-'USER': 'rentout_user',
-'PASSWORD': 'rentOut_admin_123',
-'HOST': '127.0.0.1',
-'PORT': '5432',
+    "default": {
+        "ENGINE": "django.db.backends.postgresql",
+        "NAME": os.getenv("DB_NAME"),
+        "USER": os.getenv("DB_USER"),
+        "PASSWORD": os.getenv("DB_PASSWORD"),
+        "HOST": os.getenv("DB_HOST", "127.0.0.1"),
+        "PORT": os.getenv("DB_PORT", "5432"),
+    }
 }
-}
 
+# Hard stop in production if missing DB env vars
+if not TESTING and not DEBUG:
+    missing = [k for k in ["DB_NAME", "DB_USER", "DB_PASSWORD"] if not os.getenv(k)]
+    if missing:
+        raise ImproperlyConfigured(f"Missing required DB env vars: {', '.join(missing)}")
 
-
-
+# -----------------------------
 # Password validation
-# https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
-
+# -----------------------------
 AUTH_PASSWORD_VALIDATORS = [
-    {
-        'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
-    },
-    {
-        'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator',
-    },
-    {
-        'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator',
-    },
-    {
-        'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator',
-    },
+    {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
+    {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
+    {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
+    {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
 ]
 
+# -----------------------------
 # Internationalization
-# https://docs.djangoproject.com/en/5.2/topics/i18n/
-
-LANGUAGE_CODE = 'en-uk'
-
+# -----------------------------
+LANGUAGE_CODE = "en-gb"
 TIME_ZONE = "Europe/London"
-
 USE_I18N = True
-
 USE_TZ = True
 
-# Static files (CSS, JavaScript, Images)
-# https://docs.djangoproject.com/en/5.2/howto/static-files/
+# -----------------------------
+# Static + Media
+# -----------------------------
+STATIC_URL = "static/"
+STATIC_ROOT = BASE_DIR / "staticfiles"
+STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
 
-STATIC_URL = 'static/'
+MEDIA_URL = "/media/"
+MEDIA_ROOT = BASE_DIR / "media"
 
-# Default primary key field type
-# https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
+DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-MEDIA_URL = '/media/'
-MEDIA_ROOT = BASE_DIR / 'media'
-
-DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
-
+# -----------------------------
+# DRF / OpenAPI / JWT
+# -----------------------------
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
         "rest_framework_simplejwt.authentication.JWTAuthentication",
@@ -176,17 +184,12 @@ REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.AllowAny",
     ],
-    "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.LimitOffsetPagination",
-    "PAGE_SIZE": 10,
-
     "DEFAULT_THROTTLE_CLASSES": [
         "rest_framework.throttling.UserRateThrottle",
         "rest_framework.throttling.AnonRateThrottle",
         "rest_framework.throttling.ScopedRateThrottle",
     ],
-    
-    
-     "DEFAULT_THROTTLE_RATES": {
+    "DEFAULT_THROTTLE_RATES": {
         "user": "10000/hour",
         "anon": "10000/hour",
         "login": "10000/hour",
@@ -200,16 +203,13 @@ REST_FRAMEWORK = {
         "password-reset-confirm": "10000/hour",
         "report-create": "10000/hour",
         "moderation": "10000/hour",
-        "login": "10000/hour",
         "otp-verify": "10000/hour",
         "otp-resend": "10000/hour",
     },
     "DEFAULT_FILTER_BACKENDS": [
         "django_filters.rest_framework.DjangoFilterBackend",
-        "rest_framework.filters.OrderingFilter",  # ← add this
+        "rest_framework.filters.OrderingFilter",
     ],
-    
-    
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.LimitOffsetPagination",
     "PAGE_SIZE": 20,
     "DEFAULT_RENDERER_CLASSES": (
@@ -219,10 +219,7 @@ REST_FRAMEWORK = {
     "DEFAULT_VERSION": "v1",
     "ALLOWED_VERSIONS": ["v1", "v2"],
     "VERSION_PARAM": "version",
-
-    # Use Spectacular to generate the OpenAPI schema
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
-
     "EXCEPTION_HANDLER": "propertylist_app.api.exceptions.custom_exception_handler",
 }
 
@@ -230,7 +227,7 @@ SPECTACULAR_SETTINGS = {
     "TITLE": "RentOut API",
     "DESCRIPTION": "SpareRoom-style listings, bookings, chat, payments, and moderation.",
     "VERSION": "1.0.0",
-    "SERVE_INCLUDE_SCHEMA": False,  # keep schema at /api/schema/
+    "SERVE_INCLUDE_SCHEMA": False,
 }
 
 SIMPLE_JWT = {
@@ -241,57 +238,51 @@ SIMPLE_JWT = {
     "AUTH_HEADER_TYPES": ("Bearer",),
 }
 
-# --- Security/Abuse controls ---
-# Toggle CAPTCHA for sensitive endpoints (login/register/password-reset, report)
+# -----------------------------
+# Security / Abuse controls
+# -----------------------------
 ENABLE_CAPTCHA = os.getenv("ENABLE_CAPTCHA", "false").lower() in {"1", "true", "yes"}
-
 ENABLE_SOCIAL_AUTH_STUB = False
 
-#Account deletion
 ACCOUNT_DELETION_GRACE_DAYS = 7
 
-
-# Choose "recaptcha" or "hcaptcha" if you wire a real provider later.
 CAPTCHA_PROVIDER = os.getenv("CAPTCHA_PROVIDER", "recaptcha")
-CAPTCHA_SECRET   = os.getenv("CAPTCHA_SECRET", "")   # e.g., reCAPTCHA secret key
+CAPTCHA_SECRET = os.getenv("CAPTCHA_SECRET", "")
 
-# Login attempt lockout (independent of DRF throttling)
-LOGIN_FAIL_LIMIT = int(os.getenv("LOGIN_FAIL_LIMIT", "5"))              # after 5 failed attempts
-LOGIN_LOCKOUT_SECONDS = int(os.getenv("LOGIN_LOCKOUT_SECONDS", "900"))  # 15 minutes
+LOGIN_FAIL_LIMIT = int(os.getenv("LOGIN_FAIL_LIMIT", "5"))
+LOGIN_LOCKOUT_SECONDS = int(os.getenv("LOGIN_LOCKOUT_SECONDS", "900"))
 
-# allow only the origins you actually use
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-]
-CSRF_TRUSTED_ORIGINS = [
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-]
+# -----------------------------
+# CORS / CSRF
+# (keep local defaults; override via env later if you want)
+# -----------------------------
+CORS_ALLOWED_ORIGINS = _csv_env(
+    "CORS_ALLOWED_ORIGINS",
+    "http://localhost:3000,http://127.0.0.1:3000",
+)
 
-EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
-DEFAULT_FROM_EMAIL = "no-reply@rentout.local"
+CSRF_TRUSTED_ORIGINS = _csv_env(
+    "CSRF_TRUSTED_ORIGINS",
+    "http://localhost:3000,http://127.0.0.1:3000",
+)
+# -----------------------------
+# Email
+# -----------------------------
+EMAIL_BACKEND = os.getenv(
+    "EMAIL_BACKEND", "django.core.mail.backends.console.EmailBackend"
+)
+DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", "no-reply@rentout.local")
 
-ALLOWED_HOSTS = ["127.0.0.1", "localhost", ".ngrok-free.dev", ".ngrok-free.app", ".ngrok.io"]
-LANGUAGE_CODE = "en-gb"
-TIME_ZONE = "Europe/London"
-USE_I18N = True
-USE_TZ = True
-
-# --- Media config  ---
-MEDIA_URL = "/media/"
-MEDIA_ROOT = BASE_DIR / "media"
-
-#  MEDIA POLICY (used by validators)
+# -----------------------------
+# Media policy knobs used by validators
+# -----------------------------
 MAX_IMAGE_BYTES = int(os.getenv("MAX_IMAGE_BYTES", str(5 * 1024 * 1024)))  # 5 MB
-ALLOWED_IMAGE_FORMATS = {"JPEG", "JPG", "PNG", "WEBP"}  # Pillow formats
+ALLOWED_IMAGE_FORMATS = {"JPEG", "JPG", "PNG", "WEBP"}
 MAX_IMAGE_PIXELS = int(os.getenv("MAX_IMAGE_PIXELS", "40000000"))  # 40 MP safety fuse
 
-
-# --- Toggle S3 in production via env ---
-USE_S3 = os.getenv("USE_S3", "false").lower() in {"1", "true", "yes"}
-
-# OPTIONAL S3 STORAGE (enable with USE_S3=true in .env)
+# -----------------------------
+# Optional S3 storage (toggle via env)
+# -----------------------------
 USE_S3 = os.getenv("USE_S3", "false").lower() in {"1", "true", "yes"}
 
 if USE_S3:
@@ -305,38 +296,27 @@ if USE_S3:
     AWS_S3_FILE_OVERWRITE = False
     AWS_DEFAULT_ACL = None
 
-    # Signed URLs for private media (avatars/exports)
     AWS_QUERYSTRING_AUTH = True
-    AWS_QUERYSTRING_EXPIRE = int(os.getenv("AWS_QUERYSTRING_EXPIRE", "900"))  # 15 minutes
+    AWS_QUERYSTRING_EXPIRE = int(os.getenv("AWS_QUERYSTRING_EXPIRE", "900"))
 
     AWS_S3_OBJECT_PARAMETERS = {
         "ServerSideEncryption": "AES256",
         "CacheControl": "max-age=86400, s-maxage=86400",
     }
 
-    # Optional: if using CloudFront or custom domain
     AWS_S3_CUSTOM_DOMAIN = os.getenv("AWS_S3_CUSTOM_DOMAIN", "")
 
-
-# --- Media policy knobs used by validators ---
-MAX_IMAGE_BYTES = int(os.getenv("MAX_IMAGE_BYTES", str(5 * 1024 * 1024)))  # 5MB
-ALLOWED_IMAGE_FORMATS = {"JPEG", "JPG", "PNG", "WEBP"}  # Pillow formats (JPG treated as JPEG)
-MAX_IMAGE_PIXELS = int(os.getenv("MAX_IMAGE_PIXELS", "40000000"))  # 40 MP safety fuse
-
-
-# --- Webhook secrets (read from environment) ---
-# Example env vars:
-#   WEBHOOK_SECRET=dev_default_secret
-#   STRIPE_WEBHOOK_SECRET=whsec_xxx
-
+# -----------------------------
+# Webhook secrets (read from environment)
+# -----------------------------
 WEBHOOK_SECRETS = {
-    "default": os.environ.get("WEBHOOK_SECRET", ""),           # fallback for unknown providers
-    "stripe":  os.environ.get("STRIPE_WEBHOOK_SECRET", ""),    # Stripe specific
+    "default": os.environ.get("WEBHOOK_SECRET", ""),
+    "stripe": os.environ.get("STRIPE_WEBHOOK_SECRET", ""),
 }
-# Later, set the variables in your OS or .env (but don’t commit secrets).
 
-
-# settings.py (add this)
+# -----------------------------
+# Caching
+# -----------------------------
 CACHES = {
     "default": {
         "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
@@ -344,104 +324,32 @@ CACHES = {
     }
 }
 
-# --- GDPR policy knobs ---
+CACHE_KEY_PREFIX = "rentout"
+CACHE_DEFAULT_TTL = 60
+CACHE_SEARCH_TTL = 120
+
+# -----------------------------
+# GDPR policy knobs
+# -----------------------------
 GDPR_RETENTION = {
-    "export_link_days": 7,   # Expire export links after 7 days
+    "export_link_days": 7,
 }
 GDPR_HASH_SALT = os.getenv("GDPR_HASH_SALT", "change-this-in-prod")
 
-# Celery (example; tune for your environment)
-CELERY_BROKER_URL = "redis://localhost:6379/0"
-CELERY_RESULT_BACKEND = "redis://localhost:6379/1"
-CELERY_TASK_ALWAYS_EAGER = False  # True only in certain tests if you want synchronous behavior
-CELERY_TASK_TIME_LIMIT = 60
-CELERY_TASK_SOFT_TIME_LIMIT = 45
+# -----------------------------
+# Celery (single canonical configuration)
+# NOTE: Beat schedule must live in celery_app.py (NOT here)
+# -----------------------------
+CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "redis://127.0.0.1:6379/0")
+CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", "redis://127.0.0.1:6379/1")
+CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
 
-
-
-# --- Celery (safe to import even if Celery not installed yet) ---
-CELERY_BROKER_URL = "redis://localhost:6379/0"
-CELERY_RESULT_BACKEND = "redis://localhost:6379/1"
 CELERY_TASK_ALWAYS_EAGER = False
 CELERY_TASK_TIME_LIMIT = 60
 CELERY_TASK_SOFT_TIME_LIMIT = 45
 
-CELERY_BROKER_URL = "redis://127.0.0.1:6379/0"
-CELERY_RESULT_BACKEND = "redis://127.0.0.1:6379/1"
-CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
-
-
-# Route classes of tasks to separate queues (optional but helpful)
 CELERY_TASK_ROUTES = {
     "notifications.tasks.*": {"queue": "emails"},
     "propertylist_app.tasks.task_send_new_message_email": {"queue": "emails"},
     "propertylist_app.expire_paid_listings": {"queue": "maintenance"},
 }
-
-CELERY_BEAT_SCHEDULE = {
-    # Notifications
-    "send-due-notifications-every-minute": {
-        "task": "notifications.tasks.send_due_notifications",
-        "schedule": crontab(minute="*"),
-    },
-    "notify-listing-expiring-daily-7am": {
-        "task": "notifications.tasks.notify_listing_expiring",
-        "schedule": crontab(hour=7, minute=0),
-    },
-    "notify-upcoming-bookings-hourly": {
-        "task": "propertylist_app.services.tasks.notify_upcoming_bookings",
-        "schedule": crontab(minute=0),  # every hour
-        "args": (24,),
-    },
-    "notify-completed-viewings-hourly": {
-        "task": "propertylist_app.notifications.tasks.notify_completed_viewings",
-        "schedule": crontab(minute=0),  # every hour
-    },
-
-    # Listings & accounts
-    "expire-paid-listings-daily-03:00": {
-        "task": "propertylist_app.expire_paid_listings",
-        "schedule": crontab(hour=3, minute=0),
-    },
-    "delete-scheduled-accounts-daily-03:10": {
-        "task": "propertylist_app.delete_scheduled_accounts",
-        "schedule": crontab(hour=3, minute=10),
-    },
-
-    # Reviews (nightly refresh, Option A)
-    "refresh-room-ratings-nightly-02:30": {
-        "task": "propertylist_app.refresh_room_ratings_nightly",
-        "schedule": crontab(hour=2, minute=30),
-    },
-    
-    "tenancy-prompts-sweep-daily-03:20": {
-    "task": "propertylist_app.tasks.task_tenancy_prompts_sweep",
-    "schedule": crontab(hour=3, minute=20),
-    },
-    
-    "refresh_tenancy_status_and_review_windows_daily" : {
-    "task": "propertylist_app.tasks.task_refresh_tenancy_status_and_review_windows",
-    "schedule": 60 * 60 * 24,  # daily
-},
-
-}
-
- 
-# ---- Caching knobs ----
-CACHE_KEY_PREFIX = "rentout"
-CACHE_DEFAULT_TTL = 60  # seconds; safe default for list/detail
-CACHE_SEARCH_TTL = 120  # seconds; search is slightly longer
-    
- 
-
-
-
-# Frontend base URL used for links in emails
-FRONTEND_BASE_URL = "https://rentout.co.uk"  # change later
-# property/settings.py
-FRONTEND_BASE_URL = "https://rentout.co.uk"   # change to your real domain
-
-   
-
-
-
