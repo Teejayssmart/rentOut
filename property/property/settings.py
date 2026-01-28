@@ -47,10 +47,10 @@ def _csv_env(name: str, default: str = ""):
     raw = os.getenv(name, default)
     return [x.strip() for x in raw.split(",") if x.strip()]
 
-ALLOWED_HOSTS = _csv_env(
-    "DJANGO_ALLOWED_HOSTS",
-    "127.0.0.1,localhost,.onrender.com",
-)
+# Always allow any *.onrender.com host + your explicit list from env
+ALLOWED_HOSTS = _csv_env("DJANGO_ALLOWED_HOSTS", "127.0.0.1,localhost")
+if ".onrender.com" not in ALLOWED_HOSTS:
+    ALLOWED_HOSTS.append(".onrender.com")
 
 
 # -----------------------------
