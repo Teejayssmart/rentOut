@@ -1,4 +1,4 @@
-from django.db import migrations, models
+from django.db import migrations
 
 class Migration(migrations.Migration):
 
@@ -7,13 +7,13 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.AddField(
-            model_name="message",
-            name="updated",
-            field=models.DateTimeField(auto_now=True, db_index=True),
-        ),
-        migrations.AddIndex(
-            model_name="message",
-            index=models.Index(fields=["thread", "updated"], name="message_thread_updated_idx"),
+        migrations.RunSQL(
+            sql="""
+            CREATE INDEX IF NOT EXISTS message_thread_updated_idx
+            ON propertylist_app_message (thread_id, updated);
+            """,
+            reverse_sql="""
+            DROP INDEX IF EXISTS message_thread_updated_idx;
+            """,
         ),
     ]
