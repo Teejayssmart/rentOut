@@ -3,6 +3,7 @@ import random
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from django.apps import apps
+from drf_spectacular.utils import extend_schema, OpenApiResponse
 
 
 from propertylist_app.api.serializers import TenancyProposalSerializer
@@ -1235,6 +1236,20 @@ class LoginView(APIView):
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = "login"
 
+    @extend_schema(
+        request=LoginSerializer,
+        responses={
+            200: OpenApiResponse(description="JWT tokens returned (refresh + access)."),
+            400: OpenApiResponse(description="Invalid input or invalid credentials."),
+            403: OpenApiResponse(description="Email not verified."),
+            429: OpenApiResponse(description="Too many failed attempts."),
+        },
+        auth=[],  # important: removes the lock icon for this endpoint in Swagger
+        description=(
+            "Login using either email or username in 'identifier'. "
+            "Returns JWT refresh/access tokens on success."
+        ),
+    )
     def post(self, request):
         data = request.data.copy()
 
