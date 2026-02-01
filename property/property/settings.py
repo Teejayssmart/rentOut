@@ -83,6 +83,8 @@ INSTALLED_APPS = [
     "drf_spectacular",
     "notifications.apps.NotificationsConfig",
     "django_celery_beat",
+    "user_app",
+
 ]
 
 MIDDLEWARE = [
