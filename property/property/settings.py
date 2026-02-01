@@ -345,31 +345,7 @@ CELERY_TASK_ROUTES = {
     "propertylist_app.tasks.task_send_new_message_email": {"queue": "emails"},
     "propertylist_app.expire_paid_listings": {"queue": "maintenance"},
 }
-import os
-print("SETTINGS FILE LOADED:", __file__)
-print("CREATE_SUPERUSER ENV:", os.environ.get("CREATE_SUPERUSER"))
 
-if os.environ.get("CREATE_SUPERUSER") == "1":
-    from django.contrib.auth import get_user_model
-
-    User = get_user_model()
-
-    username = "rentout_admin"
-    password = "rentout_admin_123"
-    email = "admin@rentout.co.uk"
-
-    if not User.objects.filter(username=username).exists():
-        User.objects.create_superuser(
-            username=username,
-            email=email,
-            password=password,
-        )
-        print("Superuser created")
-    else:
-        user = User.objects.get(username=username)
-        user.set_password(password)
-        user.save()
-        print("Superuser password reset")
 
 
 
