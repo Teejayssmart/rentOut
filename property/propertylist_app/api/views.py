@@ -2397,21 +2397,28 @@ class RoomSaveView(APIView):
         SavedRoom.objects.filter(user=request.user, room=room).delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
+# views.py
+
 class RoomSaveToggleView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, pk):
         room = get_object_or_404(Room.objects.alive(), pk=pk)
-        SavedRoom.objects.get_or_create(user=request.user, room=room)
+
+        existing = SavedRoom.objects.filter(user=request.user, room=room).first()
+        if existing:
+            existing.delete()
+            return Response(
+                {"saved": False, "saved_at": None},
+                status=status.HTTP_200_OK,
+            )
+
+        SavedRoom.objects.create(user=request.user, room=room)
         return Response(
             {"saved": True, "saved_at": timezone.now().isoformat()},
             status=status.HTTP_200_OK,
         )
 
-    def delete(self, request, pk):
-        room = get_object_or_404(Room.objects.alive(), pk=pk)
-        SavedRoom.objects.filter(user=request.user, room=room).delete()
-        return Response({"saved": False, "saved_at": None}, status=status.HTTP_200_OK)
 
 
 
@@ -2955,36 +2962,42 @@ class ThreadRestoreFromBinView(APIView):
 
 
 
+from django.db.models import Count
+
 class StartThreadFromRoomView(APIView):
-    """
-    POST /api/rooms/<int:room_id>/start-thread/
-    Body (optional): { "body": "Hello, is this room available for viewing?" }
-    """
     permission_classes = [IsAuthenticated]
-    # Disable throttling here to keep tests deterministic
-    #throttle_classes = [UserRateThrottle]
 
     def post(self, request, room_id):
         room = get_object_or_404(Room.objects.alive(), pk=room_id)
+
         if room.property_owner == request.user:
-            return Response({"detail": "You are the owner of this room; no thread needed."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"detail": "You are the owner of this room; no thread needed."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        users = [room.property_owner, request.user]
 
         existing = (
-            MessageThread.objects.filter(participants=room.property_owner)
-            .filter(participants=request.user)
+            MessageThread.objects
+            .filter(participants__in=users)
             .annotate(num_participants=Count("participants", distinct=True))
             .filter(num_participants=2)
             .first()
         )
+
         thread = existing or MessageThread.objects.create()
         if not existing:
-            thread.participants.set([request.user, room.property_owner])
+            thread.participants.set(users)
 
         body = (request.data or {}).get("body", "").strip()
         if body:
-            msg = Message.objects.create(thread=thread, sender=request.user, body=body)
+            Message.objects.create(thread=thread, sender=request.user, body=body)
 
-        return Response(MessageThreadSerializer(thread, context={"request": request}).data)
+        return Response(
+            MessageThreadSerializer(thread, context={"request": request}).data,
+            status=status.HTTP_200_OK,
+        )
 
 
 
