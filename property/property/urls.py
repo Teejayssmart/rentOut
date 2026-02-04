@@ -1,5 +1,5 @@
 from django.contrib import admin
-from django.urls import path, include
+from django.urls import path, include, re_path
 from django.conf import settings
 from django.conf.urls.static import static
 from django.http import JsonResponse
@@ -33,25 +33,27 @@ urlpatterns = [
     # TEMP: keep for troubleshooting (remove later)
     path("debug/urls/", debug_urls),
 
-    # API v1
+    # API v1 (your actual app endpoints)
     path("api/v1/", include(("propertylist_app.api.urls", "api"), namespace="v1")),
 
-    # JWT token endpoints
+    # JWT token endpoints (unversioned)
     path("api/auth/token/", TokenObtainPairView.as_view(), name="token_obtain_pair"),
     path("api/auth/token/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
     path("api/auth/token/verify/", TokenVerifyView.as_view(), name="token_verify"),
 
-    # ✅ Versioned schema (required because you use URLPathVersioning)
-    path("api/v1/schema/", SpectacularAPIView.as_view(), name="schema"),
-
-    # ✅ Versioned Swagger UI + Redoc
-    path(
-        "api/v1/schema/swagger-ui/",
-        SpectacularSwaggerView.as_view(url_name="schema"),
+    # ✅ Schema + docs (MUST capture `version` kwarg for URLPathVersioning)
+    re_path(
+        r"^api/(?P<version>v1)/schema/$",
+        SpectacularAPIView.as_view(),
+        name="schema",
+    ),
+    re_path(
+        r"^api/(?P<version>v1)/schema/swagger-ui/$",
+        SpectacularSwaggerView.as_view(url="/api/v1/schema/"),
         name="swagger-ui",
     ),
-    path(
-        "api/v1/schema/redoc/",
+    re_path(
+        r"^api/(?P<version>v1)/schema/redoc/$",
         SpectacularRedocView.as_view(url_name="schema"),
         name="redoc",
     ),
