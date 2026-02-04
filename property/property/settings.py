@@ -217,12 +217,10 @@ REST_FRAMEWORK = {
     "EXCEPTION_HANDLER": "propertylist_app.api.exceptions.custom_exception_handler",
 }
 
-
 SPECTACULAR_SETTINGS = {
     "TITLE": "RentOut API",
     "DESCRIPTION": "SpareRoom-style listings, bookings, chat, payments, and moderation.",
     "VERSION": "1.0.0",
-    "SERVE_INCLUDE_SCHEMA": True,   # ← THIS IS THE FIX
     "SERVERS": [
         {"url": "https://rentout-my5r.onrender.com", "description": "staging"},
     ],
