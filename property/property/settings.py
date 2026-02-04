@@ -210,19 +210,25 @@ REST_FRAMEWORK = {
         "rest_framework.renderers.JSONRenderer",
     ),
     "DEFAULT_VERSIONING_CLASS": "rest_framework.versioning.URLPathVersioning",
-    "DEFAULT_VERSION": "v1",
-    "ALLOWED_VERSIONS": ["v1", "v2"],
+    "DEFAULT_VERSION": None,   
+    "ALLOWED_VERSIONS": ["v1"],
     "VERSION_PARAM": "version",
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     "EXCEPTION_HANDLER": "propertylist_app.api.exceptions.custom_exception_handler",
 }
+
 
 SPECTACULAR_SETTINGS = {
     "TITLE": "RentOut API",
     "DESCRIPTION": "SpareRoom-style listings, bookings, chat, payments, and moderation.",
     "VERSION": "1.0.0",
     "SERVE_INCLUDE_SCHEMA": False,
+    "SERVERS": [
+        {"url": "https://rentout-my5r.onrender.com", "description": "staging"},
+    ],
 }
+
+
 
 SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(minutes=15),
