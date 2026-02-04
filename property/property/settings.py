@@ -81,9 +81,12 @@ INSTALLED_APPS = [
     "django_filters",
     "corsheaders",
     "drf_spectacular",
+    "drf_spectacular_sidecar",
     "notifications.apps.NotificationsConfig",
     "django_celery_beat",
     "user_app",
+   
+
 
 ]
 
@@ -224,7 +227,11 @@ SPECTACULAR_SETTINGS = {
     "SERVERS": [
         {"url": "https://rentout-my5r.onrender.com", "description": "staging"},
     ],
+    "SWAGGER_UI_DIST": "SIDECAR",
+    "SWAGGER_UI_FAVICON_HREF": "SIDECAR",
+    "REDOC_DIST": "SIDECAR",
 }
+
 
 
 
