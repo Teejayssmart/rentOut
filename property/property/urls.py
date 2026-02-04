@@ -28,6 +28,12 @@ from django.urls import get_resolver, reverse
 import importlib
 
 
+from django.http import JsonResponse
+from django.conf import settings as dj_settings
+from django.urls import get_resolver, reverse
+import importlib
+
+
 def debug_urls(request):
     module_name = dj_settings.ROOT_URLCONF
     mod = importlib.import_module(module_name)
@@ -64,7 +70,6 @@ def debug_urls(request):
             "top_level_patterns": all_patterns,
         }
     )
-
 
 
 
