@@ -3,6 +3,25 @@ from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
 
+from django.http import JsonResponse
+from django.conf import settings as dj_settings
+import importlib
+
+
+def debug_urls(request):
+    module_name = dj_settings.ROOT_URLCONF
+    mod = importlib.import_module(module_name)
+    return JsonResponse(
+        {
+            "ROOT_URLCONF": module_name,
+            "URLCONF_FILE": getattr(mod, "__file__", None),
+            "DEBUG": dj_settings.DEBUG,
+        }
+    )
+
+
+
+
 from rest_framework_simplejwt.views import (
     TokenObtainPairView,
     TokenRefreshView,
@@ -16,6 +35,10 @@ from drf_spectacular.views import (
 )
 
 urlpatterns = [
+    
+    path("debug/urls/", debug_urls),
+
+    
     path("admin/", admin.site.urls),
 
     path(
