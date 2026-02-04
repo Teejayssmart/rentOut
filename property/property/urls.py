@@ -47,25 +47,15 @@ urlpatterns = [
     path("api/auth/token/verify/", TokenVerifyView.as_view(), name="token_verify"),
 
     # Schema JSON (force JSON renderer only)
-    path(
-        "api/schema/",
-        SpectacularAPIView.as_view(renderer_classes=[OpenApiJsonRenderer]),
-        name="schema",
-    ),
+   # Versioned schema (required for URLPathVersioning)
+    path("api/v1/schema/", SpectacularAPIView.as_view(renderer_classes=[OpenApiJsonRenderer]),name="schema",),
 
-    # Swagger UI (points to /api/schema/)
-    path(
-        "api/schema/swagger-ui/",
-        SpectacularSwaggerView.as_view(url="/api/schema/"),
-        name="swagger-ui",
-    ),
+    # Swagger UI pointing to VERSIONED schema
+    path("api/schema/swagger-ui/",SpectacularSwaggerView.as_view(url="/api/v1/schema/"),name="swagger-ui",),
+
 
     # Redoc
-    path(
-        "api/schema/redoc/",
-        SpectacularRedocView.as_view(url_name="schema"),
-        name="redoc",
-    ),
+    path("api/schema/redoc/",SpectacularRedocView.as_view(url_name="schema"),name="redoc",),
 ]
 
 if settings.DEBUG:
