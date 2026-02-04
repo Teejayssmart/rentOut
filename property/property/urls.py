@@ -3,6 +3,7 @@ from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
 from django.http import HttpResponse
+from drf_spectacular.views import SpectacularAPIView
 
 from django.http import JsonResponse
 from django.conf import settings as dj_settings
@@ -89,19 +90,20 @@ urlpatterns = [
 
     # Schema JSON
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
+    path("api/schema/json/", SpectacularAPIView.as_view(), name="schema-json"),
+
 
     # Keep this as a known-good route (should always return 200)
     path("api/schema/swagger-ui/", lambda request: HttpResponse("swagger route OK"), name="swagger-ui"),
 
     # Test drf-spectacular Swagger view on a different URL
-    path(
-        "api/schema/swagger-ui-test/",
-        SpectacularSwaggerView.as_view(url="/api/schema/"),
-        name="swagger-ui-test",
-    ),
+    path("api/schema/swagger-ui-test/",SpectacularSwaggerView.as_view(url="/api/schema/"),name="swagger-ui-test",),
 
     # Redoc
     path("api/schema/redoc/", SpectacularRedocView.as_view(url_name="schema"), name="redoc"),
+    
+    path("api/schema/swagger-ui-test/",SpectacularSwaggerView.as_view(url="/api/schema/json/"),name="swagger-ui-test",),
+
 
 ]
 
