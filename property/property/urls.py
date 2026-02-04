@@ -3,6 +3,7 @@ from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
 from django.http import JsonResponse
+from django.shortcuts import redirect
 
 from rest_framework_simplejwt.views import (
     TokenObtainPairView,
@@ -16,14 +17,8 @@ from drf_spectacular.views import (
     SpectacularRedocView,
 )
 
-from drf_spectacular.renderers import OpenApiJsonRenderer
-
 
 def debug_urls(request):
-    """
-    Temporary debug endpoint.
-    Remove after Swagger is working.
-    """
     return JsonResponse(
         {
             "DEBUG": settings.DEBUG,
@@ -35,10 +30,10 @@ def debug_urls(request):
 urlpatterns = [
     path("admin/", admin.site.urls),
 
-    # TEMP (remove later)
+    # TEMP: keep for troubleshooting (remove later)
     path("debug/urls/", debug_urls),
 
-    # API v1 (official)
+    # API v1
     path("api/v1/", include(("propertylist_app.api.urls", "api"), namespace="v1")),
 
     # JWT token endpoints
@@ -46,16 +41,24 @@ urlpatterns = [
     path("api/auth/token/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
     path("api/auth/token/verify/", TokenVerifyView.as_view(), name="token_verify"),
 
-    # Schema JSON (force JSON renderer only)
-   # Versioned schema (required for URLPathVersioning)
-    path("api/v1/schema/", SpectacularAPIView.as_view(renderer_classes=[OpenApiJsonRenderer]),name="schema",),
+    # ✅ Versioned schema (required because you use URLPathVersioning)
+    path("api/v1/schema/", SpectacularAPIView.as_view(), name="schema"),
 
-    # Swagger UI pointing to VERSIONED schema
-    path("api/schema/swagger-ui/",SpectacularSwaggerView.as_view(url="/api/v1/schema/"),name="swagger-ui",),
+    # ✅ Versioned Swagger UI + Redoc
+    path(
+        "api/v1/schema/swagger-ui/",
+        SpectacularSwaggerView.as_view(url_name="schema"),
+        name="swagger-ui",
+    ),
+    path(
+        "api/v1/schema/redoc/",
+        SpectacularRedocView.as_view(url_name="schema"),
+        name="redoc",
+    ),
 
-
-    # Redoc
-    path("api/schema/redoc/",SpectacularRedocView.as_view(url_name="schema"),name="redoc",),
+    # Optional: redirect old links to the new correct location
+    path("api/schema/swagger-ui/", lambda r: redirect("/api/v1/schema/swagger-ui/")),
+    path("api/schema/", lambda r: redirect("/api/v1/schema/")),
 ]
 
 if settings.DEBUG:
