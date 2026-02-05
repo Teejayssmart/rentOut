@@ -763,7 +763,12 @@ class RoomAV(APIView):
             .filter(status="active")
             .filter(Q(paid_until__isnull=True) | Q(paid_until__gte=today))
         )
-        return Response(RoomSerializer(qs, many=True).data)
+
+        paginator = RoomLOPagination()
+        page = paginator.paginate_queryset(qs, request, view=self)
+
+        serializer = RoomSerializer(page, many=True, context={"request": request})
+        return paginator.get_paginated_response(serializer.data)
 
     def post(self, request):
         """
