@@ -30,37 +30,37 @@ def debug_urls(request):
 urlpatterns = [
     path("admin/", admin.site.urls),
 
-    # TEMP: keep for troubleshooting (remove later)
+    # TEMP: troubleshooting (remove later)
     path("debug/urls/", debug_urls),
 
-    # API v1 (your actual app endpoints)
-    path("api/v1/", include(("propertylist_app.api.urls", "api"), namespace="v1")),
-
-    # JWT token endpoints (unversioned)
+    # JWT token endpoints (NOT versioned)
     path("api/auth/token/", TokenObtainPairView.as_view(), name="token_obtain_pair"),
     path("api/auth/token/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
     path("api/auth/token/verify/", TokenVerifyView.as_view(), name="token_verify"),
 
-    # ✅ Schema + docs (MUST capture `version` kwarg for URLPathVersioning)
+    # ✅ Versioned API (this MUST capture `version` for URLPathVersioning)
     re_path(
-        r"^api/(?P<version>v1)/schema/$",
-        SpectacularAPIView.as_view(),
-        name="schema",
+        r"^api/(?P<version>v1|v2)/",
+        include("propertylist_app.api.urls"),
     ),
+
+    # ✅ Versioned schema endpoints (also capture `version`)
+    re_path(r"^api/(?P<version>v1|v2)/schema/$", SpectacularAPIView.as_view(), name="schema"),
     re_path(
-        r"^api/(?P<version>v1)/schema/swagger-ui/$",
-        SpectacularSwaggerView.as_view(url="/api/v1/schema/"),
+        r"^api/(?P<version>v1|v2)/schema/swagger-ui/$",
+        SpectacularSwaggerView.as_view(url_name="schema"),
         name="swagger-ui",
     ),
     re_path(
-        r"^api/(?P<version>v1)/schema/redoc/$",
+        r"^api/(?P<version>v1|v2)/schema/redoc/$",
         SpectacularRedocView.as_view(url_name="schema"),
         name="redoc",
     ),
 
-    # Optional: redirect old links to the new correct location
-    path("api/schema/swagger-ui/", lambda r: redirect("/api/v1/schema/swagger-ui/")),
+    # Redirect old (unversioned) schema links to v1
     path("api/schema/", lambda r: redirect("/api/v1/schema/")),
+    path("api/schema/swagger-ui/", lambda r: redirect("/api/v1/schema/swagger-ui/")),
+    path("api/schema/redoc/", lambda r: redirect("/api/v1/schema/redoc/")),
 ]
 
 if settings.DEBUG:
