@@ -1,4 +1,5 @@
 from decimal import Decimal
+from datetime import timedelta
 
 import pytest
 from django.contrib.auth import get_user_model
@@ -156,8 +157,8 @@ def test_ops_stats_counts_rooms_and_payments_match_rules():
     room_deleted = _mk_room(owner=owner, category=cat, status="active", is_deleted=True, title="Deleted")
 
     now = timezone.now()
-    within_30 = now - timezone.timedelta(days=5)
-    outside_30 = now - timezone.timedelta(days=45)
+    within_30 = now - timedelta(days=5)
+    outside_30 = now - timedelta(days=45)
 
     # ops view counts only payments with status="succeeded" and created_at >= last 30 days :contentReference[oaicite:5]{index=5}
     _mk_payment(user=owner, room=room_active, status="succeeded", amount=Decimal("10.00"), created_at=within_30)
@@ -193,9 +194,9 @@ def test_ops_stats_bookings_windows_and_upcoming_viewings():
     _mk_booking(
         user=user,
         room=room,
-        start_dt=now + timezone.timedelta(days=2),
-        end_dt=now + timezone.timedelta(days=2, hours=1),
-        created_at=now - timezone.timedelta(days=2),
+        start_dt=now + timedelta(days=2),
+        end_dt=now + timedelta(days=2, hours=1),
+        created_at=now - timedelta(days=2),
         canceled_at=None,
     )
 
@@ -203,9 +204,9 @@ def test_ops_stats_bookings_windows_and_upcoming_viewings():
     _mk_booking(
         user=user,
         room=room,
-        start_dt=now + timezone.timedelta(days=10),
-        end_dt=now + timezone.timedelta(days=10, hours=1),
-        created_at=now - timezone.timedelta(days=20),
+        start_dt=now + timedelta(days=10),
+        end_dt=now + timedelta(days=10, hours=1),
+        created_at=now - timedelta(days=20),
         canceled_at=None,
     )
 
@@ -213,9 +214,9 @@ def test_ops_stats_bookings_windows_and_upcoming_viewings():
     _mk_booking(
         user=user,
         room=room,
-        start_dt=now + timezone.timedelta(days=40),
-        end_dt=now + timezone.timedelta(days=40, hours=1),
-        created_at=now - timezone.timedelta(days=60),
+        start_dt=now + timedelta(days=40),
+        end_dt=now + timedelta(days=40, hours=1),
+        created_at=now - timedelta(days=60),
         canceled_at=None,
     )
 
@@ -223,9 +224,9 @@ def test_ops_stats_bookings_windows_and_upcoming_viewings():
     _mk_booking(
         user=user,
         room=room,
-        start_dt=now + timezone.timedelta(days=3),
-        end_dt=now + timezone.timedelta(days=3, hours=1),
-        created_at=now - timezone.timedelta(days=1),
+        start_dt=now + timedelta(days=3),
+        end_dt=now + timedelta(days=3, hours=1),
+        created_at=now - timedelta(days=1),
         canceled_at=now,
     )
 

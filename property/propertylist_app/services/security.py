@@ -2,6 +2,8 @@
 from django.core.cache import cache
 from django.conf import settings
 from django.utils import timezone
+from datetime import timedelta
+
 
 def _login_key(ip: str | None, username: str | None) -> str:
     base = username or ip or "unknown"
@@ -26,9 +28,9 @@ def register_login_failure(ip: str | None, username: str | None) -> None:
     # IMPORTANT FIX:
     # Lockout should start AFTER exceeding the limit, not when equal
     if info["count"] > settings.LOGIN_FAIL_LIMIT:
-        info["until"] = timezone.now() + timezone.timedelta(
+        info["until"] = timezone.now() + timedelta(
             seconds=settings.LOGIN_LOCKOUT_SECONDS
-        )
+    )
 
     cache.set(key, info, timeout=settings.LOGIN_LOCKOUT_SECONDS)
 
