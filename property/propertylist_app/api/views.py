@@ -1421,10 +1421,14 @@ class LoginView(APIView):
             )
 
         except Exception:
+            import logging
+            import traceback
+
             # Force traceback into Render logs (stdout/stderr)
             logging.getLogger("django.request").exception("LoginView crashed")
             print("LoginView crashed traceback:\n" + traceback.format_exc(), flush=True)
             raise
+
 
 
 class LogoutView(APIView):
