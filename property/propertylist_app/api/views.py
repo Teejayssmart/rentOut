@@ -1341,7 +1341,7 @@ class LoginView(APIView):
             "Returns JWT refresh/access tokens on success."
         ),
     )
-    def post(self, request):
+    def post(self, request, *args, **kwargs):
         print("LOGIN_VIEW_HIT", flush=True)
 
         try:
