@@ -4,11 +4,14 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal
 from django.apps import apps
 from drf_spectacular.utils import extend_schema, OpenApiResponse
+import logging
+import traceback
 
 
 from propertylist_app.api.serializers import TenancyProposalSerializer
 from django.db import models
 
+from django.core.exceptions import ObjectDoesNotExist
 
 
 
@@ -175,6 +178,87 @@ from .serializers import (
 
 
 stripe.api_key = settings.STRIPE_SECRET_KEY
+
+
+
+
+
+def _pagination_meta(paginator):
+    """
+    Build consistent pagination meta for Option A success responses.
+    Works with DRF PageNumberPagination and your custom paginators.
+    """
+    count = None
+    try:
+        # DRF paginator usually has .page with a Django Paginator inside
+        count = paginator.page.paginator.count
+    except Exception:
+        count = None
+
+    next_link = None
+    prev_link = None
+    try:
+        next_link = paginator.get_next_link()
+        prev_link = paginator.get_previous_link()
+    except Exception:
+        next_link = None
+        prev_link = None
+
+    return {"count": count, "next": next_link, "previous": prev_link}
+
+
+def ok_response(data, *, meta=None, status_code=200):
+    """
+    Option A success response format:
+    {"ok": true, "data": ..., "meta": ...?}
+    """
+    payload = {"ok": True, "data": data}
+    if meta is not None:
+        payload["meta"] = meta
+    return Response(payload, status=status_code)
+
+
+
+
+
+# --------------------
+# A3: Consistent success response envelope (NO mixins)
+# --------------------
+
+def _wrap_success_payload(payload):
+    """
+    Wrap successful DRF responses into a consistent shape.
+
+    Rules:
+    - If payload is paginated (has "results"), put results into "data"
+      and pagination fields into "meta".
+    - Otherwise, payload goes into "data".
+    """
+    if isinstance(payload, dict) and "results" in payload:
+        return {
+            "ok": True,
+            "data": payload.get("results"),
+            "meta": {
+                "count": payload.get("count"),
+                "next": payload.get("next"),
+                "previous": payload.get("previous"),
+            },
+        }
+
+    return {
+        "ok": True,
+        "data": payload,
+    }
+
+
+def _wrap_response_success(response):
+    """
+    Mutates a DRF Response object to wrap response.data using _wrap_success_payload().
+    """
+    response.data = _wrap_success_payload(response.data)
+    return response
+
+
 
 
 def _listing_state_for_room(room):
@@ -768,7 +852,9 @@ class RoomAV(APIView):
         page = paginator.paginate_queryset(qs, request, view=self)
 
         serializer = RoomSerializer(page, many=True, context={"request": request})
-        return paginator.get_paginated_response(serializer.data)
+
+        meta = _pagination_meta(paginator)
+        return ok_response(serializer.data, meta=meta, status_code=200)
 
     def post(self, request):
         """
@@ -822,12 +908,10 @@ class RoomAV(APIView):
 
         serializer = RoomSerializer(data=data, context={"request": request})
         serializer.is_valid(raise_exception=True)
-        room = serializer.save(property_owner=request.user)
+        serializer.save(property_owner=request.user)
 
-        # Both NEXT and SAVE & CLOSE return 201; FE chooses next screen.
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
-
-
+        # Option A success format
+        return ok_response(serializer.data, status_code=status.HTTP_201_CREATED)
 
 
 
@@ -1157,6 +1241,7 @@ class RegistrationView(generics.CreateAPIView):
     serializer_class = RegistrationSerializer
     permission_classes = [AllowAny]
     throttle_classes = [RegisterAnonThrottle]
+    versioning_class = None 
 
     def create(self, request, *args, **kwargs):
         # Optional CAPTCHA
@@ -1240,6 +1325,7 @@ class LoginView(APIView):
     permission_classes = [AllowAny]
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = "login"
+    versioning_class = None
 
     @extend_schema(
         request=LoginSerializer,
@@ -1249,13 +1335,14 @@ class LoginView(APIView):
             403: OpenApiResponse(description="Email not verified."),
             429: OpenApiResponse(description="Too many failed attempts."),
         },
-        auth=[],  # important: removes the lock icon for this endpoint in Swagger
+        auth=[],
         description=(
             "Login using either email or username in 'identifier'. "
             "Returns JWT refresh/access tokens on success."
         ),
     )
     def post(self, request):
+    try:
         data = request.data.copy()
 
         if "identifier" not in data:
@@ -1273,7 +1360,8 @@ class LoginView(APIView):
                 status=status.HTTP_429_TOO_MANY_REQUESTS,
             )
 
-        if settings.ENABLE_CAPTCHA:
+        # ✅ SAFE: do not crash if ENABLE_CAPTCHA is missing in prod settings
+        if getattr(settings, "ENABLE_CAPTCHA", False):
             token = (data.get("captcha_token") or "").strip()
             if not verify_captcha(token, ip):
                 return Response(
@@ -1297,7 +1385,16 @@ class LoginView(APIView):
 
         user = authenticate(request, username=lookup_username, password=password)
         if user:
-            if not getattr(user, "profile", None) or not user.profile.email_verified:
+            # ✅ SAFE: do not crash if profile row is missing on Render DB
+            profile = None
+            if hasattr(user, "profile"):
+                try:
+                    profile = user.profile
+                except Exception:
+                    profile = None
+
+            # If you require email verification, enforce it safely
+            if not profile or not getattr(profile, "email_verified", False):
                 return Response(
                     {"detail": "Please verify your email with the 6-digit code we sent."},
                     status=status.HTTP_403_FORBIDDEN,
@@ -1323,8 +1420,17 @@ class LoginView(APIView):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
+    except Exception:
+        # Force traceback into Render logs (stdout/stderr)
+        logging.getLogger("django.request").exception("LoginView crashed")
+        print("LoginView crashed traceback:\n" + traceback.format_exc(), flush=True)
+        raise
+
+
 class LogoutView(APIView):
     permission_classes = [IsAuthenticated]
+    versioning_class = None
+
 
     def post(self, request):
         refresh = request.data.get("refresh")
@@ -1713,8 +1819,8 @@ class CityListView(APIView):
         ser = CitySummarySerializer(data, many=True)
         return Response(ser.data, status=status.HTTP_200_OK)
 
-
 class SearchRoomsView(generics.ListAPIView):
+
     """
     GET /api/search/rooms/
 
@@ -1977,7 +2083,7 @@ class SearchRoomsView(generics.ListAPIView):
                 days_int = int(posted_within_days)
             except ValueError:
                 raise ValidationError({"posted_within_days": "Must be an integer."})
-            cutoff = timezone.now() - timezone.timedelta(days=days_int)
+            cutoff = timezone.now() - timedelta(days=days_int)
             qs = qs.filter(created_at__gte=cutoff)
 
             
@@ -2148,10 +2254,13 @@ class SearchRoomsView(generics.ListAPIView):
         page = self.paginate_queryset(ordered_objs)
         if page is not None:
             serializer = self.get_serializer(page, many=True)
-            return self.get_paginated_response(serializer.data)
+            meta = _pagination_meta(self.paginator)
+            return ok_response(serializer.data, meta=meta, status_code=200)
 
         serializer = self.get_serializer(ordered_objs, many=True)
-        return Response(serializer.data)
+        return ok_response(serializer.data, status_code=200)
+
+
 
 
 
@@ -2468,6 +2577,7 @@ class MySavedRoomsView(generics.ListAPIView):
 # Messaging
 # --------------------
 class MessageThreadListCreateView(generics.ListCreateAPIView):
+
     """
     GET /api/messages/threads/
 
@@ -2610,11 +2720,19 @@ class MessageThreadListCreateView(generics.ListCreateAPIView):
         if page is not None:
             self._attach_state_for_user(request.user, page)
             serializer = self.get_serializer(page, many=True)
-            return self.get_paginated_response(serializer.data)
+            meta = _pagination_meta(self.paginator)
+            return ok_response(serializer.data, meta=meta, status_code=200)
 
         self._attach_state_for_user(request.user, queryset)
         serializer = self.get_serializer(queryset, many=True)
-        return Response(serializer.data)
+        return ok_response(serializer.data, status_code=200)
+
+            
+    
+    
+    def create(self, request, *args, **kwargs):
+        resp = super().create(request, *args, **kwargs)
+        return _wrap_response_success(resp)
 
     def perform_create(self, serializer):
         participants = set(serializer.validated_data.get("participants", []))
@@ -2789,6 +2907,7 @@ class MessageStatsView(APIView):
 
 
 class MessageListCreateView(generics.ListCreateAPIView):
+
     serializer_class = MessageSerializer
     permission_classes = [IsAuthenticated]
     pagination_class = RoomCPagination
@@ -2823,7 +2942,15 @@ class MessageListCreateView(generics.ListCreateAPIView):
         )
         serializer.save(thread=thread, sender=self.request.user)
 
-        
+     
+    def list(self, request, *args, **kwargs):
+        resp = super().list(request, *args, **kwargs)
+        return _wrap_response_success(resp)
+
+    def create(self, request, *args, **kwargs):
+        resp = super().create(request, *args, **kwargs)
+        return _wrap_response_success(resp)
+    
 
 
 
@@ -3011,6 +3138,7 @@ class StartThreadFromRoomView(APIView):
 # Booking
 # --------------------
 class BookingListCreateView(generics.ListCreateAPIView):
+
     """GET my bookings / POST create (slot OR direct)."""
     serializer_class = BookingSerializer
     permission_classes = [IsAuthenticated]
@@ -3120,7 +3248,29 @@ class BookingListCreateView(generics.ListCreateAPIView):
             )
 
 
+        def list(self, request, *args, **kwargs):
+            queryset = self.filter_queryset(self.get_queryset())
+
+            page = self.paginate_queryset(queryset)
+            if page is not None:
+                serializer = self.get_serializer(page, many=True)
+                meta = _pagination_meta(self.paginator)
+                return ok_response(serializer.data, meta=meta, status_code=200)
+
+            serializer = self.get_serializer(queryset, many=True)
+            return ok_response(serializer.data, status_code=200)
+
+
+    def create(self, request, *args, **kwargs):
+        resp = super().create(request, *args, **kwargs)
+        return _wrap_response_success(resp)
+
+
+
+
+
 class BookingDetailView(generics.RetrieveAPIView):
+
     """GET /api/bookings/<id>/ → see my booking"""
     serializer_class = BookingSerializer
     permission_classes = [IsAuthenticated]
@@ -3129,6 +3279,12 @@ class BookingDetailView(generics.RetrieveAPIView):
         if self.request.user.is_staff:
             return Booking.objects.filter(is_deleted=False)
         return Booking.objects.filter(user=self.request.user, is_deleted=False)
+    
+    
+    def retrieve(self, request, *args, **kwargs):
+        resp = super().retrieve(request, *args, **kwargs)
+        return _wrap_response_success(resp)
+
 
 
 
@@ -3457,6 +3613,7 @@ class CreatePasswordView(APIView):
 class PasswordResetRequestView(APIView):
     permission_classes = [AllowAny]
     throttle_classes = [PasswordResetScopedThrottle]
+    versioning_class = None 
 
     def post(self, request):
         if settings.ENABLE_CAPTCHA:
@@ -3511,6 +3668,7 @@ class PasswordResetRequestView(APIView):
 class PasswordResetConfirmView(APIView):
     permission_classes = [AllowAny]
     throttle_classes = [PasswordResetConfirmScopedThrottle]
+    versioning_class = None 
 
     def post(self, request):
         ser = PasswordResetConfirmSerializer(data=request.data)
@@ -4535,6 +4693,8 @@ class EmailOTPVerifyView(APIView):
     permission_classes = [AllowAny]
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = "otp-verify"
+    versioning_class = None
+
 
     def post(self, request):
         # 1) Validate input (user_id + 6-digit code)
@@ -4608,6 +4768,8 @@ class EmailOTPResendView(APIView):
     permission_classes = [AllowAny]
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = "otp-resend"
+    versioning_class = None
+
 
     def post(self, request):
         ser = EmailOTPResendSerializer(data=request.data)
@@ -4652,6 +4814,8 @@ class EmailOTPResendView(APIView):
 
 class PhoneOTPStartView(APIView):
     permission_classes = [permissions.IsAuthenticated]
+    versioning_class = None
+
 
     def post(self, request):
         serializer = PhoneOTPStartSerializer(data=request.data)
@@ -4680,6 +4844,8 @@ class PhoneOTPStartView(APIView):
 
 class PhoneOTPVerifyView(APIView):
     permission_classes = [permissions.IsAuthenticated]
+    versioning_class = None
+
 
     def post(self, request):
         serializer = PhoneOTPVerifySerializer(data=request.data)
