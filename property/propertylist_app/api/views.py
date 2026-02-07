@@ -1342,89 +1342,89 @@ class LoginView(APIView):
         ),
     )
     def post(self, request):
-    try:
-        data = request.data.copy()
+        try:
+            data = request.data.copy()
 
-        if "identifier" not in data:
-            if "username" in data:
-                data["identifier"] = data.get("username")
-            elif "email" in data:
-                data["identifier"] = data.get("email")
+            if "identifier" not in data:
+                if "username" in data:
+                    data["identifier"] = data.get("username")
+                elif "email" in data:
+                    data["identifier"] = data.get("email")
 
-        identifier_for_lock = (data.get("identifier") or "").strip()
-        ip = request.META.get("REMOTE_ADDR", "") or ""
+            identifier_for_lock = (data.get("identifier") or "").strip()
+            ip = request.META.get("REMOTE_ADDR", "") or ""
 
-        if identifier_for_lock and is_locked_out(ip, identifier_for_lock):
-            return Response(
-                {"detail": "Too many failed attempts. Try again later."},
-                status=status.HTTP_429_TOO_MANY_REQUESTS,
-            )
-
-        # ✅ SAFE: do not crash if ENABLE_CAPTCHA is missing in prod settings
-        if getattr(settings, "ENABLE_CAPTCHA", False):
-            token = (data.get("captcha_token") or "").strip()
-            if not verify_captcha(token, ip):
+            if identifier_for_lock and is_locked_out(ip, identifier_for_lock):
                 return Response(
-                    {"detail": "CAPTCHA verification failed."},
-                    status=status.HTTP_400_BAD_REQUEST,
+                    {"detail": "Too many failed attempts. Try again later."},
+                    status=status.HTTP_429_TOO_MANY_REQUESTS,
                 )
 
-        ser = LoginSerializer(data=data)  # expects: identifier, password
-        ser.is_valid(raise_exception=True)
+            # ✅ SAFE: do not crash if ENABLE_CAPTCHA is missing in prod settings
+            if getattr(settings, "ENABLE_CAPTCHA", False):
+                token = (data.get("captcha_token") or "").strip()
+                if not verify_captcha(token, ip):
+                    return Response(
+                        {"detail": "CAPTCHA verification failed."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
 
-        identifier = ser.validated_data["identifier"]  # username OR email
-        password = ser.validated_data["password"]
+            ser = LoginSerializer(data=data)  # expects: identifier, password
+            ser.is_valid(raise_exception=True)
 
-        lookup_username = identifier
-        if "@" in identifier:
-            try:
-                u = get_user_model().objects.get(email__iexact=identifier)
-                lookup_username = u.username
-            except get_user_model().DoesNotExist:
-                pass
+            identifier = ser.validated_data["identifier"]  # username OR email
+            password = ser.validated_data["password"]
 
-        user = authenticate(request, username=lookup_username, password=password)
-        if user:
-            # ✅ SAFE: do not crash if profile row is missing on Render DB
-            profile = None
-            if hasattr(user, "profile"):
+            lookup_username = identifier
+            if "@" in identifier:
                 try:
-                    profile = user.profile
-                except Exception:
-                    profile = None
+                    u = get_user_model().objects.get(email__iexact=identifier)
+                    lookup_username = u.username
+                except get_user_model().DoesNotExist:
+                    pass
 
-            # If you require email verification, enforce it safely
-            if not profile or not getattr(profile, "email_verified", False):
+            user = authenticate(request, username=lookup_username, password=password)
+            if user:
+                # ✅ SAFE: do not crash if profile row is missing on Render DB
+                profile = None
+                if hasattr(user, "profile"):
+                    try:
+                        profile = user.profile
+                    except Exception:
+                        profile = None
+
+                # If you require email verification, enforce it safely
+                if not profile or not getattr(profile, "email_verified", False):
+                    return Response(
+                        {"detail": "Please verify your email with the 6-digit code we sent."},
+                        status=status.HTTP_403_FORBIDDEN,
+                    )
+
+                clear_login_failures(ip, identifier_for_lock or identifier)
+                refresh = RefreshToken.for_user(user)
                 return Response(
-                    {"detail": "Please verify your email with the 6-digit code we sent."},
-                    status=status.HTTP_403_FORBIDDEN,
+                    {"refresh": str(refresh), "access": str(refresh.access_token)},
+                    status=status.HTTP_200_OK,
                 )
 
-            clear_login_failures(ip, identifier_for_lock or identifier)
-            refresh = RefreshToken.for_user(user)
+            register_login_failure(ip, identifier_for_lock or identifier)
+
+            if identifier_for_lock and is_locked_out(ip, identifier_for_lock):
+                return Response(
+                    {"detail": "Too many failed attempts. Try again later."},
+                    status=status.HTTP_429_TOO_MANY_REQUESTS,
+                )
+
             return Response(
-                {"refresh": str(refresh), "access": str(refresh.access_token)},
-                status=status.HTTP_200_OK,
+                {"detail": "Invalid credentials."},
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
-        register_login_failure(ip, identifier_for_lock or identifier)
-
-        if identifier_for_lock and is_locked_out(ip, identifier_for_lock):
-            return Response(
-                {"detail": "Too many failed attempts. Try again later."},
-                status=status.HTTP_429_TOO_MANY_REQUESTS,
-            )
-
-        return Response(
-            {"detail": "Invalid credentials."},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
-
-    except Exception:
-        # Force traceback into Render logs (stdout/stderr)
-        logging.getLogger("django.request").exception("LoginView crashed")
-        print("LoginView crashed traceback:\n" + traceback.format_exc(), flush=True)
-        raise
+        except Exception:
+            # Force traceback into Render logs (stdout/stderr)
+            logging.getLogger("django.request").exception("LoginView crashed")
+            print("LoginView crashed traceback:\n" + traceback.format_exc(), flush=True)
+            raise
 
 
 class LogoutView(APIView):
