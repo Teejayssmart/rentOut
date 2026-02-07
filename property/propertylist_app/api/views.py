@@ -1342,6 +1342,8 @@ class LoginView(APIView):
         ),
     )
     def post(self, request):
+        print("LOGIN_VIEW_HIT", flush=True)
+
         try:
             data = request.data.copy()
 
