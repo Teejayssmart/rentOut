@@ -107,7 +107,12 @@ def test_custom_mode_with_empty_dates_rejected(auth_client, valid_step1_payload)
 
     resp = auth_client.post(url, payload, format="json")
     assert resp.status_code == status.HTTP_400_BAD_REQUEST
-    assert "view_available_custom_dates" in resp.data
+
+    err = resp.data
+    assert err.get("ok") is False
+    assert err.get("code") == "validation_error"
+    assert "view_available_custom_dates" in err.get("field_errors", {})
+
 
 
 @pytest.mark.django_db
@@ -158,4 +163,9 @@ def test_custom_mode_with_bad_date_format_rejected(auth_client, valid_step1_payl
 
     resp = auth_client.post(url, payload, format="json")
     assert resp.status_code == status.HTTP_400_BAD_REQUEST
-    assert "view_available_custom_dates" in resp.data
+
+    err = resp.data
+    assert err.get("ok") is False
+    assert err.get("code") == "validation_error"
+    assert "view_available_custom_dates" in err.get("field_errors", {})
+

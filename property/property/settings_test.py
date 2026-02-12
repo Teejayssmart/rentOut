@@ -9,6 +9,9 @@ ENABLE_CAPTCHA = False  # tests toggle this explicitly where needed
 ENABLE_SOCIAL_AUTH_STUB = True
 
 
+
+
+
 # Faster hashing for tests
 PASSWORD_HASHERS = [
     "django.contrib.auth.hashers.MD5PasswordHasher",
@@ -66,10 +69,14 @@ REST_FRAMEWORK = {
         "report-create": "10000/hour",
         "moderation": "10000/hour",
     },
-    "EXCEPTION_HANDLER": "rest_framework.views.exception_handler",
+    "EXCEPTION_HANDLER": "propertylist_app.api.exceptions.custom_exception_handler",
     "TEST_REQUEST_DEFAULT_FORMAT": "json",
         
     }
+
+REST_FRAMEWORK.setdefault("DEFAULT_THROTTLE_RATES", {})
+REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"]["login"] = "1000/min"
+
 
 
 # Stripe keys safe defaults

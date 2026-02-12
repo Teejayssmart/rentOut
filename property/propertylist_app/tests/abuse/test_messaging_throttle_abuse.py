@@ -32,7 +32,8 @@ def test_message_user_throttle_blocks_spam(settings):
     client = APIClient()
     client.force_authenticate(user=user1)
 
-    url = f"/api/messages/threads/{thread.id}/messages/"
+    url = f"/api/v1/messages/threads/{thread.id}/messages/"
+
 
     r1 = client.post(url, {"body": "msg 1"}, format="json", **_ip_headers())
     assert r1.status_code in (200, 201)

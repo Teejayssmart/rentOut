@@ -49,7 +49,12 @@ def test_toggle_save_creates_savedroom_and_returns_saved_true():
     r = client.post(url, {}, format="json")
 
     assert r.status_code in (200, 201), r.content
-    assert r.data.get("saved") is True
+    assert r.data.get("ok") is True
+    assert r.data.get("data", {}).get("saved") is True
+    
+    assert r.data.get("data", {}).get("saved_at") is not None
+
+
 
     assert SavedRoom.objects.filter(user=user, room=room).exists()
 
@@ -76,7 +81,12 @@ def test_toggle_save_again_removes_savedroom_and_returns_saved_false():
     r = client.post(url, {}, format="json")
 
     assert r.status_code == 200, r.content
-    assert r.data.get("saved") is False
+    assert r.data.get("ok") is True
+    assert r.data.get("data", {}).get("saved") is False
+    
+    assert r.data.get("data", {}).get("saved_at") is None
+
+
 
     assert not SavedRoom.objects.filter(user=user, room=room).exists()
 
@@ -143,7 +153,10 @@ def test_is_saved_field_true_for_saved_room_in_room_detail_or_search():
     r = client.get(detail_url)
 
     assert r.status_code in (200, 201), r.content
-    assert r.data.get("is_saved") is True
+    detail = r.data.get("data") if isinstance(r.data, dict) and "data" in r.data else r.data
+    assert detail.get("is_saved") is True
+
+
 
     # Optional: also confirm search includes it (if your SearchRoomsView returns RoomSerializer list)
     search_url = reverse("v1:search-rooms")

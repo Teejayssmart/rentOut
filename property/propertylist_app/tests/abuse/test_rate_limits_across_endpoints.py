@@ -27,7 +27,7 @@ def test_rate_limits_register_and_messages(settings, rate_register, rate_message
     client = APIClient()
 
     # REQUIRED: confirm correct register endpoint once you upload api/urls.py
-    register_url = "/api/auth/register/"
+    register_url = "/api/v1/auth/register/"
 
     # Spam register
     payload = {

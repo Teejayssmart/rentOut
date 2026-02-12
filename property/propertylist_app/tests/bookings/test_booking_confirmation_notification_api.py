@@ -26,7 +26,7 @@ def test_booking_create_creates_confirmation_notification_when_enabled(user_fact
         "end": timezone.now() + timedelta(days=7),
     }
 
-    res = client.post("/api/bookings/", payload, format="json")
+    res = client.post("/api/v1/bookings/", payload, format="json")
     assert res.status_code in [200, 201], res.data
 
     assert Notification.objects.filter(
@@ -53,7 +53,7 @@ def test_booking_create_does_not_create_confirmation_notification_when_disabled(
         "end": timezone.now() + timedelta(days=7),
     }
 
-    res = client.post("/api/bookings/", payload, format="json")
+    res = client.post("/api/v1/bookings/", payload, format="json")
     assert res.status_code in [200, 201], res.data
 
     assert not Notification.objects.filter(

@@ -41,7 +41,11 @@ def test_find_address_missing_postcode(client):
 
     assert response.status_code == status.HTTP_400_BAD_REQUEST
     # Expect DRF-style validation error containing 'postcode'
-    assert "postcode" in response.data
+    # reason: A4 envelope stores field-level validation errors under field_errors
+    assert response.data.get("ok") is False
+    assert response.data.get("code") == "validation_error"
+    assert "postcode" in response.data.get("field_errors", {})
+
 
 
 @pytest.mark.django_db

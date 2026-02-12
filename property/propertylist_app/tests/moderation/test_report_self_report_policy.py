@@ -34,4 +34,11 @@ def test_user_cannot_report_own_room(api_client):
         format="json",
     )
     assert r.status_code == 400
-    assert "object_id" in r.data
+    # reason: A4 envelope stores field-level validation errors under field_errors
+    assert r.data.get("ok") is False
+    assert r.data.get("code") == "validation_error"
+    assert "object_id" in r.data.get("field_errors", {})
+
+
+
+

@@ -21,6 +21,26 @@ def unique_title(prefix="Test room"):
     return f"{prefix} {uuid4().hex[:8]}"
 
 
+def _extract_list(res):
+    """
+    Supports:
+    - ok_response wrapper: {"ok": True, "data": ...}
+    - paginated: {"count": ..., "results": [...]}
+    - plain list: [...]
+    """
+    payload = res.data
+
+    # unwrap ok_response
+    if isinstance(payload, dict) and "data" in payload:
+        payload = payload["data"]
+
+    # unwrap pagination
+    if isinstance(payload, dict) and "results" in payload:
+        payload = payload["results"]
+
+    return payload
+
+
 def test_min_rating_filters_rooms(api_client, room_factory):
     r1 = room_factory(
         title=unique_title(),
@@ -33,15 +53,12 @@ def test_min_rating_filters_rooms(api_client, room_factory):
         property_owner=make_user(),
     )
 
-    url = reverse("api:search-rooms")
+    url = reverse("v1:search-rooms")
     res = api_client.get(url, {"min_rating": 4})
 
     assert res.status_code == 200
-    ids = (
-        [x["id"] for x in res.data["results"]]
-        if "results" in res.data
-        else [x["id"] for x in res.data]
-    )
+    data = _extract_list(res)
+    ids = [x["id"] for x in data]
 
     assert r2.id in ids
     assert r1.id not in ids
@@ -59,15 +76,12 @@ def test_max_rating_filters_rooms(api_client, room_factory):
         property_owner=make_user(),
     )
 
-    url = reverse("api:search-rooms")
+    url = reverse("v1:search-rooms")
     res = api_client.get(url, {"max_rating": 3})
 
     assert res.status_code == 200
-    ids = (
-        [x["id"] for x in res.data["results"]]
-        if "results" in res.data
-        else [x["id"] for x in res.data]
-    )
+    data = _extract_list(res)
+    ids = [x["id"] for x in data]
 
     assert r1.id in ids
     assert r2.id not in ids
@@ -90,15 +104,12 @@ def test_rating_range_filters_rooms(api_client, room_factory):
         property_owner=make_user(),
     )
 
-    url = reverse("api:search-rooms")
+    url = reverse("v1:search-rooms")
     res = api_client.get(url, {"min_rating": 4.0, "max_rating": 4.7})
 
     assert res.status_code == 200
-    ids = (
-        [x["id"] for x in res.data["results"]]
-        if "results" in res.data
-        else [x["id"] for x in res.data]
-    )
+    data = _extract_list(res)
+    ids = [x["id"] for x in data]
 
     assert r2.id in ids
     assert r1.id not in ids
@@ -106,16 +117,24 @@ def test_rating_range_filters_rooms(api_client, room_factory):
 
 
 def test_min_rating_greater_than_max_rating_returns_400(api_client):
-    url = reverse("api:search-rooms")
+    url = reverse("v1:search-rooms")
     res = api_client.get(url, {"min_rating": 5, "max_rating": 4})
 
     assert res.status_code == 400
-    assert "min_rating" in res.data
+
+    err = res.data
+    assert err.get("ok") is False
+    assert err.get("code") == "validation_error"
+    assert "min_rating" in err.get("field_errors", {})
 
 
 def test_invalid_rating_returns_400(api_client):
-    url = reverse("api:search-rooms")
+    url = reverse("v1:search-rooms")
     res = api_client.get(url, {"min_rating": "abc"})
-
+    
     assert res.status_code == 400
-    assert "min_rating" in res.data
+
+    err = res.data
+    assert err.get("ok") is False
+    assert err.get("code") == "validation_error"
+    assert "min_rating" in err.get("field_errors", {})

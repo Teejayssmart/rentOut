@@ -84,7 +84,14 @@ def test_patch_availability_time_single_side_invalid(auth_client, valid_step1_pa
         format="json",
     )
     assert patch_resp.status_code == status.HTTP_400_BAD_REQUEST
-    assert "availability_to_time" in patch_resp.data
+
+    # reason: variable is patch_resp (not response) and A4 envelope puts field errors under "field_errors"
+    err = patch_resp.data
+    assert err.get("ok") is False
+    assert err.get("code") == "validation_error"
+    assert "availability_to_time" in err.get("field_errors", {})
+
+
 
     # PATCH only end time -> should complain about missing start time
     patch_resp2 = auth_client.patch(
@@ -93,11 +100,21 @@ def test_patch_availability_time_single_side_invalid(auth_client, valid_step1_pa
         format="json",
     )
     assert patch_resp2.status_code == status.HTTP_400_BAD_REQUEST
-    assert "availability_from_time" in patch_resp2.data
+
+    err2 = patch_resp2.data
+    assert err2.get("ok") is False
+    assert err2.get("code") == "validation_error"
+    assert "availability_from_time" in err2.get("field_errors", {})
+
 
 
 # 2) PATCH: switch from everyday -> custom WITHOUT dates = error
 #    (same rule as POST: custom mode requires at least one date)
+
+
+
+
+
 
 
 @pytest.mark.django_db
@@ -124,7 +141,12 @@ def test_patch_switch_to_custom_without_dates_rejected(auth_client, valid_step1_
     )
 
     assert patch_resp.status_code == status.HTTP_400_BAD_REQUEST
-    assert "view_available_custom_dates" in patch_resp.data
+    # reason: A4 error envelope stores field-level validation errors under "field_errors"
+    err = patch_resp.data
+    assert err.get("ok") is False
+    assert err.get("code") == "validation_error"
+    assert "view_available_custom_dates" in err.get("field_errors", {})
+
 
 
 # 3) PATCH: switch from custom with dates -> everyday clears custom dates

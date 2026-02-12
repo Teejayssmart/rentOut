@@ -67,12 +67,15 @@ def test_direct_booking_conflict_and_boundaries():
     assert r4.status_code == 400, r4.data
 
     err = r4.data
+    assert err.get("ok") is False
+    assert err.get("code") == "validation_error"
+    assert "end" in err.get("field_errors", {}), f"Expected 'end' error, got {err}"
 
-    # DRF default shape: {"end": "..."} or {"end": ["..."]}
-    assert "end" in err, f"Expected 'end' error, got {err}"
-    end_val = err["end"]
-    end_msg = end_val[0] if isinstance(end_val, list) else str(end_val)
-    assert "End must be after start." in end_msg
+    
+    # reason: A4 envelope stores field-level errors inside field_errors
+    end_val = err.get("field_errors", {}).get("end")
+    assert end_val is not None, f"Expected end error list, got {err}"
+    assert any("End must be after start" in str(x) for x in end_val), f"Unexpected end error: {end_val}"
 
 
 @pytest.mark.django_db
@@ -125,7 +128,15 @@ def test_slot_booking_capacity_and_past_slot():
     assert r3.status_code == 400, r3.data
 
     err = r3.data
-    assert "slot" in err, f"Expected 'slot' error, got {err}"
-    slot_val = err["slot"]
-    slot_msg = slot_val[0] if isinstance(slot_val, list) else str(slot_val)
-    assert "This slot is in the past." in slot_msg
+    assert err.get("ok") is False
+    assert err.get("code") == "validation_error"
+    assert "slot" in err.get("field_errors", {}), f"Expected 'slot' error, got {err}"
+
+    # reason: A4 envelope stores field-level errors inside field_errors
+    slot_val = err.get("field_errors", {}).get("slot")
+    assert slot_val is not None, f"Expected slot error list, got {err}"
+    assert any("past" in str(x).lower() for x in slot_val), f"Unexpected slot error: {slot_val}"
+
+
+
+

@@ -74,17 +74,16 @@ def test_availability_time_valid_window(auth_client, valid_step1_payload):
     If landlord sets a valid time window (start < end),
     the room is created and times are stored correctly.
     """
-    url = reverse("api:room-list")
+    url = reverse("v1:room-list")
 
     payload = {
-    **valid_step1_payload,
-    "description": "This is a bright and spacious room in a quiet home with fast WiFi, bills included, and good transport links to shops and the city centre.",
-    "location": "SW1A 1AA",
-    "availability_from_time": "09:30",
-    "availability_to_time": "17:45",
-    "action": "next",
+        **valid_step1_payload,
+        "description": "This is a bright and spacious room in a quiet home with fast WiFi, bills included, and good transport links to shops and the city centre.",
+        "location": "SW1A 1AA",
+        "availability_from_time": "09:30",
+        "availability_to_time": "17:45",
+        "action": "next",
     }
-
 
     response = auth_client.post(url, payload, format="json")
 
@@ -105,7 +104,7 @@ def test_availability_time_missing_end_time_rejected(auth_client, valid_step1_pa
     - availability_to_time missing
     → 400 with error on availability_to_time
     """
-    url = reverse("api:room-list")
+    url = reverse("v1:room-list")
 
     payload = {
         **valid_step1_payload,
@@ -118,7 +117,11 @@ def test_availability_time_missing_end_time_rejected(auth_client, valid_step1_pa
     response = auth_client.post(url, payload, format="json")
 
     assert response.status_code == status.HTTP_400_BAD_REQUEST
-    assert "availability_to_time" in response.data
+    # reason: A4 envelope stores field-level validation errors under field_errors
+    assert response.data.get("ok") is False
+    assert response.data.get("code") == "validation_error"
+    assert "availability_to_time" in response.data.get("field_errors", {})
+
 
 
 @pytest.mark.django_db
@@ -129,7 +132,7 @@ def test_availability_time_missing_start_time_rejected(auth_client, valid_step1_
     - availability_from_time missing
     → 400 with error on availability_from_time
     """
-    url = reverse("api:room-list")
+    url = reverse("v1:room-list")
 
     payload = {
         **valid_step1_payload,
@@ -142,7 +145,11 @@ def test_availability_time_missing_start_time_rejected(auth_client, valid_step1_
     response = auth_client.post(url, payload, format="json")
 
     assert response.status_code == status.HTTP_400_BAD_REQUEST
-    assert "availability_from_time" in response.data
+    # reason: A4 envelope stores field-level validation errors under field_errors
+    assert response.data.get("ok") is False
+    assert response.data.get("code") == "validation_error"
+    assert "availability_from_time" in response.data.get("field_errors", {})
+
 
 
 @pytest.mark.django_db
@@ -151,7 +158,7 @@ def test_availability_time_end_before_start_rejected(auth_client, valid_step1_pa
     If end time is not after start time (start >= end),
     backend should reject with an error on availability_to_time.
     """
-    url = reverse("api:room-list")
+    url = reverse("v1:room-list")
 
     payload = {
         **valid_step1_payload,
@@ -163,4 +170,12 @@ def test_availability_time_end_before_start_rejected(auth_client, valid_step1_pa
     response = auth_client.post(url, payload, format="json")
 
     assert response.status_code == status.HTTP_400_BAD_REQUEST
-    assert "availability_to_time" in response.data
+   # reason: A4 envelope stores field-level validation errors under field_errors
+    assert response.data.get("ok") is False
+    assert response.data.get("code") == "validation_error"
+    # reason: A4 envelope stores field-level validation errors under field_errors
+    assert response.data.get("ok") is False
+    assert response.data.get("code") == "validation_error"
+    assert "availability_to_time" in response.data.get("field_errors", {})
+
+

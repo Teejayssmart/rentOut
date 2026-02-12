@@ -163,8 +163,11 @@ USE_TZ = True
 # Static + Media
 # -----------------------------
 STATIC_URL = "static/"
-STATIC_ROOT = BASE_DIR / "staticfiles"
-STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
+#STATIC_ROOT = BASE_DIR / "staticfiles"
+#STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
+STATIC_ROOT = None
+STATICFILES_STORAGE = "django.contrib.staticfiles.storage.StaticFilesStorage"
+
 
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
@@ -218,6 +221,7 @@ REST_FRAMEWORK = {
     "VERSION_PARAM": "version",
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     "EXCEPTION_HANDLER": "propertylist_app.api.exceptions.custom_exception_handler",
+    "DEFAULT_VERSION": "v1",
 }
 
 SPECTACULAR_SETTINGS = {
@@ -230,6 +234,7 @@ SPECTACULAR_SETTINGS = {
     "SWAGGER_UI_DIST": "SIDECAR",
     "SWAGGER_UI_FAVICON_HREF": "SIDECAR",
     "REDOC_DIST": "SIDECAR",
+    
 }
 
 
@@ -319,6 +324,12 @@ WEBHOOK_SECRETS = {
     "default": os.environ.get("WEBHOOK_SECRET", ""),
     "stripe": os.environ.get("STRIPE_WEBHOOK_SECRET", ""),
 }
+
+
+
+
+
+
 
 # -----------------------------
 # Caching

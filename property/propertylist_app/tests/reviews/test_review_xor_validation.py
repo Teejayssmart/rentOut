@@ -64,7 +64,11 @@ def test_xor_rejects_flags_plus_notes(user_factory, room_factory):
 
     res = client.post(_url(tenancy.id), data=payload, format="json")
     assert res.status_code == 400
-    assert "notes" in res.data
+    # reason: A4 envelope stores field-level validation errors under field_errors
+    assert res.data.get("ok") is False
+    assert res.data.get("code") == "validation_error"
+    assert "notes" in res.data.get("field_errors", {})
+
 
 
 def test_xor_rejects_flags_plus_overall_rating(user_factory, room_factory):
@@ -80,7 +84,11 @@ def test_xor_rejects_flags_plus_overall_rating(user_factory, room_factory):
 
     res = client.post(_url(tenancy.id), data=payload, format="json")
     assert res.status_code == 400
-    assert "overall_rating" in res.data
+    # reason: A4 envelope stores field-level validation errors under field_errors
+    assert res.data.get("ok") is False
+    assert res.data.get("code") == "validation_error"
+    assert "overall_rating" in res.data.get("field_errors", {})
+
 
 
 def test_xor_rejects_notes_only(user_factory, room_factory):
@@ -96,7 +104,11 @@ def test_xor_rejects_notes_only(user_factory, room_factory):
 
     res = client.post(_url(tenancy.id), data=payload, format="json")
     assert res.status_code == 400
-    assert "overall_rating" in res.data
+    # reason: A4 envelope stores field-level validation errors under field_errors
+    assert res.data.get("ok") is False
+    assert res.data.get("code") == "validation_error"
+    assert "overall_rating" in res.data.get("field_errors", {})
+
 
 
 def test_xor_rejects_overall_rating_only(user_factory, room_factory):
@@ -112,7 +124,12 @@ def test_xor_rejects_overall_rating_only(user_factory, room_factory):
 
     res = client.post(_url(tenancy.id), data=payload, format="json")
     assert res.status_code == 400
-    assert "notes" in res.data
+    # reason: A4 envelope stores field-level validation errors under field_errors
+    assert res.data.get("ok") is False
+    assert res.data.get("code") == "validation_error"
+    assert "notes" in res.data.get("field_errors", {})
+
+
 
 
 def test_xor_rejects_neither_flags_nor_text_rating(user_factory, room_factory):
@@ -129,7 +146,10 @@ def test_xor_rejects_neither_flags_nor_text_rating(user_factory, room_factory):
     res = client.post(_url(tenancy.id), data=payload, format="json")
     assert res.status_code == 400
     # Either "notes" or "overall_rating" error is acceptable depending on your validation ordering
-    assert ("notes" in res.data) or ("overall_rating" in res.data)
+    # reason: A4 envelope stores field-level validation errors under field_errors
+    fe = res.data.get("field_errors", {})
+    assert ("notes" in fe) or ("overall_rating" in fe), f"Expected notes/overall_rating error, got {res.data}"
+
 
 
 def test_xor_allows_flags_only_checklist_mode(user_factory, room_factory):
@@ -171,3 +191,5 @@ def test_xor_allows_notes_plus_rating_text_mode(user_factory, room_factory):
     assert int(review.overall_rating) == 5
     assert review.review_flags == []
     assert review.notes == "Wordings must be stored exactly as typed."
+
+

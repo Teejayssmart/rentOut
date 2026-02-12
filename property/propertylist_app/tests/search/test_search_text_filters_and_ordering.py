@@ -33,6 +33,8 @@ def test_text_and_price_filters():
         category=cat,
         property_owner=owner,
     )
+    
+    test_requires_postcode_when_radius_provided
 
     client = APIClient()
     url = reverse("v1:search-rooms")
@@ -112,7 +114,11 @@ def test_requires_postcode_when_radius_provided():
     r = client.get(url, {"radius_miles": 10})
     assert r.status_code == 400
     body = r.json()
-    assert "postcode" in body
+
+    assert body.get("ok") is False
+    assert body.get("code") == "validation_error"
+    assert "postcode" in body.get("field_errors", {})
+
 
 
 @pytest.mark.django_db

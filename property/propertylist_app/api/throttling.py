@@ -1,6 +1,14 @@
 from rest_framework.throttling import UserRateThrottle
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.throttling import SimpleRateThrottle
+import logging
+from django.core.cache import caches
+from rest_framework.settings import api_settings
+
+
+
+
+
 
 class RegisterAnonThrottle(SimpleRateThrottle):
     """
@@ -59,9 +67,23 @@ class PasswordResetScopedThrottle(ScopedRateThrottle):
 class PasswordResetConfirmScopedThrottle(ScopedRateThrottle):
     scope = "password-reset-confirm"
 
+
+
+
+logger = logging.getLogger(__name__)
+
 class ReportCreateScopedThrottle(ScopedRateThrottle):
     scope = "report-create"
 
+    def get_rate(self):
+        # Why this exists:
+        # - In large pytest runs, DRF's THROTTLE_RATES can stay cached from earlier tests.
+        # - Reading from api_settings each time guarantees override_settings is respected.
+        return api_settings.DEFAULT_THROTTLE_RATES.get(self.scope)
+
+
 class MessagingScopedThrottle(ScopedRateThrottle):
     scope = "messaging"
+  
+  
   

@@ -4,6 +4,8 @@ from rest_framework.views import exception_handler
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.exceptions import Throttled, ValidationError, APIException
+from django.db import IntegrityError
+
 
 def _extract_field_errors(data: Any) -> Optional[Dict[str, list]]:
     """
@@ -86,9 +88,14 @@ def custom_exception_handler(exc, context):
     elif status_code == status.HTTP_404_NOT_FOUND or isinstance(exc, Http404):
         code = "not_found"
         message = "The requested resource was not found."
+    elif status_code == status.HTTP_409_CONFLICT or isinstance(exc, IntegrityError):
+        # reason: A4 requires a consistent envelope for conflicts (409)
+        code = "conflict"
+        message = "Conflict."
     else:
         code = "error"
         message = "An error occurred."
+
 
     body = {
         "ok": False,

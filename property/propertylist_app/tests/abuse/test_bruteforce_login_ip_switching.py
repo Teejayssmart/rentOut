@@ -33,14 +33,15 @@ def test_login_throttle_triggers_and_ip_switching_gets_new_bucket(settings):
     )
 
     client = APIClient()
-    url = "/api/auth/login/"
+    url = "/api/v1/auth/login/"
     payload = {"username": "victim_user", "password": "WrongPass123!"}
 
     ip1 = "198.51.100.10"
     ip2 = "198.51.100.11"
 
     r1 = client.post(url, payload, format="json", **_ip_headers(ip1))
-    assert r1.status_code == 400, r1.data  # your LoginView returns 400 on invalid creds
+    assert r1.status_code == 400, getattr(r1, "data", r1.content)
+
 
     r2 = client.post(url, payload, format="json", **_ip_headers(ip1))
     assert r2.status_code == 400, r2.data

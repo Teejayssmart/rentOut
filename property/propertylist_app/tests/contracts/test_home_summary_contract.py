@@ -108,5 +108,17 @@ def test_home_summary_contract_api_and_v1_match_shape_and_required_fields():
                 f"Paste your Figma-required Home keys here. Current keys: {sorted(keys_api)}"
             )
 
-        missing = REQUIRED_HOME_FIELDS - keys_api
+        # reason: Home endpoint can be wrapped in A3 envelope: {"ok": true, "data": {...}}
+        # Required fields must be validated against the payload object (inner data), not the top-level envelope.
+
+        payload_api = data_api.get("data") if isinstance(data_api, dict) and "data" in data_api else data_api
+        payload_v1 = data_v1.get("data") if isinstance(data_v1, dict) and "data" in data_v1 else data_v1
+
+        assert isinstance(payload_api, dict), f"Expected dict payload for /api, got {type(payload_api)}"
+        assert isinstance(payload_v1, dict), f"Expected dict payload for /v1, got {type(payload_v1)}"
+
+        payload_keys_api = set(payload_api.keys())
+        payload_keys_v1 = set(payload_v1.keys())
+
+        missing = REQUIRED_HOME_FIELDS - payload_keys_api
         assert not missing, f"Missing required home fields: {sorted(missing)}"

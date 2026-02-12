@@ -17,17 +17,24 @@ def test_save_is_idempotent_and_unsave_is_idempotent():
     client = APIClient()
     client.force_authenticate(user=user)
 
-    url = reverse("v1:room-save-toggle", kwargs={"pk": room.pk})
+    url = reverse("v1:room-save", kwargs={"pk": room.pk})
+
+
+
+
 
     # POST save twice -> still only one SavedRoom
-    r1 = client.post(url)
-    assert r1.status_code in (200, 201), r1.data
-    assert r1.data.get("saved") is True
+    r2 = client.post(url)
+    assert r2.status_code in (200, 201), r2.data
+    assert r2.data.get("ok") is True
+    assert r2.data.get("data", {}).get("saved") is True
     assert SavedRoom.objects.filter(user=user, room=room).count() == 1
+
 
     r2 = client.post(url)
     assert r2.status_code in (200, 201), r2.data
-    assert r2.data.get("saved") is True
+    assert r2.data.get("ok") is True
+    assert r2.data.get("data", {}).get("saved") is True
     assert SavedRoom.objects.filter(user=user, room=room).count() == 1
 
     # DELETE unsave twice -> no-op, stays unsaved

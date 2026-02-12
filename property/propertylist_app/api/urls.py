@@ -140,6 +140,7 @@ urlpatterns = [
     # --- Search & discovery ---
     path("search/rooms/",  cache_page(60)(SearchRoomsView.as_view()),  name="search-rooms"),
     path("rooms/nearby/",  NearbyRoomsView.as_view(),                  name="rooms-nearby"),
+    path("search/find-address/", FindAddressView.as_view(),            name="search-find-address"),
 
     # --- Saved rooms ---
     path("rooms/<int:pk>/save/",           RoomSaveView.as_view(),       name="room-save"),
@@ -298,10 +299,8 @@ urlpatterns = [
     # Contact Us form
     path("contact/", ContactMessageCreateView.as_view(), name="contact-create"),
 
-    # --- Search & discovery ---
-    path("search/rooms/",  cache_page(60)(SearchRoomsView.as_view()),  name="search-rooms"),
-    path("rooms/nearby/",  NearbyRoomsView.as_view(),                  name="rooms-nearby"),
-    path("search/find-address/", FindAddressView.as_view(),            name="search-find-address"),
+ 
+   
     
     path("my-listings/", MyListingsView.as_view(), name="my-listings"),
 

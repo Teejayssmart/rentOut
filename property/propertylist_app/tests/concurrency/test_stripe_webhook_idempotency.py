@@ -3,6 +3,7 @@ from datetime import timedelta
 import pytest
 from django.utils import timezone
 from rest_framework.test import APIClient
+from django.urls import reverse
 
 from propertylist_app.models import Notification, Payment
 
@@ -58,17 +59,19 @@ def test_stripe_webhook_duplicate_delivery_is_idempotent(monkeypatch, user_facto
 
     # Call webhook twice (simulating Stripe retry)
     res1 = client.post(
-        "/api/payments/webhook/",
-        data=b"{}",
-        content_type="application/json",
-        HTTP_STRIPE_SIGNATURE="testsig",
-    )
+    reverse("v1:stripe-webhook"),
+    data=b"{}",
+    content_type="application/json",
+    HTTP_STRIPE_SIGNATURE="testsig",
+        )
+
     res2 = client.post(
-        "/api/payments/webhook/",
-        data=b"{}",
-        content_type="application/json",
-        HTTP_STRIPE_SIGNATURE="testsig",
+    reverse("v1:stripe-webhook"),
+    data=b"{}",
+    content_type="application/json",
+    HTTP_STRIPE_SIGNATURE="testsig",
     )
+
 
     assert res1.status_code == 200
     assert res2.status_code == 200

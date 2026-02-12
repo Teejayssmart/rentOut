@@ -1,18 +1,20 @@
 import pytest
 from datetime import timedelta
+
 from django.contrib.auth import get_user_model
+from django.urls import reverse
 from django.utils import timezone
 from rest_framework.test import APIClient
 
 from propertylist_app.models import PhoneOTP, UserProfile
 
 
-def phone_start_url() -> str:
-    return "/api/auth/phone/start/"
+def phone_start_url():
+    return reverse("v1:auth-phone-start")
 
 
-def phone_verify_url() -> str:
-    return "/api/auth/phone/verify/"
+def phone_verify_url():
+    return reverse("v1:auth-phone-verify")
 
 
 def make_user(email: str):
@@ -64,7 +66,11 @@ def test_phone_start_creates_phone_otp():
     res = client.post(phone_start_url(), data={"phone": "07123456789"}, format="json")
     assert res.status_code == 200
 
-    otp = PhoneOTP.objects.filter(user=user, phone="07123456789").order_by("-created_at").first()
+    otp = (
+        PhoneOTP.objects.filter(user=user, phone="07123456789")
+        .order_by("-created_at")
+        .first()
+    )
     assert otp is not None
     assert otp.used_at is None
     assert otp.expires_at > timezone.now()
@@ -77,12 +83,20 @@ def test_phone_verify_requires_auth():
     user = make_user("phone_verify_auth@example.com")
 
     anon = APIClient()
-    res = anon.post(phone_verify_url(), data={"phone": "07123456789", "code": "123456"}, format="json")
+    res = anon.post(
+        phone_verify_url(),
+        data={"phone": "07123456789", "code": "123456"},
+        format="json",
+    )
     assert res.status_code in (401, 403)
 
     client = auth_client(user)
     # no OTP exists yet -> 400
-    res2 = client.post(phone_verify_url(), data={"phone": "07123456789", "code": "123456"}, format="json")
+    res2 = client.post(
+        phone_verify_url(),
+        data={"phone": "07123456789", "code": "123456"},
+        format="json",
+    )
     assert res2.status_code == 400
 
 
@@ -98,7 +112,11 @@ def test_phone_verify_rejects_wrong_code_and_tracks_attempts():
         expires_at=timezone.now() + timedelta(minutes=10),
     )
 
-    res = client.post(phone_verify_url(), data={"phone": "07123456789", "code": "222222"}, format="json")
+    res = client.post(
+        phone_verify_url(),
+        data={"phone": "07123456789", "code": "222222"},
+        format="json",
+    )
     assert res.status_code == 400
 
     otp.refresh_from_db()
@@ -118,7 +136,11 @@ def test_phone_verify_rejects_expired_otp():
         expires_at=timezone.now() - timedelta(minutes=1),
     )
 
-    res = client.post(phone_verify_url(), data={"phone": "07123456789", "code": "123456"}, format="json")
+    res = client.post(
+        phone_verify_url(),
+        data={"phone": "07123456789", "code": "123456"},
+        format="json",
+    )
     assert res.status_code == 400
 
 
@@ -134,7 +156,11 @@ def test_phone_verify_success_marks_profile_verified():
         expires_at=timezone.now() + timedelta(minutes=10),
     )
 
-    res = client.post(phone_verify_url(), data={"phone": "07123456789", "code": "123456"}, format="json")
+    res = client.post(
+        phone_verify_url(),
+        data={"phone": "07123456789", "code": "123456"},
+        format="json",
+    )
     assert res.status_code == 200
 
     otp.refresh_from_db()

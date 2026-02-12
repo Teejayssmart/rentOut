@@ -1,34 +1,39 @@
 import threading
 from datetime import timedelta
+from queue import Queue
 
 import pytest
-from django.db import connection
+from django.db import connection, connections
 from django.utils import timezone
 from rest_framework.test import APIClient
 
 from propertylist_app.models import AvailabilitySlot, Booking
 
-pytestmark = pytest.mark.django_db
 
-
-def _post_slot_booking(user, slot_id, results, errors, barrier=None):
+def _post_slot_booking(user, slot_id, results: Queue, errors: Queue, barrier: threading.Barrier):
+    """
+    Thread helper: performs a single booking POST and records exactly one result.
+    Always closes DB connections for this thread (important for Postgres test DB teardown).
+    """
     try:
+        barrier.wait(timeout=5)
         c = APIClient()
         c.force_authenticate(user=user)
-        if barrier is not None:
-            barrier.wait(timeout=5)
         res = c.post("/api/bookings/", data={"slot": slot_id}, format="json")
-        results.append((res.status_code, getattr(res, "data", None)))
+        results.put((res.status_code, getattr(res, "data", None)))
     except Exception as e:
-        errors.append(repr(e))
+        errors.put(repr(e))
+    finally:
+        connections.close_all()
 
 
+@pytest.mark.django_db(transaction=True)
 def test_two_users_cannot_overbook_same_slot(user_factory, room_factory):
     """
     Concurrency/race condition protection for slot bookings.
 
-    - For SQLite: run a deterministic sequential test (SQLite doesn't enforce row locks like Postgres/MySQL).
-    - For Postgres/MySQL: run a true parallel attempt and assert only one booking succeeds.
+    - For SQLite: deterministic sequential test (SQLite doesn't enforce row locks like Postgres/MySQL).
+    - For Postgres/MySQL: true parallel attempt and assert only one booking succeeds.
 
     Expected invariant (all DBs):
     - active bookings for the slot never exceed max_bookings.
@@ -69,8 +74,8 @@ def test_two_users_cannot_overbook_same_slot(user_factory, room_factory):
     # Postgres/MySQL: true parallel race attempt
     # -----------------------------
     barrier = threading.Barrier(2)
-    results = []
-    errors = []
+    results = Queue()
+    errors = Queue()
 
     t1 = threading.Thread(target=_post_slot_booking, args=(tenant1, slot.id, results, errors, barrier))
     t2 = threading.Thread(target=_post_slot_booking, args=(tenant2, slot.id, results, errors, barrier))
@@ -79,13 +84,14 @@ def test_two_users_cannot_overbook_same_slot(user_factory, room_factory):
     t1.join()
     t2.join()
 
-    assert not errors, f"Thread errors occurred: {errors}"
-    assert len(results) == 2, results
+    assert errors.empty(), f"Thread errors occurred: {[errors.get() for _ in range(errors.qsize())]}"
 
-    # one success, one rejected
-    status_codes = [s for (s, _) in results]
-    assert any(code in (200, 201) for code in status_codes), results
-    assert any(code == 400 for code in status_codes), results
+    collected = [results.get() for _ in range(results.qsize())]
+    assert len(collected) == 2, collected
+
+    status_codes = [s for (s, _) in collected]
+    assert any(code in (200, 201) for code in status_codes), collected
+    assert any(code == 400 for code in status_codes), collected
 
     active = Booking.objects.filter(slot=slot, canceled_at__isnull=True).count()
     assert active == 1

@@ -32,6 +32,7 @@ def auth_client(api_client, landlord_user):
     return api_client
 
 
+
 @pytest.fixture
 def valid_step1_payload():
     """
@@ -125,7 +126,11 @@ def test_step3_existing_flatmate_rejects_invalid_gender(auth_client, draft_room)
 
     response = auth_client.patch(url, payload, format="json")
     assert response.status_code == status.HTTP_400_BAD_REQUEST
-    assert "existing_flatmate_gender" in response.data
+    err = response.data
+    assert err.get("ok") is False
+    assert err.get("code") == "validation_error"
+    assert "existing_flatmate_gender" in err.get("field_errors", {})
+
 
 
 @pytest.mark.django_db
@@ -142,7 +147,11 @@ def test_step3_existing_flatmate_rejects_invalid_smoking_choice(auth_client, dra
 
     response = auth_client.patch(url, payload, format="json")
     assert response.status_code == status.HTTP_400_BAD_REQUEST
-    assert "existing_flatmate_smoking" in response.data
+    err = response.data
+    assert err.get("ok") is False
+    assert err.get("code") == "validation_error"
+    assert "existing_flatmate_smoking" in err.get("field_errors", {})
+
 
 
 # -------------------------------------------------------------------
@@ -201,7 +210,11 @@ def test_step3_flatmate_preference_invalid_age_range_rejected(auth_client, draft
 
     response = auth_client.patch(url, payload, format="json")
     assert response.status_code == status.HTTP_400_BAD_REQUEST
-    assert "preferred_flatmate_min_age" in response.data
+    err = response.data
+    assert err.get("ok") is False
+    assert err.get("code") == "validation_error"
+    assert "preferred_flatmate_min_age" in err.get("field_errors", {})
+
 
 
 @pytest.mark.django_db
@@ -218,4 +231,8 @@ def test_step3_flatmate_preference_invalid_gender_choice_rejected(auth_client, d
 
     response = auth_client.patch(url, payload, format="json")
     assert response.status_code == status.HTTP_400_BAD_REQUEST
-    assert "preferred_flatmate_gender" in response.data
+    err = response.data
+    assert err.get("ok") is False
+    assert err.get("code") == "validation_error"
+    assert "preferred_flatmate_gender" in err.get("field_errors", {})
+

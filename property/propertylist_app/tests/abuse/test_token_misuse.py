@@ -18,7 +18,9 @@ def test_protected_endpoint_rejects_missing_or_tampered_token(user_factory):
 
     # REQUIRED: confirm a reliably protected endpoint once you upload api/urls.py
     # Choose something like /api/users/me/ or /api/notifications/
-    protected_url = "/api/notifications/"
+    # Use a reliably protected endpoint that exists in api/urls.py
+    protected_url = "/api/v1/users/me/"
+
 
     # No token -> 401
     r1 = client.get(protected_url)

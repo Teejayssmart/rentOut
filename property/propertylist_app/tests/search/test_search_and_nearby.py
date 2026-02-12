@@ -34,8 +34,28 @@ def test_nearby_orders_by_distance_and_attaches_distance(monkeypatch):
     r = client.get(url, {"postcode": "SW1A 1AA", "radius_miles": 200})
     assert r.status_code == 200, r.data
 
-    results = r.data.get("results", r.data)
+    # ... keep everything above as-is ...
+
+    client = APIClient()
+    url = reverse("v1:rooms-nearby")
+    r = client.get(url, {"postcode": "SW1A 1AA", "radius_miles": 200})
+    assert r.status_code == 200, r.data
+
+    #  Support Option A: {"ok": true, "data": ...}
+    payload = r.data
+    if isinstance(payload, dict) and payload.get("ok") is True and "data" in payload:
+        payload = payload["data"]
+
+    #  Support both paginated dict {"results": [...]} and plain list [...]
+    results = payload.get("results", payload) if isinstance(payload, dict) else payload
+
     titles = [it["title"] for it in results[:3]]
+    assert titles == ["Near", "Mid", "Far"]
+
+    # Each item must include distance_miles
+    for it in results[:3]:
+        assert it.get("distance_miles") is not None
+
     assert titles == ["Near", "Mid", "Far"]
 
     dists = [it.get("distance_miles") for it in results[:3]]

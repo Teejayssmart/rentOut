@@ -1087,7 +1087,8 @@ class RoomSerializer(serializers.ModelSerializer):
         user = request.user if request and hasattr(request, "user") else None
         if not user or not user.is_authenticated:
             return False
-        return SavedRoom.objects.filter(user=user, room=obj.id).exists()
+        return SavedRoom.objects.filter(user=user, room=obj).exists()
+
 
     def get_distance_miles(self, obj):
         val = getattr(obj, "distance_miles", None)
@@ -2258,21 +2259,27 @@ class ReportSerializer(serializers.ModelSerializer):
             "message": Message,
             "user": User,
         }
+
         model = model_map.get(attrs["target_type"])
         if not model or not model.objects.filter(pk=attrs["object_id"]).exists():
             raise serializers.ValidationError(
                 {"object_id": "Invalid object ID for the given target type."}
             )
 
-        # NEW: block reporting your own room
+        # Policy: reporting your own room
+        # - allowed only for reasons: appeal, spam
+        # - blocked for abuse (and anything else)
         if attrs["target_type"] == "room":
             request = self.context.get("request")
             if request and request.user and request.user.is_authenticated:
-                room = Room.objects.filter(pk=attrs["object_id"]).select_related("property_owner").first()
+                room = Room.objects.filter(pk=attrs["object_id"]).first()
                 if room and room.property_owner_id == request.user.id:
-                    raise serializers.ValidationError(
-                        {"object_id": "You cannot report your own room."}
-                    )
+                    reason = (attrs.get("reason") or "").strip().lower()
+                    allowed_self_reasons = {"appeal", "spam"}
+                    if reason not in allowed_self_reasons:
+                        raise serializers.ValidationError(
+                            {"object_id": "You cannot report your own room."}
+                        )
 
         return attrs
 

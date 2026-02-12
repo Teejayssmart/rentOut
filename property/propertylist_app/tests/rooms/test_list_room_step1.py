@@ -203,7 +203,11 @@ def test_step1_missing_title_returns_400(auth_client, valid_step1_payload):
     response = auth_client.post(url, bad_payload, format="json")
 
     assert response.status_code == status.HTTP_400_BAD_REQUEST
-    assert "title" in response.data
+    # reason: A4 envelope stores field-level validation errors under field_errors
+    assert response.data.get("ok") is False
+    assert response.data.get("code") == "validation_error"
+    assert "title" in response.data.get("field_errors", {})
+
 
 
 @pytest.mark.django_db
@@ -220,7 +224,11 @@ def test_step1_missing_location_returns_400(auth_client, valid_step1_payload):
     response = auth_client.post(url, bad_payload, format="json")
 
     assert response.status_code == status.HTTP_400_BAD_REQUEST
-    assert "location" in response.data
+    # reason: A4 envelope stores field-level validation errors under field_errors
+    assert response.data.get("ok") is False
+    assert response.data.get("code") == "validation_error"
+    assert "location" in response.data.get("field_errors", {})
+
 
 
 @pytest.mark.django_db
@@ -239,7 +247,11 @@ def test_step1_negative_security_deposit_returns_400(auth_client, valid_step1_pa
     response = auth_client.post(url, bad_payload, format="json")
 
     assert response.status_code == status.HTTP_400_BAD_REQUEST
-    assert "security_deposit" in response.data
+    # reason: A4 envelope stores field-level validation errors under field_errors
+    assert response.data.get("ok") is False
+    assert response.data.get("code") == "validation_error"
+    assert "security_deposit" in response.data.get("field_errors", {})
+
 
 
 @pytest.mark.django_db
@@ -258,7 +270,11 @@ def test_step1_invalid_available_from_format_returns_400(auth_client, valid_step
     response = auth_client.post(url, bad_payload, format="json")
 
     assert response.status_code == status.HTTP_400_BAD_REQUEST
-    assert "available_from" in response.data
+    # reason: A4 envelope stores field-level validation errors under field_errors
+    assert response.data.get("ok") is False
+    assert response.data.get("code") == "validation_error"
+    assert "available_from" in response.data.get("field_errors", {})
+
 
 
 @pytest.mark.django_db
@@ -277,7 +293,11 @@ def test_step1_invalid_time_format_returns_400(auth_client, valid_step1_payload)
     response = auth_client.post(url, bad_payload, format="json")
 
     assert response.status_code == status.HTTP_400_BAD_REQUEST
-    assert "availability_from_time" in response.data
+    # reason: A4 envelope stores field-level validation errors under field_errors
+    assert response.data.get("ok") is False
+    assert response.data.get("code") == "validation_error"
+    assert "availability_from_time" in response.data.get("field_errors", {})
+
 
 
 # -------------------------------------------------
@@ -301,7 +321,11 @@ def test_step1_min_stay_cannot_be_greater_than_max_stay(auth_client, valid_step1
     response = auth_client.post(url, bad_payload, format="json")
 
     assert response.status_code == status.HTTP_400_BAD_REQUEST
-    assert "min_stay_months" in response.data
+    # reason: A4 envelope stores field-level validation errors under field_errors
+    assert response.data.get("ok") is False
+    assert response.data.get("code") == "validation_error"
+    assert "min_stay_months" in response.data.get("field_errors", {})
+
 
 
 @pytest.mark.django_db
@@ -323,7 +347,11 @@ def test_step1_bills_included_for_very_low_price_rejected(auth_client, valid_ste
 
     assert response.status_code == status.HTTP_400_BAD_REQUEST
     # error could be attached to 'bills_included' by the Room.clean()
-    assert "bills_included" in response.data
+    # reason: A4 envelope stores field-level validation errors under field_errors
+    assert response.data.get("ok") is False
+    assert response.data.get("code") == "validation_error"
+    assert "bills_included" in response.data.get("field_errors", {})
+
 
 
 
@@ -402,4 +430,8 @@ def test_view_available_days_custom_mode_requires_at_least_one_date(auth_client,
     response = auth_client.post(url, payload, format="json")
 
     assert response.status_code == status.HTTP_400_BAD_REQUEST
-    assert "view_available_custom_dates" in response.data
+    # reason: A4 envelope stores field-level validation errors under field_errors
+    assert response.data.get("ok") is False
+    assert response.data.get("code") == "validation_error"
+    assert "view_available_custom_dates" in response.data.get("field_errors", {})
+
