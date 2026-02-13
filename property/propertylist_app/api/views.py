@@ -148,6 +148,7 @@ from propertylist_app.api.serializers import (
     TenancyExtensionResponseSerializer,
     RoomPhotoUploadRequestSerializer,
     RoomImageSerializer,
+     AvatarUploadRequestSerializer,
     )
 
 from propertylist_app.api.throttling import (
@@ -3657,6 +3658,19 @@ class RoomAvailabilityPublicView(generics.ListAPIView):
 class UserAvatarUploadView(APIView):
     permission_classes = [IsAuthenticated]
     parser_classes = [MultiPartParser, FormParser]
+
+
+
+
+
+    @extend_schema(
+    request={"multipart/form-data": AvatarUploadRequestSerializer},
+    responses={
+        200: OpenApiResponse(description="Avatar updated successfully."),
+        400: OpenApiResponse(description="Invalid file or validation error."),
+        401: OpenApiResponse(description="Authentication required."),
+    },
+    )
 
     def post(self, request):
         # Ensure a profile exists (prevents 500 if none)
