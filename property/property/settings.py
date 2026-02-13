@@ -163,7 +163,7 @@ USE_TZ = True
 # Static + Media
 # -----------------------------
 STATIC_URL = "static/"
-#STATIC_ROOT = BASE_DIR / "staticfiles"
+STATIC_ROOT = BASE_DIR / "staticfiles"
 #STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
 STATIC_ROOT = None
 STATICFILES_STORAGE = "django.contrib.staticfiles.storage.StaticFilesStorage"
@@ -324,8 +324,6 @@ WEBHOOK_SECRETS = {
     "default": os.environ.get("WEBHOOK_SECRET", ""),
     "stripe": os.environ.get("STRIPE_WEBHOOK_SECRET", ""),
 }
-
-
 
 
 
