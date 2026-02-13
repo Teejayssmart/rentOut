@@ -9,12 +9,13 @@ import traceback
 
 
 
+
 from propertylist_app.api.serializers import TenancyProposalSerializer
 from django.db import models
 
 from django.core.exceptions import ObjectDoesNotExist
 
-
+from propertylist_app.services.image import should_auto_approve_upload
 
 from rest_framework import status as drf_status
 
@@ -145,6 +146,8 @@ from propertylist_app.api.serializers import (
     TenancyExtensionCreateSerializer,
     TenancyExtensionRespondSerializer,
     TenancyExtensionResponseSerializer,
+    RoomPhotoUploadRequestSerializer,
+    RoomImageSerializer,
     )
 
 from propertylist_app.api.throttling import (
@@ -1680,17 +1683,6 @@ class MyProfilePageView(APIView):
 # Room photos
 # --------------------
 class RoomPhotoUploadView(APIView):
-    """
-    Step 4/5 – Listing images
-
-    POST /api/rooms/<pk>/photos/  (owner only; new photos start as 'pending')
-    GET  /api/rooms/<pk>/photos/  (public: only 'approved' photos returned)
-
-    Figma rules:
-    - Upload up to 5MB
-    - JPG / JPEG / PNG only
-    """
-
     parser_classes = [MultiPartParser, FormParser]
 
     def get_permissions(self):
@@ -1706,6 +1698,17 @@ class RoomPhotoUploadView(APIView):
         data = RoomImageSerializer(photos, many=True).data
         return Response(data, status=status.HTTP_200_OK)
 
+    @extend_schema(
+        request={"multipart/form-data": RoomPhotoUploadRequestSerializer},
+        responses={
+                201: RoomImageSerializer,
+                400: OpenApiResponse(description="Invalid file or validation error."),
+                403: OpenApiResponse(description="Forbidden (not the room owner)."),
+                404: OpenApiResponse(description="Room not found."),
+            },
+                )
+
+    
     def post(self, request, pk):
         """
         Upload a single image for this room.
@@ -1743,20 +1746,30 @@ class RoomPhotoUploadView(APIView):
             validate_listing_photos([file_obj], max_mb=5)
             assert_no_duplicate_files([file_obj])
         except DjangoValidationError as e:
-            # Normalize error shape to DRF style
             msg = e.message if hasattr(e, "message") else str(e)
             return Response({"image": msg}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Save as 'pending' so moderation/admin can approve later
+        # 3) Autopilot moderation: approve instantly unless flagged
+        auto_ok = should_auto_approve_upload(file_obj)
+        photo_status = "approved" if auto_ok else "pending"
+
+        # IMPORTANT: ensure file pointer is reset before saving/thumbnail generation
+        try:
+            file_obj.seek(0)
+        except Exception:
+            pass
+
         photo = RoomImage.objects.create(
             room=room,
             image=file_obj,
-            status="pending",
+            status=photo_status,
         )
+
         return Response(
             RoomImageSerializer(photo).data,
             status=status.HTTP_201_CREATED,
         )
+
 
 
 class RoomPhotoDeleteView(APIView):

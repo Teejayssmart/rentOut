@@ -258,6 +258,20 @@ class RoomAdmin(admin.ModelAdmin):
 
 
 
+
+# ---------- photo_verification_upload ----------
+
+@admin.action(description="Approve selected photos (set status=approved)")
+def approve_photos(modeladmin, request, queryset):
+    queryset.update(status="approved")
+
+
+@admin.action(description="Reject selected photos (set status=rejected)")
+def reject_photos(modeladmin, request, queryset):
+    queryset.update(status="rejected")
+    
+    
+
 @admin.register(RoomCategorie)
 class RoomCategorieAdmin(admin.ModelAdmin):
     list_display = ("name", "key", "slug", "active", "website")
@@ -309,10 +323,12 @@ class SavedRoomAdmin(admin.ModelAdmin):
 
 @admin.register(RoomImage)
 class RoomImageAdmin(admin.ModelAdmin):
-    list_display = ("id", "room", "image", "uploaded_at")
-    list_filter = ("room",)
+    list_display = ("id", "room", "status", "image", "uploaded_at")
+    list_filter = ("room", "status")
     search_fields = ("room__title",)
     readonly_fields = ("uploaded_at",)
+    actions = [approve_photos, reject_photos]
+
 
 
 @admin.register(IdempotencyKey)
@@ -464,3 +480,6 @@ class EmailOTPAdmin(ReadOnlyAdmin):
 class PhoneOTPAdmin(ReadOnlyAdmin):
     list_display = ("user", "phone", "code", "created_at", "expires_at", "used_at", "attempts")
     readonly_fields = list_display
+
+
+

@@ -8,6 +8,45 @@ from django.core.files.storage import default_storage
 
 BREAKPOINTS = (640, 1280)  # small, medium
 
+
+
+from PIL import Image
+
+
+def should_auto_approve_upload(uploaded_file) -> bool:
+    """
+    Minimal non-AI vetting.
+    True  -> approve instantly
+    False -> hold for admin (pending)
+    """
+    try:
+        uploaded_file.seek(0)
+        img = Image.open(uploaded_file)
+        img.verify()
+
+        uploaded_file.seek(0)
+        img2 = Image.open(uploaded_file)
+        w, h = img2.size
+
+        if w < 150 or h < 150:
+            return False
+
+
+        ratio = w / float(h) if h else 9999
+        if ratio < 0.25 or ratio > 4.0:
+            return False
+
+        return True
+    except Exception:
+        return False
+    finally:
+        try:
+            uploaded_file.seek(0)
+        except Exception:
+            pass
+
+
+
 def _ensure_rgb(img: Image.Image) -> Image.Image:
     if img.mode in ("RGBA", "P"):
         return img.convert("RGB")

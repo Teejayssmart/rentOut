@@ -2009,6 +2009,14 @@ class RoomImageSerializer(serializers.ModelSerializer):
         return obj
 
 
+class RoomPhotoUploadRequestSerializer(serializers.Serializer):
+    image = serializers.ImageField(required=True)
+
+
+class AvatarUploadRequestSerializer(serializers.Serializer):
+    avatar = serializers.ImageField(required=True)
+
+
 class MessageSerializer(serializers.ModelSerializer):
     sender = serializers.StringRelatedField(read_only=True)
 

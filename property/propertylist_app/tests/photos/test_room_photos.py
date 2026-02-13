@@ -18,7 +18,8 @@ def make_valid_png_bytes() -> bytes:
     """
     Generate a tiny valid PNG with Pillow to satisfy DRF ImageField validation.
     """
-    img = PIL_Image.new("RGBA", (2, 2), (255, 0, 0, 0))
+    img = PIL_Image.new("RGBA", (500, 500), (255, 0, 0, 0))
+
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     return buf.getvalue()
@@ -27,10 +28,12 @@ def make_valid_png_bytes() -> bytes:
 @pytest.mark.django_db
 def test_owner_can_upload_and_delete_room_photo():
     """
+    
     Covers:
       - owner uploads a photo -> 201 & RoomImage created and linked to room
       - owner can delete a photo -> 204 (or 200) & RoomImage removed
     """
+    
     owner = User.objects.create_user(username="owner", password="pass123", email="o@example.com")
     cat = RoomCategorie.objects.create(name="Photos", active=True)
     room = Room.objects.create(
@@ -53,6 +56,9 @@ def test_owner_can_upload_and_delete_room_photo():
     r1 = client.post(url_up, {"image": upload}, format="multipart")
     assert r1.status_code == 201, r1.data
     assert RoomImage.objects.filter(room=room).count() == 1
+    photo = RoomImage.objects.filter(room=room).first()
+    assert photo.status == "approved"
+
     photo_id = RoomImage.objects.filter(room=room).values_list("id", flat=True).first()
 
     # Delete
@@ -60,6 +66,7 @@ def test_owner_can_upload_and_delete_room_photo():
     r2 = client.delete(url_del)
     assert r2.status_code in (200, 204), r2.data
     assert RoomImage.objects.filter(room=room).count() == 0
+
 
 
 @pytest.mark.django_db
@@ -103,3 +110,4 @@ def test_non_owner_cannot_upload_or_delete_room_photo():
 
     # Ensure nothing changed
     assert RoomImage.objects.filter(room=room).count() == 1
+
