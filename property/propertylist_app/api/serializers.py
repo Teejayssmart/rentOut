@@ -2013,6 +2013,9 @@ class AvatarUploadRequestSerializer(serializers.Serializer):
     avatar = serializers.ImageField(required=True)
 
 
+class StripeCheckoutRedirectResponseSerializer(serializers.Serializer):
+    checkout_url = serializers.URLField()
+    session_id = serializers.CharField()
 
 class RoomPhotoUploadRequestSerializer(serializers.Serializer):
     image = serializers.ImageField(required=True)

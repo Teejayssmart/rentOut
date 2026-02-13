@@ -10,6 +10,7 @@ from rest_framework.test import APIClient
 
 from propertylist_app.models import Room, Payment
 
+
 # =========================
 # Fixtures (local to file)
 # =========================
@@ -44,6 +45,7 @@ def test_checkout_creates_session_for_owner_room(mocker, owner, room):
     """
     POST /api/v1/payments/checkout/rooms/<pk>/
     Expect: 200, returns sessionId + publishableKey, and a Payment row exists.
+
     """
     # Your view accesses `session.id` (attribute), so return an object.
     mock_session = SimpleNamespace(id="cs_test_123", url="https://stripe.test/cs_test_123")
@@ -65,8 +67,8 @@ def test_checkout_creates_session_for_owner_room(mocker, owner, room):
     )
     assert resp.status_code == 200, resp.content
     body = resp.json()
-    assert body.get("sessionId") == "cs_test_123"
-    assert "publishableKey" in body
+    assert body.get("session_id") == "cs_test_123"
+    assert body.get("checkout_url") is not None
     assert Payment.objects.filter(room=room, user=owner).exists()
 
 

@@ -63,14 +63,23 @@ def test_create_checkout_session_for_room(monkeypatch):
     cat = RoomCategorie.objects.create(name="Paid", active=True)
     room = Room.objects.create(title="My Listing", category=cat, price_per_month=800, property_owner=owner)
 
+    class FakeCustomer:
+        id = "cus_test_123"
+
     class FakeSession:
         id = "cs_test_456"
+        url = "https://stripe.test/cs_test_456"
+
+    def fake_customer_create(**kwargs):
+        return FakeCustomer()
 
     def fake_session_create(**kwargs):
         return FakeSession()
 
-    # Patch the exact object your view uses
+    # Patch the exact objects your view uses
+    monkeypatch.setattr(views_mod.stripe.Customer, "create", fake_customer_create)
     monkeypatch.setattr(views_mod.stripe.checkout.Session, "create", fake_session_create)
+
 
     client = APIClient()
     client.force_authenticate(user=owner)
@@ -78,8 +87,9 @@ def test_create_checkout_session_for_room(monkeypatch):
     url = reverse("v1:payments-checkout-room", kwargs={"pk": room.pk})
     r = client.post(url, {}, format="json")
     assert r.status_code == 200, r.data
-    assert r.data.get("sessionId") == "cs_test_456"
-    assert "publishableKey" in r.data
+    assert r.data.get("session_id") == "cs_test_456"
+    assert r.data.get("checkout_url") is not None
+
 
     p = Payment.objects.get(room=room)
     assert p.stripe_checkout_session_id == "cs_test_456"

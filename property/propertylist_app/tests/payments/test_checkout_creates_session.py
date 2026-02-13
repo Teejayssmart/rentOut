@@ -13,7 +13,7 @@ import propertylist_app.api.views as views_mod
 def test_checkout_creates_session_for_owner_room(monkeypatch):
     """
     Owner requests a checkout session for their room:
-      - returns 200 with {"sessionId", "publishableKey"}
+      - returns 200 with {"checkout_url", "session_id"}
       - creates a Payment(row) with status="created" and links the Session id
     """
 
@@ -27,18 +27,28 @@ def test_checkout_creates_session_for_owner_room(monkeypatch):
         property_owner=owner,
     )
 
-    # Fake Stripe Session object
+    # Fake Stripe Customer + Session objects
+    class FakeCustomer:
+        id = "cus_test_123"
+
     class FakeSession:
         id = "cs_test_456"
+        url = "https://stripe.test/cs_test_456"
+
+    def fake_customer_create(**kwargs):
+        return FakeCustomer()
 
     def fake_session_create(**kwargs):
-        # sanity: ensure metadata carries payment_id etc. (optional)
         assert kwargs.get("mode") == "payment"
         assert "metadata" in kwargs
         return FakeSession()
 
-    # Patch exactly what the view calls
+    # Patch BOTH Stripe calls used in the view
+    monkeypatch.setattr(views_mod.stripe.Customer, "create", fake_customer_create)
     monkeypatch.setattr(views_mod.stripe.checkout.Session, "create", fake_session_create)
+
+
+    
 
     client = APIClient()
     client.force_authenticate(user=owner)
@@ -50,8 +60,8 @@ def test_checkout_creates_session_for_owner_room(monkeypatch):
 
     # Assert HTTP + payload
     assert r.status_code == 200, r.content
-    assert r.data.get("sessionId") == "cs_test_456"
-    assert "publishableKey" in r.data  # may be empty in tests but key should exist
+    assert r.data.get("session_id") == "cs_test_456"
+    assert r.data.get("checkout_url") is not None
 
     # Assert DB side-effects
     p = Payment.objects.get(room=room)

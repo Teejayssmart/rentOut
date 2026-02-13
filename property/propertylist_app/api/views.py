@@ -148,7 +148,8 @@ from propertylist_app.api.serializers import (
     TenancyExtensionResponseSerializer,
     RoomPhotoUploadRequestSerializer,
     RoomImageSerializer,
-     AvatarUploadRequestSerializer,
+    AvatarUploadRequestSerializer,
+    StripeCheckoutRedirectResponseSerializer,
     )
 
 from propertylist_app.api.throttling import (
@@ -3977,6 +3978,15 @@ class DeleteAccountCancelView(APIView):
 class CreateListingCheckoutSessionView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        responses={
+            200: StripeCheckoutRedirectResponseSerializer,
+            400: OpenApiResponse(description="Invalid request or validation error."),
+            401: OpenApiResponse(description="Authentication required."),
+            403: OpenApiResponse(description="Forbidden (not the room owner)."),
+            404: OpenApiResponse(description="Room not found."),
+        }
+    )
     def post(self, request, pk):
         room = get_object_or_404(Room.objects.filter(is_deleted=False), pk=pk)
 
@@ -4001,7 +4011,6 @@ class CreateListingCheckoutSessionView(APIView):
                 name=user.get_full_name() or user.username,
             )
 
-            # Coerce to a plain string so tests (MagicMock) and real Stripe both work
             stripe_customer_id = getattr(stripe_customer, "id", None)
             if stripe_customer_id:
                 profile.stripe_customer_id = str(stripe_customer_id)
@@ -4022,15 +4031,13 @@ class CreateListingCheckoutSessionView(APIView):
             status="created",
         )
 
-
         # Optional: read a selected saved card id from the body (for future use)
         _payment_method_id = request.data.get("payment_method_id")  # may be None
-        # (Not yet used, but here for future extension.)
 
         # Create the Stripe Checkout Session
         session = stripe.checkout.Session.create(
             mode="payment",
-            customer=customer_id,             # ties it to saved cards
+            customer=customer_id,  # ties it to saved cards
             payment_method_types=["card"],
             line_items=[
                 {
@@ -4056,20 +4063,25 @@ class CreateListingCheckoutSessionView(APIView):
             },
         )
 
-        # Safely get session id for both real Stripe objects and test fakes
+        # Safely extract session id + checkout URL (works for real Stripe + dict fakes)
         session_id = getattr(session, "id", None)
-        if session_id is None and isinstance(session, dict):
-            session_id = session.get("id")
+        checkout_url = getattr(session, "url", None)
 
-        payment.stripe_checkout_session_id = str(session_id)
+        if isinstance(session, dict):
+            session_id = session.get("id")
+            checkout_url = session.get("url")
+
+        payment.stripe_checkout_session_id = str(session_id) if session_id else ""
         payment.save(update_fields=["stripe_checkout_session_id"])
 
         return Response(
             {
-                "sessionId": session_id,
-                "publishableKey": settings.STRIPE_PUBLISHABLE_KEY,
-            }
+                "checkout_url": checkout_url,
+                "session_id": str(session_id) if session_id else None,
+            },
+            status=status.HTTP_200_OK,
         )
+
 
 @csrf_exempt
 @api_view(["POST"])
@@ -4098,8 +4110,7 @@ def stripe_webhook(request):
             # Atomic, idempotent transition: only the first delivery updates and extends.
             with transaction.atomic():
                 updated = (
-                    Payment.objects
-                    .filter(id=payment_id)
+                    Payment.objects.filter(id=payment_id)
                     .exclude(status="succeeded")
                     .update(status="succeeded", stripe_payment_intent_id=(payment_intent or ""))
                 )
@@ -4127,7 +4138,6 @@ def stripe_webhook(request):
                         except Exception:
                             # Never break webhook processing because of notification issues
                             pass
-
 
     elif event["type"] == "checkout.session.expired":
         session = event["data"]["object"]

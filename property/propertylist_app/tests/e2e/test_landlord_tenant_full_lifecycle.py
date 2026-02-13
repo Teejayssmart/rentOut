@@ -83,6 +83,8 @@ def test_e2e_landlord_tenant_full_lifecycle(monkeypatch, user_factory, room_fact
     class _FakeStripeObj:
         def __init__(self, _id):
             self.id = _id
+            self.url = f"https://stripe.test/{_id}"
+
 
     def fake_customer_create(*args, **kwargs):
         return _FakeStripeObj("cus_test_123")
@@ -99,7 +101,9 @@ def test_e2e_landlord_tenant_full_lifecycle(monkeypatch, user_factory, room_fact
 
     res = landlord_client.post(f"/api/payments/checkout/rooms/{room.id}/", data={}, format="json")
     assert res.status_code == 200, res.data
-    assert res.data.get("sessionId") == "cs_test_123"
+    assert res.data.get("session_id") == "cs_test_123"
+    assert res.data.get("checkout_url") is not None
+
 
     payment = Payment.objects.get(room=room, user=landlord)
     assert payment.status == "created"
@@ -218,6 +222,7 @@ def test_e2e_landlord_tenant_full_lifecycle(monkeypatch, user_factory, room_fact
     )
 
     assert res.status_code in (200, 201), res.data
+
 
 
     # -----------------------------
