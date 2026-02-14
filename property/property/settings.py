@@ -10,6 +10,10 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
+SPECTACULAR_SETTINGS
+
+
+
 from pathlib import Path
 from datetime import timedelta
 import os
@@ -233,13 +237,13 @@ SPECTACULAR_SETTINGS = {
     "DESCRIPTION": "SpareRoom-style listings, bookings, chat, payments, and moderation.",
     "VERSION": "1.0.0",
     "SERVERS": [
-        {"url": "https://rentout-my5r.onrender.com", "description": "staging"},
+        {"url": SITE_URL, "description": "current environment"},
     ],
     "SWAGGER_UI_DIST": "SIDECAR",
     "SWAGGER_UI_FAVICON_HREF": "SIDECAR",
     "REDOC_DIST": "SIDECAR",
-    
 }
+
 
 
 
