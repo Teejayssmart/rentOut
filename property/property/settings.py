@@ -232,19 +232,20 @@ REST_FRAMEWORK = {
     "DEFAULT_VERSION": "v1",
 }
 
-# Reason: stop hardcoding the wrong server URL and avoid NameError by defining the dict once.
+
+
+# Reason: avoid hardcoding and ensure Swagger "Servers" matches the current environment domain.
 SPECTACULAR_SETTINGS = {
     "TITLE": "RentOut API",
     "DESCRIPTION": "SpareRoom-style listings, bookings, chat, payments, and moderation.",
     "VERSION": "1.0.0",
     "SERVERS": [
-        {"url": SITE_URL, "description": "current"},
+        {"url": SITE_URL.rstrip("/"), "description": "current"},
     ],
     "SWAGGER_UI_DIST": "SIDECAR",
     "SWAGGER_UI_FAVICON_HREF": "SIDECAR",
     "REDOC_DIST": "SIDECAR",
 }
-
 
 
 
