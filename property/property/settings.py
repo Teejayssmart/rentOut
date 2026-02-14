@@ -63,7 +63,7 @@ if ".onrender.com" not in ALLOWED_HOSTS:
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")
 STRIPE_PUBLISHABLE_KEY = os.getenv("STRIPE_PUBLISHABLE_KEY", "")
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
-SITE_URL = os.getenv("SITE_URL", "http://127.0.0.1:8000")
+SITE_URL = os.getenv("SITE_URL", "").strip()
 
 # Frontend base URL used for links in emails
 FRONTEND_BASE_URL = os.getenv("FRONTEND_BASE_URL", "https://rentout.co.uk")
