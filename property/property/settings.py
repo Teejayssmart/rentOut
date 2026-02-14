@@ -241,6 +241,7 @@ SPECTACULAR_SETTINGS = {
     "VERSION": "1.0.0",
     "SERVERS": [
         {"url": SITE_URL.rstrip("/"), "description": "current"},
+        {"url": "https://rentout-my5r.onrender.com", "description": "other-env"},
     ],
     "SWAGGER_UI_DIST": "SIDECAR",
     "SWAGGER_UI_FAVICON_HREF": "SIDECAR",
