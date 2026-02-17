@@ -209,10 +209,14 @@ if DEBUG:
 else:
     STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
 
-
-
+#-----Media--------#
 MEDIA_URL = "/media/"
-MEDIA_ROOT = BASE_DIR / "media"
+
+# Use Render Disk when available so uploads persist across deploys
+RENDER_DISK_PATH = os.environ.get("RENDER_DISK_PATH", "/var/data")
+MEDIA_ROOT = Path(os.environ.get("MEDIA_ROOT", os.path.join(RENDER_DISK_PATH, "media")))
+
+
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
