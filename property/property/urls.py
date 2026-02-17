@@ -5,6 +5,12 @@ from django.conf.urls.static import static
 from django.http import JsonResponse
 from django.shortcuts import redirect
 
+import os
+
+from django.urls import re_path
+from django.views.static import serve
+
+
 from propertylist_app.api.views import LoginView
 
 from rest_framework_simplejwt.views import (
@@ -60,5 +66,13 @@ urlpatterns = [
 
 
 
-if settings.DEBUG:
-    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+# Serve uploaded media:
+# - DEBUG=True (local dev)
+# - OR staging when SERVE_MEDIA=1 (Render disk)
+SERVE_MEDIA = os.getenv("SERVE_MEDIA", "").lower() in {"1", "true", "yes"}
+
+if settings.DEBUG or SERVE_MEDIA:
+    urlpatterns += [
+        re_path(r"^media/(?P<path>.*)$", serve, {"document_root": settings.MEDIA_ROOT}),
+    ]
+
