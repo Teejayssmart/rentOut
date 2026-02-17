@@ -700,6 +700,41 @@ class RoomImage(models.Model):
     )
 
     objects = RoomImageQuerySet.as_manager()
+    
+    
+    def save(self, *args, **kwargs):
+        """
+        Reason:
+        Images created via Django Admin bypass RoomPhotoUploadView,
+        so they can stay with default status='pending'.
+
+        This applies auto-approval consistently on CREATE (Admin/API/shell),
+        but does not override manual moderation (approved/rejected).
+        """
+        is_new = self.pk is None
+
+        # Only auto-approve on create, and only when still pending.
+        if is_new and self.status == "pending" and self.image:
+            try:
+                from propertylist_app.services.image import should_auto_approve_upload
+
+                # Ensure the underlying file is open for PIL to read
+                self.image.open("rb")
+                try:
+                    if should_auto_approve_upload(self.image.file):
+                        self.status = "approved"
+                finally:
+                    try:
+                        self.image.close()
+                    except Exception:
+                        pass
+            except Exception:
+                # if anything goes wrong, leave as pending for manual moderation
+                pass
+
+        super().save(*args, **kwargs)
+
+
 
 
 # -----------------
