@@ -17,14 +17,16 @@ def test_logout_blacklists_refresh_token_cannot_refresh_anymore(api_client, djan
 
     login_url = reverse("v1:auth-login")
     logout_url = reverse("v1:auth-logout")
-    refresh_url = reverse("token_refresh")
+    refresh_url = reverse("v1:auth-token-refresh")
+
 
     # login → get tokens (your login expects "identifier", not "username")
     resp = api_client.post(login_url, {"identifier": "bob", "password": "pass1234"}, format="json")
     assert resp.status_code == status.HTTP_200_OK, resp.data
 
-    access = resp.data["access"]
-    refresh = resp.data["refresh"]
+    access = resp.data["data"]["tokens"]["access"]
+    refresh = resp.data["data"]["tokens"]["refresh"]
+
 
     # logout → blacklist refresh
     api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
@@ -52,8 +54,9 @@ def test_blacklisted_refresh_token_stays_blacklisted_on_reuse(api_client, django
     resp = api_client.post(login_url, {"identifier": "kate", "password": "pass1234"}, format="json")
     assert resp.status_code == status.HTTP_200_OK, resp.data
 
-    access = resp.data["access"]
-    refresh = resp.data["refresh"]
+    access = resp.data["data"]["tokens"]["access"]
+    refresh = resp.data["data"]["tokens"]["refresh"]
+
 
     # logout once
     api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")

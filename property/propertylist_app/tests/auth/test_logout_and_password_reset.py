@@ -24,8 +24,9 @@ def test_logout_happy_path_and_missing_refresh():
     r_login = client.post(url_login, {"identifier": "bob", "password": "pass12345"}, format="json")
     assert r_login.status_code == 200, r_login.data
 
-    access = r_login.data["access"]
-    refresh = r_login.data["refresh"]
+    access = r_login.data["data"]["tokens"]["access"]
+    refresh = r_login.data["data"]["tokens"]["refresh"]
+    #refresh = r_login.data["refresh"]
 
     # Logout requires auth header
     url_logout = reverse("v1:auth-logout")
@@ -97,4 +98,8 @@ def test_password_reset_request_and_confirm(monkeypatch):
     url_login = reverse("v1:auth-login")
     r_login = client.post(url_login, {"identifier": "resetuser", "password": "Newpass12345!"}, format="json")
     assert r_login.status_code == 200, r_login.data
-    assert "access" in r_login.data and "refresh" in r_login.data
+    assert r_login.data.get("ok") is True
+    assert "tokens" in r_login.data.get("data", {})
+    assert "access" in r_login.data["data"]["tokens"]
+    assert "refresh" in r_login.data["data"]["tokens"]
+

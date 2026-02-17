@@ -49,7 +49,11 @@ def test_register_then_login_success_and_bad_password():
         format="json",
     )
     assert r_login.status_code == 200, r_login.data
-    assert "access" in r_login.data and "refresh" in r_login.data
+    assert r_login.data.get("ok") is True
+    assert "tokens" in r_login.data.get("data", {})
+    assert "access" in r_login.data["data"]["tokens"]
+    assert "refresh" in r_login.data["data"]["tokens"]
+
 
     # --- Login (bad password) ---
     r_bad = client.post(

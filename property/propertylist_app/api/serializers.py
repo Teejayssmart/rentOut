@@ -1652,6 +1652,33 @@ class RegistrationSerializer(serializers.ModelSerializer):
 class LoginSerializer(serializers.Serializer):
     identifier = serializers.CharField()  # username OR email
     password = serializers.CharField(write_only=True)
+    
+    
+class TokenPairWithExpirySerializer(serializers.Serializer):
+    access = serializers.CharField()
+    refresh = serializers.CharField()
+    access_expires_at = serializers.DateTimeField()
+    refresh_expires_at = serializers.DateTimeField()
+
+
+class LoginSuccessDataSerializer(serializers.Serializer):
+    tokens = TokenPairWithExpirySerializer()
+    user = serializers.DictField()
+    profile = serializers.DictField()
+
+
+class LoginResponseSerializer(serializers.Serializer):
+    ok = serializers.BooleanField()
+    data = LoginSuccessDataSerializer()
+    
+
+class TokenRefreshRequestSerializer(serializers.Serializer):
+    refresh = serializers.CharField()
+
+
+class TokenRefreshResponseSerializer(serializers.Serializer):
+    ok = serializers.BooleanField()
+    data = serializers.DictField()  
 
 
 class PasswordResetRequestSerializer(serializers.Serializer):

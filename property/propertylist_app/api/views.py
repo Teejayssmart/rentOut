@@ -8,7 +8,7 @@ import logging
 import traceback
 
 
-
+from datetime import datetime, timezone as dt_timezone
 
 from propertylist_app.api.serializers import TenancyProposalSerializer
 from django.db import models
@@ -150,6 +150,7 @@ from propertylist_app.api.serializers import (
     RoomImageSerializer,
     AvatarUploadRequestSerializer,
     StripeCheckoutRedirectResponseSerializer,
+    LoginResponseSerializer,
     )
 
 from propertylist_app.api.throttling import (
@@ -1413,7 +1414,7 @@ class LoginView(APIView):
     @extend_schema(
         request=LoginSerializer,
         responses={
-            200: OpenApiResponse(description="JWT tokens returned (refresh + access)."),
+            200: LoginResponseSerializer,
             400: OpenApiResponse(description="Invalid input or invalid credentials."),
             403: OpenApiResponse(description="Email not verified."),
             429: OpenApiResponse(description="Too many failed attempts."),
@@ -1478,7 +1479,7 @@ class LoginView(APIView):
 
             user = authenticate(request, username=lookup_username, password=password)
             if user:
-                # ✅ SAFE: do not crash if profile row is missing on Render DB
+                #  SAFE: do not crash if profile row is missing on Render DB
                 profile = None
                 if hasattr(user, "profile"):
                     try:
@@ -1493,12 +1494,34 @@ class LoginView(APIView):
                         status=status.HTTP_403_FORBIDDEN,
                     )
 
+               
+
+                # ...
+
                 clear_login_failures(ip, identifier_for_lock or identifier)
+
+                #  Ensure profile exists (prevents Render DB missing-profile edge case)
+                profile, _ = UserProfile.objects.get_or_create(user=user)
+
                 refresh = RefreshToken.for_user(user)
-                return Response(
-                    {"refresh": str(refresh), "access": str(refresh.access_token)},
-                    status=status.HTTP_200_OK,
-                )
+                access_token = refresh.access_token
+
+                #  Expiry timestamps from JWT claims (exp is a UNIX timestamp)
+                access_exp = datetime.fromtimestamp(int(access_token["exp"]), tz=dt_timezone.utc)
+                refresh_exp = datetime.fromtimestamp(int(refresh["exp"]), tz=dt_timezone.utc)
+
+                payload = {
+                    "tokens": {
+                        "access": str(access_token),
+                        "refresh": str(refresh),
+                        "access_expires_at": access_exp,
+                        "refresh_expires_at": refresh_exp,
+                    },
+                    "user": UserSerializer(user).data,
+                    "profile": UserProfileSerializer(profile).data,
+                }
+
+                return ok_response(payload, status_code=status.HTTP_200_OK)
 
             register_login_failure(ip, identifier_for_lock or identifier)
 
@@ -1530,14 +1553,58 @@ class LogoutView(APIView):
 
 
     def post(self, request):
-        refresh = request.data.get("refresh")
+        refresh = (request.data.get("refresh") or "").strip()
         if not refresh:
-            return Response({"detail": "Refresh token required."}, status=status.HTTP_400_BAD_REQUEST)
+            # Reason: allow global error handler to format consistently
+            raise ValidationError({"refresh": "Refresh token is required."})
+
         try:
             RefreshToken(refresh).blacklist()
         except Exception:
-            return Response({"detail": "Invalid or expired refresh token."}, status=status.HTTP_400_BAD_REQUEST)
-        return Response({"detail": "Logged out."})
+            # Reason: treat invalid/expired/already-blacklisted the same for security + consistency
+            raise ValidationError({"refresh": "Invalid or expired refresh token."})
+
+        # Reason: A3/C1 consistent success envelope
+        return ok_response({"detail": "Logged out."}, status_code=status.HTTP_200_OK)
+
+
+
+class TokenRefreshView(APIView):
+    permission_classes = [AllowAny]
+    versioning_class = None
+
+    def post(self, request):
+        from propertylist_app.api.serializers import TokenRefreshRequestSerializer
+
+        ser = TokenRefreshRequestSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+
+        refresh_str = (ser.validated_data.get("refresh") or "").strip()
+        if not refresh_str:
+            raise ValidationError({"refresh": "Refresh token is required."})
+
+        try:
+            refresh = RefreshToken(refresh_str)
+            access_token = refresh.access_token
+
+            access_exp = datetime.fromtimestamp(int(access_token["exp"]), tz=dt_timezone.utc)
+            refresh_exp = datetime.fromtimestamp(int(refresh["exp"]), tz=dt_timezone.utc)
+
+            payload = {
+                "access": str(access_token),
+                "access_expires_at": access_exp,
+                "refresh_expires_at": refresh_exp,
+            }
+
+            # Use your existing A3/C1 success envelope helper (same one you used for login)
+            return ok_response(payload, status_code=status.HTTP_200_OK)
+
+        except Exception:
+            # Let your standard error envelope handle it consistently
+            raise ValidationError({"refresh": "Invalid or expired refresh token."})
+
+
+
 
 
 

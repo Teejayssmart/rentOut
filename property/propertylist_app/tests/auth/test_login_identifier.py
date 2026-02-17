@@ -23,7 +23,12 @@ def test_login_with_username_after_verify_ok(api):
 
     res = api.post(f"{API}/auth/login/", {"identifier": "mixuser", "password": "Str0ng!Pass"}, format="json")
     assert res.status_code == 200, res.data
-    assert "access" in res.data and "refresh" in res.data
+    assert "data" in res.data and res.data["ok"] is True
+    assert "tokens" in res.data["data"]
+    assert "access" in res.data["data"]["tokens"]
+    assert "refresh" in res.data["data"]["tokens"]
+
+
 
 @pytest.mark.django_db
 def test_login_with_email_after_verify_ok(api):
@@ -36,7 +41,11 @@ def test_login_with_email_after_verify_ok(api):
 
     res = api.post(f"{API}/auth/login/", {"identifier": "mix@example.com", "password": "Str0ng!Pass"}, format="json")
     assert res.status_code == 200, res.data
-    assert "access" in res.data and "refresh" in res.data
+    assert "data" in res.data and res.data["ok"] is True
+    assert "tokens" in res.data["data"]
+    assert "access" in res.data["data"]["tokens"]
+    assert "refresh" in res.data["data"]["tokens"]
+
 
 @pytest.mark.django_db
 def test_login_before_verify_returns_403(api):

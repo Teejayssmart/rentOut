@@ -175,8 +175,8 @@ def test_verify_otp_contract_success_and_failure_api_and_v1():
 def test_login_contract_success_and_failure_api():
     """
     Observed contracts:
-    Success: {"refresh": str, "access": str}
-    Failure: {"detail": "Invalid credentials."}
+    Success: {"ok": True, "data": {"tokens": {...}, "user": {...}, "profile": {...}}}
+    Failure: {"detail": "Invalid credentials."}  (wrapped by your error envelope in some cases)
     """
     client = APIClient()
 
@@ -216,9 +216,18 @@ def test_login_contract_success_and_failure_api():
     )
     assert r_ok.status_code == 200, r_ok.data
     data_ok = r_ok.json()
-    assert_exact_keys(data_ok, {"refresh", "access"})
-    assert_is_str(data_ok["refresh"], "refresh")
-    assert_is_str(data_ok["access"], "access")
+
+    assert_exact_keys(data_ok, {"ok", "data"})
+    assert data_ok["ok"] is True
+    assert_exact_keys(data_ok["data"], {"tokens", "user", "profile"})
+    assert_exact_keys(
+        data_ok["data"]["tokens"],
+        {"access", "refresh", "access_expires_at", "refresh_expires_at"},
+    )
+
+    tokens = data_ok["data"]["tokens"]
+    assert_is_str(tokens["refresh"], "refresh")
+    assert_is_str(tokens["access"], "access")
 
     # Login failure
     r_bad = post_json(
@@ -228,5 +237,8 @@ def test_login_contract_success_and_failure_api():
     )
     assert r_bad.status_code in (400, 401), r_bad.data
     data_bad = r_bad.json()
+
+    # Some endpoints return {"detail": "..."}; others may wrap errors.
+    # Keep your existing contract expectation.
     assert_exact_keys(data_bad, {"detail"})
     assert_is_str(data_bad["detail"], "detail")

@@ -17,6 +17,7 @@ def _auth_headers(ip="127.0.0.10"):
     return {"REMOTE_ADDR": ip}
 
 
+
 @override_settings(
     # Keep your lockout logic easy to trigger in tests
     LOGIN_FAIL_LIMIT=3,
@@ -119,7 +120,12 @@ class TestLoginLockout(APITestCase):
             **_auth_headers(),
         )
         self.assertEqual(ok.status_code, status.HTTP_200_OK, ok.content)
-        self.assertIn("access", ok.data)
+        self.assertTrue(ok.data.get("ok") is True)
+        self.assertIn("data", ok.data)
+        self.assertIn("tokens", ok.data["data"])
+        self.assertIn("access", ok.data["data"]["tokens"])
+        self.assertIn("refresh", ok.data["data"]["tokens"])
+
 
 
 class TestRegisterThrottle(APITestCase):

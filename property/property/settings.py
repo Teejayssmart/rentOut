@@ -46,15 +46,49 @@ if not SECRET_KEY:
 
 DEBUG = os.getenv("DJANGO_DEBUG", "true").lower() in {"1", "true", "yes"}
 
+# -----------------------------
+# Production-grade security (staging + production)
+# -----------------------------
+if not DEBUG:
+    # Render terminates TLS and forwards requests to Django.
+    # This tells Django the original scheme was https.
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
+    # Force HTTPS
+    SECURE_SSL_REDIRECT = True
+
+    # Secure cookies over HTTPS only
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+
+    # Sensible baseline headers
+    SECURE_CONTENT_TYPE_NOSNIFF = True
+    SECURE_BROWSER_XSS_FILTER = True
+    X_FRAME_OPTIONS = "DENY"
+
+    # HSTS (start low; increase later once confirmed stable)
+    SECURE_HSTS_SECONDS = int(os.getenv("SECURE_HSTS_SECONDS", "3600"))  # 1 hour
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = False
+
+
+
 
 def _csv_env(name: str, default: str = ""):
     raw = os.getenv(name, default)
     return [x.strip() for x in raw.split(",") if x.strip()]
 
-# Always allow any *.onrender.com host + your explicit list from env
+# ALLOWED_HOSTS:
+# - production/staging (DEBUG=False): must be explicit and strict (no wildcard)
+# - local/dev (DEBUG=True): allow local + convenience wildcard for Render previews if needed
 ALLOWED_HOSTS = _csv_env("DJANGO_ALLOWED_HOSTS", "127.0.0.1,localhost")
-if ".onrender.com" not in ALLOWED_HOSTS:
-    ALLOWED_HOSTS.append(".onrender.com")
+
+if DEBUG:
+    # Convenience for dev only (never in production)
+    if ".onrender.com" not in ALLOWED_HOSTS:
+        ALLOWED_HOSTS.append(".onrender.com")
+
+
 
 
 # -----------------------------

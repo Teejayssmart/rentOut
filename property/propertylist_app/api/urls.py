@@ -52,7 +52,7 @@ from propertylist_app.api.views import (
     PasswordResetRequestView, PasswordResetConfirmView,
     MeView, UserProfileView,
     UserAvatarUploadView, ChangeEmailView, ChangePasswordView, DeactivateAccountView, MyRoomsView,GoogleRegisterView,AppleRegisterView,MyProfilePageView,
-    CreatePasswordView,
+    CreatePasswordView,TokenRefreshView,
     
 
     # Soft delete
@@ -234,6 +234,8 @@ urlpatterns = [
     path("auth/logout/",                 LogoutView.as_view(),               name="auth-logout"),
     path("auth/password-reset/",         PasswordResetRequestView.as_view(), name="auth-password-reset"),
     path("auth/password-reset/confirm/", PasswordResetConfirmView.as_view(), name="auth-password-reset-confirm"),
+    path("auth/token/refresh/", TokenRefreshView.as_view(), name="auth-token-refresh"),
+
 
     # Social sign-up stubs (for Figma buttons)           # NEW
     path("auth/register/google/",        GoogleRegisterView.as_view(),       name="auth-register-google"),  # NEW
