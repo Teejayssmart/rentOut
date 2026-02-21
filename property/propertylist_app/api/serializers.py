@@ -2316,6 +2316,15 @@ class ReportSerializer(serializers.ModelSerializer):
             request = self.context.get("request")
             if request and request.user and request.user.is_authenticated:
                 room = Room.objects.filter(pk=attrs["object_id"]).first()
+
+                # NEW: policy guard — you cannot file an appeal for a room that is already active
+                # Reason: appeals are meant for hidden/removed listings; appealing an active listing is meaningless noise.
+                reason = (attrs.get("reason") or "").strip().lower()
+                if room and reason == "appeal" and getattr(room, "status", None) == "active":
+                    raise serializers.ValidationError(
+                        {"reason": "You cannot file an appeal for an active room."}
+                    )
+
                 if room and room.property_owner_id == request.user.id:
                     reason = (attrs.get("reason") or "").strip().lower()
                     allowed_self_reasons = {"appeal", "spam"}
@@ -2325,7 +2334,6 @@ class ReportSerializer(serializers.ModelSerializer):
                         )
 
         return attrs
-
 
     def create(self, validated_data):
         model = {
