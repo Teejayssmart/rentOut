@@ -20,7 +20,6 @@ def make_authed_client() -> APIClient:
     client.force_authenticate(user=user)
     return client
 
-
 def _extract_first_id(payload):
     """
     Supports both:
@@ -84,24 +83,40 @@ def test_booking_reviews_list_contract_v1_if_any_exist():
     Contract for:
       GET /api/v1/bookings/<id>/reviews/
 
-    If there are no bookings in the test DB, we skip.
-    If permission blocks access (401/403), we assert error envelope.
+    Now self-contained: creates a booking so it never skips.
     """
+    from propertylist_app.models import Room, Booking, RoomCategorie
+    from django.utils import timezone
+    from datetime import timedelta
+
     client = make_authed_client()
+    user = client.handler._force_user
 
-    # Find a booking id from list endpoint
-    r_list = client.get("/api/v1/bookings/")
-    assert r_list.status_code in (200, 401, 403), getattr(r_list, "content", b"")
+    # Create minimal booking
+    cat = RoomCategorie.objects.create(name="ContractCat")
+    room = Room.objects.create(
+        title="Contract Room",
+        description=(
+        "This is a contract test room description written to satisfy the minimum word "
+        "requirement in the Room model. It contains more than twenty five words for validation."
+            ),
+        price_per_month=500,
+        location="Test",
+        category=cat,
+        property_owner=user,
+    )
 
-    if r_list.status_code != 200:
-        _assert_error_envelope(r_list)
-        pytest.skip(f"Bookings list not accessible in tests (status {r_list.status_code}).")
+    booking = Booking.objects.create(
+        user=user,
+        room=room,
+        start=timezone.now() - timedelta(days=2),
+        end=timezone.now() - timedelta(days=1),
+        status=Booking.STATUS_ACTIVE,
+        is_deleted=False,
+        canceled_at=None,
+    )
 
-    booking_id = _extract_first_id(r_list.json())
-    if not booking_id:
-        pytest.skip("No bookings exist in test DB to test booking reviews list endpoint.")
-
-    r = client.get(f"/api/v1/bookings/{booking_id}/reviews/")
+    r = client.get(f"/api/v1/bookings/{booking.id}/reviews/")
 
     if r.status_code != 200:
         _assert_error_envelope(r)
