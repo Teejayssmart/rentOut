@@ -95,3 +95,4 @@ def test_sweep_notifies_only_unconfirmed_side_then_stops_when_both_confirm(user_
     task_tenancy_prompts_sweep()
     final_count = Notification.objects.filter(type="tenancy_still_living_check").count()
     assert final_count == after_tenant_confirm
+    

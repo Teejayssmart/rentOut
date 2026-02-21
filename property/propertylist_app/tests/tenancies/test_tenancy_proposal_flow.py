@@ -14,7 +14,7 @@ from propertylist_app.models import Tenancy
 
 pytestmark = pytest.mark.django_db
 
-API_PREFIX = "/api"
+API_PREFIX = "/api/v1"
 
 
 def _api_client_for(user):

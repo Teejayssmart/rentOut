@@ -6,7 +6,7 @@ from datetime import date
 
 from propertylist_app.models import Room, Booking, UserProfile
 
-API_TENANCY_PROPOSE_URL = "/api/tenancies/propose/"
+API_TENANCY_PROPOSE_URL = "/api/v1/tenancies/propose/"
 
 
 def future_move_in_date():
