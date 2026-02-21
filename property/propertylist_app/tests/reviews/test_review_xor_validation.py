@@ -42,7 +42,7 @@ def _make_tenancy(room, landlord, tenant, *, status):
 
 
 def _url(tenancy_id: int) -> str:
-    return f"/api/tenancies/{tenancy_id}/reviews/"
+    return f"/api/v1/tenancies/{tenancy_id}/reviews/"
 
 
 def _auth(user):

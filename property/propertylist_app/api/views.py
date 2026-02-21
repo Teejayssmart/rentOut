@@ -7,6 +7,14 @@ from drf_spectacular.utils import extend_schema, OpenApiResponse
 import logging
 import traceback
 
+from rest_framework_simplejwt.views import TokenRefreshView
+from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
+
+
+from rest_framework.exceptions import ValidationError
+from rest_framework_simplejwt.tokens import AccessToken
+
+
 
 from datetime import datetime, timezone as dt_timezone
 
@@ -1546,6 +1554,70 @@ class LoginView(APIView):
             raise
 
 
+class TokenRefreshEnvelopeView(TokenRefreshView):
+    """
+    Wrap SimpleJWT refresh response in the API success envelope.
+    """
+
+    def post(self, request, *args, **kwargs):
+        refresh = request.data.get("refresh")
+
+        # Contract:
+        # - malformed refresh token (not a JWT format) => 400
+        # - well-formed JWT but invalid/blacklisted/expired => let SimpleJWT return 401
+        if not isinstance(refresh, str) or refresh.count(".") != 2:
+            return Response(
+                {"detail": "Invalid refresh token."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            response = super().post(request, *args, **kwargs)
+        except (InvalidToken, TokenError):
+            return Response(
+                {"detail": "Invalid or expired refresh token."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        if response.status_code != 200:
+            return response
+
+    # ... keep the rest of your payload wrapping + expires_at logic unchanged ...
+
+
+        # Successful refresh typically returns {"access": "..."} (and sometimes "refresh" if rotation enabled)
+        payload = dict(response.data)
+
+        access = payload.get("access")
+        if access:
+                    try:
+                        token = AccessToken(access)
+                        exp = int(token.get("exp"))
+                        payload["access_expires_at"] = datetime.fromtimestamp(exp, tz=dt_timezone.utc).isoformat()
+                    except Exception:
+                        raise ValidationError({"detail": "Unable to determine access token expiry."})
+
+        refresh = payload.get("refresh")
+        if refresh:
+                    try:
+                        refresh_token = RefreshToken(refresh)
+                        refresh_exp = int(refresh_token.get("exp"))
+                        payload["refresh_expires_at"] = datetime.fromtimestamp(
+                            refresh_exp, tz=dt_timezone.utc
+                        ).isoformat()
+                    except Exception:
+                        raise ValidationError({"detail": "Unable to determine refresh token expiry."})
+
+        response.data = {
+                    "ok": True,
+                    "data": payload,
+                }
+        return response
+
+
+
+
+
 
 class LogoutView(APIView):
     permission_classes = [IsAuthenticated]
@@ -1573,6 +1645,8 @@ class TokenRefreshView(APIView):
     permission_classes = [AllowAny]
     versioning_class = None
 
+
+   
     def post(self, request):
         from propertylist_app.api.serializers import TokenRefreshRequestSerializer
 

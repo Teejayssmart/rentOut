@@ -44,9 +44,8 @@ def test_tenant_to_landlord_flags_auto_calculate_overall_rating(user_factory, ro
     flags = ["responsive", "maintenance_good", "accurate_listing", "unresponsive"]
 
     res = client.post(
-        f"/api/tenancies/{tenancy.id}/reviews/",
+        f"/api/v1/tenancies/{tenancy.id}/reviews/",
         data={"review_flags": flags},
-
         format="json",
     )
     assert res.status_code == 201, res.data

@@ -52,8 +52,23 @@ def _make_tenancy(room, landlord, tenant, *, status):
 def _discover_review_create_url(client: APIClient, tenancy_id: int) -> str:
     """
     Find a URL that actually allows creating a review.
+
+    Reason:
+    During /api -> /api/v1 migration, hitting legacy paths may 308-redirect.
+    Following redirects can create loops in some setups (e.g. /api/v1/v1/...).
+    So we do NOT follow redirects here; instead, we normalise redirects ourselves.
     """
     candidates = [
+        # Prefer v1 first
+        "/api/v1/reviews/",
+        "/api/v1/review/",
+        f"/api/v1/tenancies/{tenancy_id}/reviews/",
+        f"/api/v1/tenancies/{tenancy_id}/review/",
+        f"/api/v1/tenancies/{tenancy_id}/submit-review/",
+        f"/api/v1/tenancies/{tenancy_id}/review/submit/",
+        f"/api/v1/tenancies/{tenancy_id}/leave-review/",
+
+        # Legacy fallbacks (still present during migration)
         "/api/reviews/",
         "/api/review/",
         f"/api/tenancies/{tenancy_id}/reviews/",
@@ -63,16 +78,44 @@ def _discover_review_create_url(client: APIClient, tenancy_id: int) -> str:
         f"/api/tenancies/{tenancy_id}/leave-review/",
     ]
 
-    # Prefer OPTIONS that allows POST
+    def _normalise(url: str) -> str:
+        # ensure trailing slash
+        return url if url.endswith("/") else url + "/"
+
+    # If we get redirected, use the Location header as the real endpoint (without following chains)
+    def _redirect_target(res, fallback: str) -> str | None:
+        if res.status_code in (301, 302, 307, 308):
+            loc = res.headers.get("Location") or res.get("Location")
+            if loc:
+                return _normalise(loc)
+            return _normalise(fallback)
+        return None
+
+    # Prefer OPTIONS that allows POST (but do NOT follow redirects)
     for url in candidates:
-        res = client.options(url)
+        url = _normalise(url)
+        res = client.options(url, follow=False)
+
+        redir = _redirect_target(res, url)
+        if redir:
+            # try OPTIONS on the target once, no follow
+            res2 = client.options(redir, follow=False)
+            allow2 = (res2.headers.get("Allow") or "").upper()
+            if "POST" in allow2:
+                return redir
+            # if it’s not 404, it still “exists” as a candidate for POST probing
+            if res2.status_code != 404:
+                url = redir
+                res = res2
+
         if res.status_code == 404:
             continue
+
         allow = (res.headers.get("Allow") or "").upper()
         if "POST" in allow:
             return url
 
-    # Probe with a dummy POST; accept any response except 404/405
+    # Probe with a dummy POST; accept any response except 404/405 (no redirect follow)
     Review = _get_model("propertylist_app", "Review")
     dummy_payload = {
         "tenancy": tenancy_id,
@@ -83,7 +126,16 @@ def _discover_review_create_url(client: APIClient, tenancy_id: int) -> str:
     }
 
     for url in candidates:
-        res = client.post(url, data=dummy_payload, format="json")
+        url = _normalise(url)
+        res = client.post(url, data=dummy_payload, format="json", follow=False)
+
+        redir = _redirect_target(res, url)
+        if redir:
+            res2 = client.post(redir, data=dummy_payload, format="json", follow=False)
+            if res2.status_code not in (404, 405):
+                return redir
+            continue
+
         if res.status_code not in (404, 405):
             return url
 
@@ -92,7 +144,8 @@ def _discover_review_create_url(client: APIClient, tenancy_id: int) -> str:
         + ", ".join(candidates)
         + ". Add your real create endpoint to candidates in _discover_review_create_url."
     )
-
+    
+    
 
 def _build_payload(*, tenancy_id=None, role=None):
     payload = {}

@@ -19,7 +19,8 @@ def test_tenant_cannot_access_owner_only_endpoint(user_factory, room_factory):
 
     # REQUIRED: confirm an owner-only endpoint once you upload api/urls.py
     # Common ones: publish/unpublish, delete room, upload photo, create checkout session.
-    owner_only_url = f"/api/rooms/{room.id}/unpublish/"
+   
+    owner_only_url = f"/api/v1/rooms/{room.id}/unpublish/"
 
     r = client.post(owner_only_url, data={}, format="json")
     assert r.status_code in (403, 404)

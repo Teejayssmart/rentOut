@@ -3,7 +3,7 @@ from django.contrib.auth import get_user_model
 from propertylist_app.models import UserProfile
 
 API_LOGIN_URL = "/api/auth/login/"
-API_LOGOUT_URL = "/api/auth/logout/"
+API_LOGOUT_URL = "/api/v1/auth/logout/"
 API_REFRESH_URL = "/api/auth/token/refresh/"
 
 
@@ -41,7 +41,8 @@ def test_logout_blacklists_refresh_and_returns_success_envelope(api_client):
     # Refresh token should now be invalid (blacklisted)
     api_client.credentials()  # refresh endpoint is AllowAny
     refreshed = api_client.post(API_REFRESH_URL, {"refresh": refresh}, format="json")
-    assert refreshed.status_code == 400
+    assert refreshed.status_code == 401
+
 
 
 @pytest.mark.django_db

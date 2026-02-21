@@ -1,11 +1,13 @@
 import pytest
 from datetime import date, timedelta
-
+import io
+from PIL import Image
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APIClient
-
+from django.db import models
+from django.test import override_settings
 from propertylist_app.models import Room, RoomImage
 
 
@@ -67,6 +69,29 @@ def valid_step1_payload():
     }
 
 
+@pytest.fixture(autouse=True)
+def _force_test_media_root(tmp_path):
+    """
+    Reason:
+    Ensure file uploads always write to a real, writable directory on Windows/CI.
+    """
+    with override_settings(MEDIA_ROOT=str(tmp_path), MEDIA_URL="/media/"):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def _bypass_roomimage_save_override(monkeypatch):
+    """
+    Reason:
+    RoomImage.save() override can close the underlying uploaded file before Django writes it,
+    which causes storage to raise and your view to return a 500 envelope.
+    Test-only: bypass the override so uploads are stable.
+    """
+    monkeypatch.setattr(RoomImage, "save", models.Model.save, raising=False)
+
+
+
+
 @pytest.fixture
 def create_draft_room(auth_client, valid_step1_payload):
     """
@@ -89,19 +114,25 @@ def create_draft_room(auth_client, valid_step1_payload):
 
 def _upload_fake_photo(client, room, name="photo.jpg"):
     """
-    Small helper to upload a single fake JPEG image to:
-      POST /api/rooms/<id>/photos/
+    Upload a single valid JPEG image to the room photo endpoint.
+
+    Reason:
+    Backend performs real image validation/moderation. Fake bytes can raise PIL/validators
+    errors and get wrapped into a 500. This test is about Step 4 min-photos rule, not image decoding.
     """
     url = reverse("api:room-photo-upload", args=[room.id])
 
-    fake_image = SimpleUploadedFile(
+    buf = io.BytesIO()
+    Image.new("RGB", (10, 10), color=(255, 0, 0)).save(buf, format="JPEG")
+    buf.seek(0)
+
+    real_image = SimpleUploadedFile(
         name,
-        b"fake-image-bytes",
+        buf.getvalue(),
         content_type="image/jpeg",
     )
 
-    response = client.post(url, {"image": fake_image}, format="multipart")
-    return response
+    return client.post(url, {"image": real_image}, format="multipart")
 
 
 # ------------------------

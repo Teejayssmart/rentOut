@@ -1,12 +1,23 @@
 import pytest
 from rest_framework.test import APIClient
+from django.contrib.auth import get_user_model
+
+from propertylist_app.models import Room, RoomCategorie
 
 pytestmark = pytest.mark.django_db
 
 
+# -----------------------------
+# CANONICAL V1 ENDPOINT ONLY
+# -----------------------------
+ROOMS_LIST_V1 = "/api/v1/rooms/"
+
+
 def assert_exact_keys(obj: dict, expected_keys: set[str]) -> None:
     assert isinstance(obj, dict), f"Expected dict, got {type(obj)}"
-    assert set(obj.keys()) == expected_keys, f"Keys mismatch.\nGot: {set(obj.keys())}\nExpected: {expected_keys}"
+    assert set(obj.keys()) == expected_keys, (
+        f"Keys mismatch.\nGot: {set(obj.keys())}\nExpected: {expected_keys}"
+    )
 
 
 def assert_is_bool(v, name: str) -> None:
@@ -17,41 +28,54 @@ def assert_is_int(v, name: str) -> None:
     assert isinstance(v, int), f"{name} must be int, got {type(v)}"
 
 
-def test_rooms_list_contract_api_and_v1_match_shape():
+def seed_room_if_empty() -> None:
     """
-    Observed: /api/rooms/ returns a LIST of room dicts (no pagination envelope).
-    Locks:
+    Reason: contract tests must not skip or fail due to empty fresh test DB.
+    Creates the minimum viable Room so /api/v1/rooms/ returns at least one item.
+    """
+    if Room.objects.exists():
+        return
+
+    User = get_user_model()
+    owner = User.objects.create_user(
+        username="contract_rooms_owner",
+        email="contract_rooms_owner@test.com",
+        password="StrongP@ssword1",
+    )
+    cat = RoomCategorie.objects.create(name="Contract Rooms Category", active=True)
+
+    Room.objects.create(
+        title="Contract Room",
+        category=cat,
+        price_per_month=900,
+        property_owner=owner,
+    )
+
+
+def test_rooms_list_contract_v1_strict_item_shape():
+    """
+    Locks (v1 only):
+      - status 200
       - top-level type is list
       - first item is dict
       - first item has exact key set
-      - /api and /api/v1 return same item key set
+      - minimal type checks for key fields
     """
+    seed_room_if_empty()
+
     client = APIClient()
+    r = client.get(ROOMS_LIST_V1)
 
-    # Use literal paths to avoid reverse() name mismatches
-    url_api = "/api/rooms/"
-    url_v1 = "/api/v1/rooms/"
+    # NOTE: avoid r.data here; if the view ever returns a non-DRF response,
+    # r.data can raise. json()/content are always safe.
+    assert r.status_code == 200, getattr(r, "content", b"")
+    data = r.json()
 
-    r_api = client.get(url_api)
-    assert r_api.status_code == 200, r_api.data
-    data_api = r_api.json()
+    assert isinstance(data, list), f"/api/v1/rooms/ must return list, got {type(data)}"
+    assert data, "Rooms list is empty even after seeding."
 
-    r_v1 = client.get(url_v1)
-    assert r_v1.status_code == 200, r_v1.data
-    data_v1 = r_v1.json()
-
-    assert isinstance(data_api, list), f"/api rooms must be list, got {type(data_api)}"
-    assert isinstance(data_v1, list), f"/api/v1 rooms must be list, got {type(data_v1)}"
-
-    # If empty list, still valid contract; enforce parity.
-    if not data_api or not data_v1:
-        assert data_api == data_v1, "If empty, both should be empty for parity in this test."
-        return
-
-    first_api = data_api[0]
-    first_v1 = data_v1[0]
-    assert isinstance(first_api, dict), f"First item must be dict, got {type(first_api)}"
-    assert isinstance(first_v1, dict), f"First item must be dict, got {type(first_v1)}"
+    first = data[0]
+    assert isinstance(first, dict), f"First item must be dict, got {type(first)}"
 
     expected_item_keys = {
         "accessible_entry",
@@ -135,15 +159,11 @@ def test_rooms_list_contract_api_and_v1_match_shape():
         "view_available_days_mode",
     }
 
-    assert_exact_keys(first_api, expected_item_keys)
-    assert_exact_keys(first_v1, expected_item_keys)
+    assert_exact_keys(first, expected_item_keys)
 
     # Minimal type locks for key fields
-    assert_is_int(first_api["id"], "id")
-    assert_is_bool(first_api["is_saved"], "is_saved")
-    assert_is_bool(first_api["is_available"], "is_available")
-    assert_is_bool(first_api["is_deleted"], "is_deleted")
-    assert_is_bool(first_api["is_shared_room"], "is_shared_room")
-
-    # Parity
-    assert set(first_api.keys()) == set(first_v1.keys()) == expected_item_keys
+    assert_is_int(first["id"], "id")
+    assert_is_bool(first["is_saved"], "is_saved")
+    assert_is_bool(first["is_available"], "is_available")
+    assert_is_bool(first["is_deleted"], "is_deleted")
+    assert_is_bool(first["is_shared_room"], "is_shared_room")

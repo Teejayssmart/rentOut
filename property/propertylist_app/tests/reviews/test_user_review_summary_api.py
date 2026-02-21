@@ -6,7 +6,7 @@ from propertylist_app.models import Review
 
 
 def review_summary_url(user_id: int) -> str:
-    return f"/api/users/{user_id}/review-summary/"
+    return f"/api/v1/users/{user_id}/review-summary/"
 
 
 @pytest.mark.django_db

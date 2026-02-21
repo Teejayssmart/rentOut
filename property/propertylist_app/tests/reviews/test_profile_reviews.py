@@ -63,11 +63,11 @@ def make_booking(room, tenant, end_dt):
 
 
 def profile_list_url(user_id, for_param):
-    return f"/api/users/{user_id}/reviews/?for={for_param}"
+    return f"/api/v1/users/{user_id}/reviews/?for={for_param}"
 
 
 def summary_url(user_id):
-    return f"/api/users/{user_id}/review-summary/"
+    return f"/api/v1/users/{user_id}/review-summary/"
 
 
 def test_profile_list_shows_revealed_only_and_filters_landlord_vs_tenant():

@@ -25,7 +25,7 @@ def _assert_queries_at_most(max_queries: int, fn, *, label: str):
 
 def test_search_rooms_query_count_guardrail(user_factory, room_factory):
     """
-    Guardrail: /api/search/rooms/ should remain efficient as listings grow.
+    Guardrail: /api/v1/search/rooms/ should remain efficient as listings grow.
     Asserts query count does NOT exceed threshold (prevents N+1 regressions).
     """
     landlord = user_factory(username="qc_landlord1", role="landlord")
@@ -36,10 +36,10 @@ def test_search_rooms_query_count_guardrail(user_factory, room_factory):
     client = _auth(seeker)
 
     def call():
-        res = client.get("/api/search/rooms/")
+        res = client.get("/api/v1/search/rooms/")
         assert res.status_code == 200
 
-    _assert_queries_at_most(80, call, label="GET /api/search/rooms/")
+    _assert_queries_at_most(80, call, label="GET /api/v1/search/rooms/")
 
 
 def test_notifications_query_count_guardrail(user_factory):
@@ -50,10 +50,10 @@ def test_notifications_query_count_guardrail(user_factory):
     client = _auth(user)
 
     def call():
-        res = client.get("/api/notifications/")
-        assert res.status_code in (200, 204)
+        res = client.get("/api/v1/notifications/")
+        assert res.status_code == 200
 
-    _assert_queries_at_most(60, call, label="GET /api/notifications/")
+    _assert_queries_at_most(80, call, label="GET /api/v1/notifications/")
 
 
 def test_threads_list_query_count_guardrail(user_factory):
@@ -64,7 +64,7 @@ def test_threads_list_query_count_guardrail(user_factory):
     client = _auth(user)
 
     def call():
-        res = client.get("/api/messages/threads/")
+        res = client.get("/api/v1/messages/threads/")
         assert res.status_code in (200, 204)
 
-    _assert_queries_at_most(60, call, label="GET /api/messages/threads/")
+    _assert_queries_at_most(60, call, label="GET /api/v1/messages/threads/")

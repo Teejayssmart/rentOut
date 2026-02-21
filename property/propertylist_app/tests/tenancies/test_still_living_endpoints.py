@@ -2,6 +2,7 @@
 
 from datetime import date, timedelta
 
+from django.urls import reverse
 import pytest
 from django.utils import timezone
 from rest_framework.test import APIClient
@@ -54,6 +55,16 @@ def _auth(client: APIClient, user):
     client.force_authenticate(user=user)
 
 
+def _confirm_url(tenancy_id: int) -> str:
+    """
+    Reason:
+    Your project redirects legacy /api -> canonical /api/v1 (308).
+    DRF APIClient does not follow 308 redirects for PATCH by default.
+    So tests must hit the canonical v1 route directly to assert real status codes.
+    """
+    return reverse("v1:tenancy-still-living-confirm", kwargs={"tenancy_id": tenancy_id})
+
+
 def test_still_living_confirm_landlord_marks_landlord_confirmed(user_factory, room_factory):
     Tenancy = _get_model("propertylist_app", "Tenancy")
 
@@ -85,7 +96,7 @@ def test_still_living_confirm_landlord_marks_landlord_confirmed(user_factory, ro
     client = APIClient()
     _auth(client, landlord)
 
-    url = f"/api/tenancies/{tenancy.id}/still-living/confirm/"
+    url = _confirm_url(tenancy.id)
     res = client.patch(url, data={}, format="json")
 
     assert res.status_code == 200
@@ -126,7 +137,7 @@ def test_still_living_confirm_tenant_marks_tenant_confirmed(user_factory, room_f
     client = APIClient()
     _auth(client, tenant)
 
-    url = f"/api/tenancies/{tenancy.id}/still-living/confirm/"
+    url = _confirm_url(tenancy.id)
     res = client.patch(url, data={}, format="json")
 
     assert res.status_code == 200
@@ -167,7 +178,7 @@ def test_still_living_confirm_second_party_sets_still_living_confirmed_at(user_f
     client = APIClient()
     _auth(client, tenant)
 
-    url = f"/api/tenancies/{tenancy.id}/still-living/confirm/"
+    url = _confirm_url(tenancy.id)
     res = client.patch(url, data={}, format="json")
 
     assert res.status_code == 200
@@ -198,7 +209,7 @@ def test_still_living_confirm_is_idempotent(user_factory, room_factory):
     client = APIClient()
     _auth(client, landlord)
 
-    url = f"/api/tenancies/{tenancy.id}/still-living/confirm/"
+    url = _confirm_url(tenancy.id)
     res1 = client.patch(url, data={}, format="json")
     res2 = client.patch(url, data={}, format="json")
 
@@ -227,7 +238,7 @@ def test_still_living_confirm_rejects_if_not_due(user_factory, room_factory):
     client = APIClient()
     _auth(client, landlord)
 
-    url = f"/api/tenancies/{tenancy.id}/still-living/confirm/"
+    url = _confirm_url(tenancy.id)
     res = client.patch(url, data={}, format="json")
 
     assert res.status_code == 400
@@ -255,7 +266,7 @@ def test_still_living_confirm_forbidden_for_non_party(user_factory, room_factory
     client = APIClient()
     _auth(client, outsider)
 
-    url = f"/api/tenancies/{tenancy.id}/still-living/confirm/"
+    url = _confirm_url(tenancy.id)
     res = client.patch(url, data={}, format="json")
 
     assert res.status_code == 403
@@ -282,7 +293,7 @@ def test_still_living_confirm_rejects_if_tenancy_not_active(user_factory, room_f
     client = APIClient()
     _auth(client, landlord)
 
-    url = f"/api/tenancies/{tenancy.id}/still-living/confirm/"
+    url = _confirm_url(tenancy.id)
     res = client.patch(url, data={}, format="json")
 
     assert res.status_code == 400

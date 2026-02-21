@@ -41,9 +41,8 @@ def _make_tenancy(room, landlord, tenant, *, status):
     return t
 
 
-def _reviews_url(tenancy_id: int) -> str:
-    # this is the endpoint your logs show: /api/tenancies/<id>/reviews/
-    return f"/api/tenancies/{tenancy_id}/reviews/"
+def _reviews_url(tenancy_id):
+    return f"/api/v1/tenancies/{tenancy_id}/reviews/"
 
 
 def test_tenant_can_submit_tenant_to_landlord_review_when_schedule_ready(user_factory, room_factory):

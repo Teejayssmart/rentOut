@@ -5,19 +5,24 @@ from django.conf.urls.static import static
 from django.http import JsonResponse
 from django.shortcuts import redirect
 
+from django.http.response import HttpResponseRedirectBase
+
+
+
 import os
 
 from django.urls import re_path
 from django.views.static import serve
 
+from propertylist_app.api.views import LoginView, TokenRefreshEnvelopeView
 
-from propertylist_app.api.views import LoginView
+
 
 from rest_framework_simplejwt.views import (
     TokenObtainPairView,
-    TokenRefreshView,
     TokenVerifyView,
 )
+
 
 from drf_spectacular.views import (
     SpectacularAPIView,
@@ -35,6 +40,22 @@ def debug_urls(request):
     )
 
 
+class HttpResponsePermanentRedirect308(HttpResponseRedirectBase):
+    status_code = 308
+
+
+def redirect_api_to_v1(request, path=""):
+    # keep querystring intact
+    qs = request.META.get("QUERY_STRING", "")
+    target = f"/api/v1/{path}"
+    if qs:
+        target = f"{target}?{qs}"
+    return HttpResponsePermanentRedirect308(target)
+
+
+
+
+
 urlpatterns = [
     path("admin/", admin.site.urls),
 
@@ -42,12 +63,12 @@ urlpatterns = [
     path("debug-urls/", debug_urls),
 
     # API includes (ONLY ONCE EACH)
-    path("api/", include(("propertylist_app.api.urls", "api"), namespace="api")),
+    #path("api/", include(("propertylist_app.api.urls", "api"), namespace="api")),
     path("api/v1/", include(("propertylist_app.api.urls", "v1"), namespace="v1")),
 
     # JWT token endpoints (NOT versioned)
     path("api/auth/token/", TokenObtainPairView.as_view(), name="token_obtain_pair"),
-    path("api/auth/token/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
+    path("api/auth/token/refresh/", TokenRefreshEnvelopeView.as_view(), name="token_refresh"),
     path("api/auth/token/verify/", TokenVerifyView.as_view(), name="token_verify"),
 
     # Required by tests (unversioned)
@@ -62,6 +83,12 @@ urlpatterns = [
     path("api/schema/", lambda r: redirect("/api/v1/schema/")),
     path("api/schema/swagger-ui/", lambda r: redirect("/api/v1/schema/swagger-ui/")),
     path("api/schema/redoc/", lambda r: redirect("/api/v1/schema/redoc/")),
+    
+    
+    
+    # Redirect any old /api/<path> (except the explicit auth + schema routes above) to /api/v1/<path>
+    re_path(r"^api/(?P<path>.*)$", redirect_api_to_v1),
+
 ]
 
 

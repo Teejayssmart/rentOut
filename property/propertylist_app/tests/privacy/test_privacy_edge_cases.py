@@ -15,6 +15,8 @@ PREFS_V1 = "/api/v1/users/me/privacy-preferences/"
 DELETE_PREVIEW_API = "/api/users/me/delete/preview/"
 DELETE_PREVIEW_V1 = "/api/v1/users/me/delete/preview/"
 
+
+
 DELETE_CONFIRM_API = "/api/users/me/delete/confirm/"
 DELETE_CONFIRM_V1 = "/api/v1/users/me/delete/confirm/"
 
@@ -54,8 +56,9 @@ def _json_dump(obj) -> str:
         return str(obj).lower()
 
 
-def _endpoint_exists(client: APIClient, path: str) -> bool:
-    r = client.get(path)
+def _endpoint_exists(client, path: str) -> bool:
+    # allow redirects because missing trailing slash is still a valid endpoint
+    r = client.get(path, follow=False)
     return r.status_code != 404
 
 
@@ -80,8 +83,8 @@ def test_privacy_preferences_contract_get_api_vs_v1_match_shape_and_defaults():
     assert _endpoint_exists(c, PREFS_API), f"{PREFS_API} is 404. Update PREFS_API/PREFS_V1."
     assert _endpoint_exists(c, PREFS_V1), f"{PREFS_V1} is 404. Update PREFS_API/PREFS_V1."
 
-    r_api = c.get(PREFS_API)
-    r_v1 = c.get(PREFS_V1)
+    r_api = c.get(PREFS_API, follow=True)
+    r_v1 = c.get(PREFS_V1, follow=True)
 
     assert r_api.status_code == r_v1.status_code, (r_api.status_code, r_v1.status_code, r_api.data, r_v1.data)
     assert r_api.status_code in (200, 400, 401, 403), r_api.data
@@ -192,8 +195,8 @@ def test_after_delete_confirm_user_identity_is_not_leaked_in_public_endpoints():
         pytest.skip("Delete confirm endpoint not found (404). Update DELETE_CONFIRM_* constants.")
 
     # Run delete confirm on both /api and /api/v1 and require consistent status
-    r_api = c.post(DELETE_CONFIRM_API, {}, format="json")
-    r_v1 = c.post(DELETE_CONFIRM_V1, {}, format="json")
+    r_api = c.post(DELETE_CONFIRM_API, {}, format="json", follow=True)
+    r_v1 = c.post(DELETE_CONFIRM_V1, {}, format="json", follow=True)
 
     assert r_api.status_code == r_v1.status_code, (r_api.status_code, r_v1.status_code, r_api.data, r_v1.data)
     assert r_api.status_code in (200, 202, 204, 400, 403), r_api.data

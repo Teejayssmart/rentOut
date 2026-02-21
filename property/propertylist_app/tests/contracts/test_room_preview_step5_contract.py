@@ -8,7 +8,9 @@ from propertylist_app.models import Room
 
 pytestmark = pytest.mark.django_db
 
-PREVIEW_API = "/api/rooms/{room_id}/preview/"
+# -----------------------------
+# CANONICAL V1 ONLY
+# -----------------------------
 PREVIEW_V1 = "/api/v1/rooms/{room_id}/preview/"
 
 
@@ -54,7 +56,7 @@ def make_user_with_profile(username: str = "contract_step5_user"):
         try:
             from propertylist_app.models import UserProfile
 
-            UserProfile.objects.create(user=user)
+            UserProfile.objects.get_or_create(user=user)
         except Exception:
             pass
 
@@ -105,7 +107,6 @@ def _placeholder_value_for_field(field, user):
     ):
         return 1
     if it in ("DecimalField",):
-        # fallback money value
         return Decimal("100.00")
     if it in ("FloatField",):
         return 100.0
@@ -121,7 +122,7 @@ def _placeholder_value_for_field(field, user):
 
 def make_min_valid_room(user) -> Room:
     """
-    Creates a Room that satisfies NOT NULL fields in SQLite tests.
+    Creates a Room that satisfies NOT NULL fields in tests.
     Uses model metadata so it won’t break when you add another required field.
     """
     data = {}
@@ -153,16 +154,27 @@ def make_min_valid_room(user) -> Room:
 
 
 def get_room_id_for_preview(c: APIClient, user) -> int:
-    # Try list first (if any exist and list endpoint is allowed)
-    r = c.get("/api/rooms/")
+    """
+    Try list first using v1; if empty / blocked, fall back to creating a room.
+    """
+    r = c.get("/api/v1/rooms/")
     if r.status_code == 200:
         data = r.json()
+
+        # your rooms list might be:
+        # - list
+        # - paginated dict {"results": [...]}
+        if isinstance(data, dict) and data.get("ok") is True and "data" in data:
+            data = data["data"]
+
+        if isinstance(data, dict) and isinstance(data.get("results"), list):
+            data = data["results"]
+
         if isinstance(data, list) and data:
             first = data[0]
             if isinstance(first, dict) and "id" in first:
                 return int(first["id"])
 
-    # Fallback: create a valid room for preview
     room = make_min_valid_room(user)
     return int(room.id)
 
@@ -197,66 +209,58 @@ def _walk_urls(obj, found=None):
     return found
 
 
+def _unwrap_ok_envelope(payload):
+    """
+    If response uses your success envelope: {"ok": True, "data": ...}
+    unwrap to the inner data so the rest of the contract stays stable.
+    """
+    if isinstance(payload, dict) and payload.get("ok") is True and "data" in payload:
+        return payload["data"]
+    return payload
+
+
 # -----------------------------
-# Test
+# Test (V1 ONLY)
 # -----------------------------
-def test_room_preview_step5_strict_fields_and_media_url_rules_api_vs_v1():
+def test_room_preview_step5_strict_fields_and_media_url_rules_v1():
     user = make_user_with_profile("contract_step5_user")
     c = make_authed_client(user)
 
     room_id = get_room_id_for_preview(c, user)
 
-    r_api = c.get(PREVIEW_API.format(room_id=room_id))
-    r_v1 = c.get(PREVIEW_V1.format(room_id=room_id))
+    r = c.get(PREVIEW_V1.format(room_id=room_id))
+    assert r.status_code == 200, getattr(r, "content", b"")
 
-    assert r_api.status_code == 200, r_api.data
-    assert r_v1.status_code == 200, r_v1.data
+    payload = _unwrap_ok_envelope(r.json())
 
-    data_api = r_api.json()
-    data_v1 = r_v1.json()
+    assert isinstance(payload, dict), f"Preview payload must be dict, got {type(payload)}"
 
-    assert isinstance(data_api, dict)
-    assert isinstance(data_v1, dict)
-
-    # 1) /api and /api/v1 parity (top-level keys)
-    assert set(data_api.keys()) == set(data_v1.keys()), (
-        f"Preview keys differ.\n/api: {sorted(data_api.keys())}\n/v1: {sorted(data_v1.keys())}"
-    )
-
-    # 2) top-level contract for Step 5 payload
-    assert set(data_api.keys()) == REQUIRED_TOP_LEVEL_KEYS, (
+    # 1) top-level contract for Step 5 payload
+    assert set(payload.keys()) == REQUIRED_TOP_LEVEL_KEYS, (
         "Top-level keys are not what Step 5 contract expects.\n"
         f"Expected: {sorted(REQUIRED_TOP_LEVEL_KEYS)}\n"
-        f"Got: {sorted(data_api.keys())}"
+        f"Got: {sorted(payload.keys())}"
     )
 
-    # 3) room object must exist and be a dict
-    room_api = data_api.get("room")
-    room_v1 = data_v1.get("room")
+    # 2) room object must exist and be a dict
+    room = payload.get("room")
+    assert isinstance(room, dict), f"payload['room'] must be dict, got {type(room)}"
 
-    assert isinstance(room_api, dict), f"payload['room'] must be dict, got {type(room_api)}"
-    assert isinstance(room_v1, dict), f"payload['room'] must be dict, got {type(room_v1)}"
-
-    # parity inside room keys
-    assert set(room_api.keys()) == set(room_v1.keys()), (
-        f"Room keys differ.\n/api: {sorted(room_api.keys())}\n/v1: {sorted(room_v1.keys())}"
-    )
-
-    # 4) strict Step 5 fields inside room
+    # 3) strict Step 5 fields inside room
     if not REQUIRED_ROOM_FIELDS:
         pytest.fail(
             "REQUIRED_ROOM_FIELDS is empty.\n"
-            f"Paste your Step 5 required room keys here. Current room keys: {sorted(room_api.keys())}"
+            f"Paste your Step 5 required room keys here. Current room keys: {sorted(room.keys())}"
         )
 
-    missing = REQUIRED_ROOM_FIELDS - set(room_api.keys())
+    missing = REQUIRED_ROOM_FIELDS - set(room.keys())
     assert not missing, (
         f"Missing required Step 5 room fields: {sorted(missing)}\n"
-        f"Room keys present: {sorted(room_api.keys())}"
+        f"Room keys present: {sorted(room.keys())}"
     )
 
-    # 5) URL rules across entire payload (room + photos)
-    urls = _walk_urls(data_api)
+    # 4) URL rules across entire payload (room + photos)
+    urls = _walk_urls(payload)
     if EXPECT_ABSOLUTE_MEDIA_URLS:
         bad = [(k, v) for (k, v) in urls if v and not _is_absolute(v)]
         assert not bad, f"Expected absolute URLs but found relative/invalid: {bad[:10]}"

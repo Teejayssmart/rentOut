@@ -23,11 +23,11 @@ def auth_client(user):
 
 
 def profile_me_url():
-    return "/api/users/me/profile/"
+    return "/api/v1/users/me/profile/"
 
 
 def avatar_upload_url():
-    return "/api/users/me/profile/avatar/"
+    return "/api/v1/users/me/profile/avatar/"
 
 
 def test_profile_me_requires_auth():
