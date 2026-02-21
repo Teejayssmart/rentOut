@@ -63,7 +63,6 @@ def test_celery_app_imports_and_has_basic_attrs():
         assert main in {"property"}
 
 
-@pytest.mark.xfail(reason="Cache location randomised per test run to prevent state pollution")
 def test_cache_backend_is_locmem_default_and_named_location():
     """
     We expect the default cache to be in-memory (fast, ephemeral) for tests.
