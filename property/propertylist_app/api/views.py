@@ -15,7 +15,7 @@ from rest_framework.exceptions import ValidationError
 from rest_framework_simplejwt.tokens import AccessToken
 
 
-
+from django.db.utils import IntegrityError
 from datetime import datetime, timezone as dt_timezone
 
 from propertylist_app.api.serializers import TenancyProposalSerializer
@@ -4254,6 +4254,72 @@ def stripe_webhook(request):
         # Safety — never 500 on signature parsing issues
         return Response(status=400)
 
+   
+   
+    # -----------------------------
+    # E3: webhook idempotency guard (event-level)
+    # -----------------------------
+    event_id = event.get("id") or ""
+    if event_id:
+        try:
+            # IMPORTANT:
+            # Use a savepoint so a duplicate insert does NOT poison the whole request transaction.
+            with transaction.atomic():
+                WebhookReceipt.objects.create(
+                    source="stripe",
+                    event_id=event_id,
+                    payload=payload_compact,
+                    headers={
+                        "Stripe-Signature": request.META.get("HTTP_STRIPE_SIGNATURE", ""),
+                        "User-Agent": request.META.get("HTTP_USER_AGENT", ""),
+                        "Content-Type": request.META.get("CONTENT_TYPE", ""),
+                    },
+                )
+        except IntegrityError:
+            # Duplicate delivery of the same Stripe event id — acknowledge with 200 and do nothing.
+            return Response(status=200)
+        except Exception:
+        # Never fail webhook processing because receipt logging failed.
+        # But keep a minimal fallback record (no payload) so replay protection still works.
+            try:
+                with transaction.atomic():
+                    WebhookReceipt.objects.create(source="stripe", event_id=event_id)
+            except Exception:
+                pass
+        
+    
+    # Build a compact, storage-friendly payload for audit/debug.
+    # Reason: Stripe events can be large and may include non-JSON-native types;
+    # we normalise to a guaranteed JSON-safe dict.
+    try:
+        evt_type = event.get("type")
+        evt_created = event.get("created")  # unix timestamp
+        evt_livemode = event.get("livemode")
+
+        data_obj = ((event.get("data") or {}).get("object") or {})
+        obj_id = data_obj.get("id")
+        payment_intent = data_obj.get("payment_intent")
+        metadata = data_obj.get("metadata") or {}
+
+        payload_compact = {
+            "id": event_id,
+            "type": evt_type,
+            "created": evt_created,
+            "livemode": evt_livemode,
+            "object": {
+                "id": obj_id,
+                "payment_intent": payment_intent,
+                "metadata": metadata,
+            },
+        }
+
+        # Force JSON-safe types (prevents silent JSONField failures)
+        payload_compact = json.loads(json.dumps(payload_compact))
+    except Exception:
+        payload_compact = {"id": event_id, "type": event.get("type")}
+        
+        
+
     if event["type"] == "checkout.session.completed":
         session = event["data"]["object"]
         payment_intent = session.get("payment_intent")
@@ -4277,6 +4343,7 @@ def stripe_webhook(request):
                         base = room.paid_until if (room.paid_until and room.paid_until > today) else today
                         room.paid_until = base + timedelta(days=30)
                         room.save(update_fields=["paid_until"])
+
                         # Notification: payment confirmation (respects Account -> Notifications -> Confirmations)
                         try:
                             pay_user = getattr(payment, "user", None)
