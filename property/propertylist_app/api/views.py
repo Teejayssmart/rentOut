@@ -4184,9 +4184,7 @@ class CreateListingCheckoutSessionView(APIView):
         success_path = reverse("v1:payments-success")  # -> /api/v1/payments/success/
         cancel_path = reverse("v1:payments-cancel")    # -> /api/v1/payments/cancel/
         
-        print("E1 DEBUG base:", base)
-        print("E1 DEBUG success_path:", success_path)
-        print("E1 DEBUG cancel_path:", cancel_path)
+        
 
         # Create the Stripe Checkout Session
         session = stripe.checkout.Session.create(
