@@ -6,7 +6,7 @@ from django.apps import apps
 from drf_spectacular.utils import extend_schema, OpenApiResponse
 import logging
 import traceback
-
+from django.urls import reverse
 from rest_framework_simplejwt.views import TokenRefreshView
 from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 
@@ -4175,6 +4175,19 @@ class CreateListingCheckoutSessionView(APIView):
         # Optional: read a selected saved card id from the body (for future use)
         _payment_method_id = request.data.get("payment_method_id")  # may be None
 
+        # -------------------------------------------------------------------
+        # E1 FIX (Reason): Ensure Stripe redirects hit the REAL /api/v1/ routes
+        # by using reverse() against the v1 namespace URL names.
+        # -------------------------------------------------------------------
+        base = (settings.SITE_URL or "").rstrip("/")
+
+        success_path = reverse("v1:payments-success")  # -> /api/v1/payments/success/
+        cancel_path = reverse("v1:payments-cancel")    # -> /api/v1/payments/cancel/
+        
+        print("E1 DEBUG base:", base)
+        print("E1 DEBUG success_path:", success_path)
+        print("E1 DEBUG cancel_path:", cancel_path)
+
         # Create the Stripe Checkout Session
         session = stripe.checkout.Session.create(
             mode="payment",
@@ -4193,17 +4206,19 @@ class CreateListingCheckoutSessionView(APIView):
                 }
             ],
             success_url=(
-                f"{settings.SITE_URL}"
-                f"/payments/success/?session_id={{CHECKOUT_SESSION_ID}}&payment_id={payment.id}"
+                f"{base}{success_path}"
+                f"?session_id={{CHECKOUT_SESSION_ID}}&payment_id={payment.id}"
             ),
-            cancel_url=f"{settings.SITE_URL}/payments/cancel/?payment_id={payment.id}",
+            cancel_url=(
+                f"{base}{cancel_path}"
+                f"?payment_id={payment.id}"
+            ),
             metadata={
                 "payment_id": str(payment.id),
                 "room_id": str(room.id),
                 "user_id": str(user.id),
             },
         )
-
         # Safely extract session id + checkout URL (works for real Stripe + dict fakes)
         session_id = getattr(session, "id", None)
         checkout_url = getattr(session, "url", None)
