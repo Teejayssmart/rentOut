@@ -2,8 +2,8 @@ import pytest
 from django.contrib.auth import get_user_model
 from propertylist_app.models import UserProfile
 
-API_LOGIN_URL = "/api/auth/login/"
 
+API_LOGIN_URL = "/api/v1/auth/login/"
 
 @pytest.mark.django_db
 def test_login_returns_consistent_success_envelope_with_expiry_and_profile(api_client):

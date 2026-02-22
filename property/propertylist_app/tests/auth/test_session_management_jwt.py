@@ -49,7 +49,7 @@ def test_blacklisted_refresh_token_stays_blacklisted_on_reuse(api_client, django
 
     login_url = reverse("v1:auth-login")
     logout_url = reverse("v1:auth-logout")
-    refresh_url = reverse("token_refresh")
+    refresh_url = "/api/v1/auth/token/refresh/"
 
     resp = api_client.post(login_url, {"identifier": "kate", "password": "pass1234"}, format="json")
     assert resp.status_code == status.HTTP_200_OK, resp.data

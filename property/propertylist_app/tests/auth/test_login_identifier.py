@@ -5,7 +5,7 @@ from django.utils import timezone
 
 from propertylist_app.models import UserProfile, EmailOTP
 
-API = "/api"
+API = "/api/v1"
 
 @pytest.fixture
 def api():

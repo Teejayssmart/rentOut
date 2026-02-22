@@ -7,6 +7,7 @@ from django.shortcuts import redirect
 
 from django.http.response import HttpResponseRedirectBase
 
+from django.views.generic.base import RedirectView
 
 
 import os
@@ -65,14 +66,19 @@ urlpatterns = [
     # API includes (ONLY ONCE EACH)
     #path("api/", include(("propertylist_app.api.urls", "api"), namespace="api")),
     path("api/v1/", include(("propertylist_app.api.urls", "v1"), namespace="v1")),
+    
+    re_path(
+    r"^api/auth/(?P<path>.*)$",
+    RedirectView.as_view(url="/api/v1/auth/%(path)s", permanent=True),
+    ),
 
-    # JWT token endpoints (NOT versioned)
-    path("api/auth/token/", TokenObtainPairView.as_view(), name="token_obtain_pair"),
-    path("api/auth/token/refresh/", TokenRefreshEnvelopeView.as_view(), name="token_refresh"),
-    path("api/auth/token/verify/", TokenVerifyView.as_view(), name="token_verify"),
+    # # JWT token endpoints (NOT versioned)
+    # path("api/auth/token/", TokenObtainPairView.as_view(), name="token_obtain_pair"),
+    # path("api/auth/token/refresh/", TokenRefreshEnvelopeView.as_view(), name="token_refresh"),
+    # path("api/auth/token/verify/", TokenVerifyView.as_view(), name="token_verify"),
 
-    # Required by tests (unversioned)
-    path("api/auth/login/", LoginView.as_view(), name="auth-login"),
+    # # Required by tests (unversioned)
+    # path("api/auth/login/", LoginView.as_view(), name="auth-login"),
 
     # Schema endpoints
     path("api/v1/schema/", SpectacularAPIView.as_view(), name="schema"),

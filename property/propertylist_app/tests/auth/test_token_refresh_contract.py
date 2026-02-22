@@ -2,8 +2,8 @@ import pytest
 from django.contrib.auth import get_user_model
 from propertylist_app.models import UserProfile
 
-API_LOGIN_URL = "/api/auth/login/"
-API_REFRESH_URL = "/api/auth/token/refresh/"
+API_LOGIN_URL = "/api/v1/auth/login/"
+API_REFRESH_URL = "/api/v1/auth/token/refresh/"
 
 
 @pytest.mark.django_db

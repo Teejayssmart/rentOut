@@ -5,7 +5,7 @@ from rest_framework.test import APIClient
 
 from propertylist_app.models import UserProfile
 
-API = "/api"
+API = "/api/v1"
 
 @pytest.fixture
 def api():

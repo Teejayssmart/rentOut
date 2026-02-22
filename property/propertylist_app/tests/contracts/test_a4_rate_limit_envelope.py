@@ -30,10 +30,10 @@ def test_login_rate_limit_returns_a4_envelope():
     }
 
     # First request — allowed (will fail auth but consume throttle)
-    client.post("/api/auth/login/", payload, format="json")
+    client.post("/api/v1/auth/login/", payload, format="json")
 
     # Second request — must trigger throttle
-    r = client.post("/api/auth/login/", payload, format="json")
+    r = client.post("/api/v1/auth/login/", payload, format="json")
 
     assert r.status_code == 429, r.data
 
