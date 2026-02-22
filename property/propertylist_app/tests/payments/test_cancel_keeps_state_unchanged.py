@@ -26,6 +26,8 @@ def test_cancel_keeps_state_unchanged():
     )
 
     client = APIClient()
+    
+    
 
     # Act: call the cancel endpoint (simulates user cancelling checkout)
     cancel_url = reverse("v1:payments-cancel")
@@ -33,14 +35,23 @@ def test_cancel_keeps_state_unchanged():
 
     # Assert HTTP 200 response
     assert r.status_code == 200, r.content
-    data = r.json()
-    assert "canceled" in data["detail"].lower()
+    body = r.json()
+
+    # Reason: A3 success envelope wraps payload under "data"
+    payload = body.get("data", body)
+
+    assert "cancel" in (payload.get("detail") or "").lower()
 
     # Refresh from DB
     payment.refresh_from_db()
     room.refresh_from_db()
 
-    # Assert: payment was canceled, not marked succeeded
-    assert payment.status == "canceled"
+    # Assert: cancel redirect must NOT mark payment as succeeded
+    assert payment.status != "succeeded"
+
+    # Assert: cancel redirect should not change DB status by itself
+    # (Webhook handles final state updates)
+    assert payment.status == "created"
+
     # Room stays active (no hidden or deleted change)
     assert room.status == "active"

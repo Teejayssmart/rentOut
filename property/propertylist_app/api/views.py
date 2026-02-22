@@ -4598,17 +4598,34 @@ class StripeSuccessView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request):
-        return Response({"detail": "Payment success received. (Webhook will finalise the room.)"})
+        # Reason: A3 consistent success envelope for frontend after Stripe redirect.
+        session_id = request.query_params.get("session_id")
+        payment_id = request.query_params.get("payment_id")
+
+        return ok_response(
+            {
+                "detail": "Payment success received. (Webhook will finalise the room.)",
+                "session_id": session_id,
+                "payment_id": payment_id,
+            },
+            status_code=status.HTTP_200_OK,
+        )
 
 
 class StripeCancelView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request):
+        # Reason: A3 consistent success envelope for Stripe cancel redirect.
         payment_id = request.query_params.get("payment_id")
-        if payment_id:
-            Payment.objects.filter(id=payment_id, status="created").update(status="canceled")
-        return Response({"detail": "Payment canceled."})
+
+        return ok_response(
+            {
+                "detail": "Payment cancelled.",
+                "payment_id": payment_id,
+            },
+            status_code=status.HTTP_200_OK,
+        )
 
 
 # --------------------
