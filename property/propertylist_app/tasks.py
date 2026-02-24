@@ -4,6 +4,9 @@ from django.db.models import Exists, OuterRef, Q
 from django.apps import apps
 from django.conf import settings
 
+
+from notifications.models import NotificationTemplate, OutboundNotification
+from propertylist_app.services.deep_links import build_absolute_url
 from propertylist_app.models import UserProfile, Room, Review
 from propertylist_app.services.tasks import (
     send_new_message_email,
@@ -117,6 +120,28 @@ def task_refresh_room_ratings_nightly() -> int:
     return count
 
 
+def _queue_email(*, user, template_key: str, context: dict | None = None) -> None:
+    """
+    Queue an email via notifications pipeline.
+    Only queues if an active email template exists for the key.
+    """
+    template = NotificationTemplate.objects.filter(
+        key=template_key,
+        channel=NotificationTemplate.CHANNEL_EMAIL,
+        is_active=True,
+    ).first()
+    if not template:
+        return
+
+    OutboundNotification.objects.create(
+        user=user,
+        channel=NotificationTemplate.CHANNEL_EMAIL,
+        template_key=template_key,
+        context=context or {},
+    )
+
+
+
 # -------------------------------------------------------------------
 # Tenancy notifications (INBOX ONLY – stable)
 # -------------------------------------------------------------------
@@ -124,6 +149,7 @@ def task_refresh_room_ratings_nightly() -> int:
 def task_send_tenancy_notification(tenancy_id: int, event: str) -> int:
     Tenancy = apps.get_model("propertylist_app", "Tenancy")
     Notification = apps.get_model("propertylist_app", "Notification")
+    UserProfile = apps.get_model("propertylist_app", "UserProfile")
 
     tenancy = (
         Tenancy.objects
@@ -133,6 +159,28 @@ def task_send_tenancy_notification(tenancy_id: int, event: str) -> int:
     )
     if not tenancy:
         return 0
+
+    room_title = getattr(tenancy.room, "title", "your room")
+    tenancy_deep_link = f"/app/tenancies/{tenancy.id}"
+    tenancy_cta_url = build_absolute_url(tenancy_deep_link)
+
+    def _maybe_queue(user, template_key: str):
+        # confirmations preference (tenancy lifecycle is a "confirmation" style event)
+        profile, _ = UserProfile.objects.get_or_create(user=user)
+        if not getattr(profile, "notify_confirmations", True):
+            return
+
+        _queue_email(
+            user=user,
+            template_key=template_key,
+            context={
+                "user": {"first_name": user.first_name},
+                "tenancy_id": tenancy.id,
+                "room_title": room_title,
+                "deep_link": tenancy_deep_link,
+                "cta_url": tenancy_cta_url,
+            },
+        )
 
     if event == "proposed":
         target_user = (
@@ -144,10 +192,11 @@ def task_send_tenancy_notification(tenancy_id: int, event: str) -> int:
             user=target_user,
             type="tenancy_proposed",
             title="Tenancy proposal",
-            body=f"A tenancy proposal was created for: {tenancy.room.title}. Please respond.",
+            body=f"A tenancy proposal was created for: {room_title}. Please respond.",
             target_type="tenancy",
             target_id=tenancy.id,
         )
+        _maybe_queue(target_user, "tenancy.proposed")
         return 1
 
     if event == "confirmed":
@@ -156,10 +205,11 @@ def task_send_tenancy_notification(tenancy_id: int, event: str) -> int:
                 user=u,
                 type="tenancy_confirmed",
                 title="Tenancy confirmed",
-                body=f"Tenancy confirmed for: {tenancy.room.title}.",
+                body=f"Tenancy confirmed for: {room_title}.",
                 target_type="tenancy",
                 target_id=tenancy.id,
             )
+            _maybe_queue(u, "tenancy.confirmed")
         return 2
 
     if event == "cancelled":
@@ -168,10 +218,11 @@ def task_send_tenancy_notification(tenancy_id: int, event: str) -> int:
                 user=u,
                 type="tenancy_cancelled",
                 title="Tenancy cancelled",
-                body=f"Tenancy cancelled for: {tenancy.room.title}.",
+                body=f"Tenancy cancelled for: {room_title}.",
                 target_type="tenancy",
                 target_id=tenancy.id,
             )
+            _maybe_queue(u, "tenancy.cancelled")
         return 2
 
     # updated
@@ -181,13 +232,14 @@ def task_send_tenancy_notification(tenancy_id: int, event: str) -> int:
         else tenancy.tenant
     )
     Notification.objects.create(
-        user=target_user,
-        type="tenancy_updated",
-        title="Tenancy updated",
-        body=f"Tenancy proposal updated for: {tenancy.room.title}.",
-        target_type="tenancy",
-        target_id=tenancy.id,
-    )
+            user=target_user,
+            type="tenancy_updated",
+            title="Tenancy updated",
+            body=f"Tenancy proposal updated for: {room_title}.",
+            target_type="tenancy",
+            target_id=tenancy.id,
+        )
+    _maybe_queue(target_user, "tenancy.updated")
     return 1
 
 
@@ -240,8 +292,27 @@ def task_tenancy_prompts_sweep() -> int:
     Room = apps.get_model("propertylist_app", "Room")
 
     now = timezone.now()
-    count = 0
+    
+    UserProfile = apps.get_model("propertylist_app", "UserProfile")
 
+    def _maybe_queue_reminder(user, template_key: str, *, deep_link: str, room_title: str):
+        profile, _ = UserProfile.objects.get_or_create(user=user)
+        if not getattr(profile, "notify_reminders", True):
+            return
+        _queue_email(
+            user=user,
+            template_key=template_key,
+            context={
+                "user": {"first_name": user.first_name},
+                "room_title": room_title,
+                "deep_link": deep_link,
+                "cta_url": build_absolute_url(deep_link),
+            },
+        )
+    
+    
+    count = 0
+    
     # -------------------------------------------------
     # 1) still living check -> notifications
     # -------------------------------------------------
@@ -274,6 +345,13 @@ def task_tenancy_prompts_sweep() -> int:
                 target_type="still_living_check",
                 target_id=t.id
             )
+            _maybe_queue_reminder(
+                t.landlord,
+                "tenancy.still_living_check",
+                deep_link=f"/app/tenancies/{t.id}",
+                room_title=t.room.title,
+            )
+            
             count += 1
 
         if not tenant_done:
@@ -285,6 +363,14 @@ def task_tenancy_prompts_sweep() -> int:
                 target_type="still_living_check",
                 target_id=t.id,
             )
+            _maybe_queue_reminder(
+                t.tenant,
+                "tenancy.still_living_check",
+                deep_link=f"/app/tenancies/{t.id}",
+                room_title=t.room.title,
+            )
+            
+            
             count += 1
 
     # -------------------------------------------------
@@ -309,14 +395,38 @@ def task_tenancy_prompts_sweep() -> int:
         if tenant_done and landlord_done:
             continue
 
-        for u in (t.landlord, t.tenant):
+        # notify only the side(s) that have NOT reviewed yet
+        if not landlord_done:
             Notification.objects.create(
-                user=u,
+                user=t.landlord,
                 type="review_available",
                 title="Review available",
                 body=f"You can now leave a review for {t.room.title}.",
                 target_type="tenancy_review",
-                target_id=t.id
+                target_id=t.id,
+            )
+            _maybe_queue_reminder(
+                t.landlord,
+                "tenancy.review_available",
+                deep_link=f"/app/tenancies/{t.id}/review",
+                room_title=t.room.title,
+            )
+            count += 1
+
+        if not tenant_done:
+            Notification.objects.create(
+                user=t.tenant,
+                type="review_available",
+                title="Review available",
+                body=f"You can now leave a review for {t.room.title}.",
+                target_type="tenancy_review",
+                target_id=t.id,
+            )
+            _maybe_queue_reminder(
+                t.tenant,
+                "tenancy.review_available",
+                deep_link=f"/app/tenancies/{t.id}/review",
+                room_title=t.room.title,
             )
             count += 1
 

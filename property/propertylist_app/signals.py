@@ -142,7 +142,7 @@ def booking_created_queue_emails(sender, instance: Booking, created, **kwargs):
                 "cta_url": booking_full_url,
             },
         )
-        
+ 
 
 @receiver(post_save, sender=Message)
 def message_created_create_notifications(sender, instance: Message, created, **kwargs):
@@ -236,24 +236,48 @@ def tenancy_extension_cache_old_status(sender, instance, **kwargs):
 @receiver(post_save, sender=apps.get_model("propertylist_app", "TenancyExtension"))
 def tenancy_extension_notifications(sender, instance, created, **kwargs):
     Notification = apps.get_model("propertylist_app", "Notification")
+    UserProfile = apps.get_model("propertylist_app", "UserProfile")
 
     # safety: tenancy must exist
     if not getattr(instance, "tenancy_id", None):
         return
 
-    t = instance.tenancy
+    t = instance.tenancy  # <-- define t first
+
+    # build once (used by all emails)
+    deep_link = f"/app/tenancies/{t.id}"
+    cta_url = build_absolute_url(deep_link)
+
+    def _maybe_queue(user, template_key: str):
+        profile, _ = UserProfile.objects.get_or_create(user=user)
+        if not getattr(profile, "notify_confirmations", True):
+            return
+        _queue_email(
+            user=user,
+            template_key=template_key,
+            context={
+                "user": {"first_name": user.first_name},
+                "tenancy_id": t.id,
+                "room_title": t.room.title,
+                "deep_link": deep_link,
+                "cta_url": cta_url,
+            },
+        )
 
     # 1) created -> proposal notification to the other party
     if created:
         other = _ext_other_party(instance)
+
         Notification.objects.create(
             user=other,
             type="tenancy_extension_proposed",
             title="Tenancy extension proposed",
             body=f"A tenancy extension was proposed for {t.room.title}.",
             target_type="tenancy_extension",
-            target_id=t.id
+            target_id=t.id,
         )
+
+        _maybe_queue(other, "tenancy.extension.proposed")
         return
 
     # 2) status changed -> accept/reject notifications
@@ -281,8 +305,11 @@ def tenancy_extension_notifications(sender, instance, created, **kwargs):
             target_id=t.id,
         )
 
+        _maybe_queue(t.landlord, "tenancy.extension.accepted")
+        _maybe_queue(t.tenant, "tenancy.extension.accepted")
+
     elif new == instance.STATUS_REJECTED:
-        # notify proposer only (so they know it was rejected)
+        # notify proposer only
         Notification.objects.create(
             user=instance.proposed_by,
             type="tenancy_extension_rejected",
@@ -291,3 +318,5 @@ def tenancy_extension_notifications(sender, instance, created, **kwargs):
             target_type="tenancy_extension",
             target_id=t.id,
         )
+
+        _maybe_queue(instance.proposed_by, "tenancy.extension.rejected")
