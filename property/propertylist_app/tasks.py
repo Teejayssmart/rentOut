@@ -145,6 +145,8 @@ def task_send_tenancy_notification(tenancy_id: int, event: str) -> int:
             type="tenancy_proposed",
             title="Tenancy proposal",
             body=f"A tenancy proposal was created for: {tenancy.room.title}. Please respond.",
+            target_type="tenancy",
+            target_id=tenancy.id,
         )
         return 1
 
@@ -155,6 +157,8 @@ def task_send_tenancy_notification(tenancy_id: int, event: str) -> int:
                 type="tenancy_confirmed",
                 title="Tenancy confirmed",
                 body=f"Tenancy confirmed for: {tenancy.room.title}.",
+                target_type="tenancy",
+                target_id=tenancy.id,
             )
         return 2
 
@@ -165,6 +169,8 @@ def task_send_tenancy_notification(tenancy_id: int, event: str) -> int:
                 type="tenancy_cancelled",
                 title="Tenancy cancelled",
                 body=f"Tenancy cancelled for: {tenancy.room.title}.",
+                target_type="tenancy",
+                target_id=tenancy.id,
             )
         return 2
 
@@ -179,6 +185,8 @@ def task_send_tenancy_notification(tenancy_id: int, event: str) -> int:
         type="tenancy_updated",
         title="Tenancy updated",
         body=f"Tenancy proposal updated for: {tenancy.room.title}.",
+        target_type="tenancy",
+        target_id=tenancy.id,
     )
     return 1
 
@@ -263,6 +271,8 @@ def task_tenancy_prompts_sweep() -> int:
                 type="tenancy_still_living_check",
                 title="Tenancy check",
                 body=f"Is the tenant still living at {t.room.title}?",
+                target_type="still_living_check",
+                target_id=t.id
             )
             count += 1
 
@@ -272,6 +282,8 @@ def task_tenancy_prompts_sweep() -> int:
                 type="tenancy_still_living_check",
                 title="Tenancy check",
                 body=f"Is the tenant still living at {t.room.title}?",
+                target_type="still_living_check",
+                target_id=t.id,
             )
             count += 1
 
@@ -303,6 +315,8 @@ def task_tenancy_prompts_sweep() -> int:
                 type="review_available",
                 title="Review available",
                 body=f"You can now leave a review for {t.room.title}.",
+                target_type="tenancy_review",
+                target_id=t.id
             )
             count += 1
 

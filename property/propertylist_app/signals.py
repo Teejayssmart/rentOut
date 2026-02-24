@@ -18,7 +18,7 @@ from django.db.models import Avg, Count, Q
 from propertylist_app.services.reviews import update_room_rating_from_revealed_reviews
 from django.apps import apps
 
-
+from propertylist_app.services.deep_links import build_absolute_url
 
 
 
@@ -103,17 +103,15 @@ def _queue_email(*, user, template_key: str, context: dict | None = None) -> Non
 
 @receiver(post_save, sender=Booking)
 def booking_created_queue_emails(sender, instance: Booking, created, **kwargs):
-    """
-    When a new booking is created, queue:
-    - booking.new email to the room owner
-    - booking.confirmation email to the booker
-    """
     if not created:
         return
 
     room = instance.room
     owner = getattr(room, "property_owner", None)
     booker = instance.user
+
+    booking_deep_link = f"/app/bookings/{instance.id}"
+    booking_full_url = build_absolute_url(booking_deep_link)
 
     if owner:
         _queue_email(
@@ -123,6 +121,10 @@ def booking_created_queue_emails(sender, instance: Booking, created, **kwargs):
                 "user": {"first_name": owner.first_name},
                 "room_id": room.id,
                 "booking_id": instance.id,
+
+                # F2 links
+                "deep_link": booking_deep_link,
+                "cta_url": booking_full_url,
             },
         )
 
@@ -134,6 +136,10 @@ def booking_created_queue_emails(sender, instance: Booking, created, **kwargs):
                 "user": {"first_name": booker.first_name},
                 "room_id": room.id,
                 "booking_id": instance.id,
+
+                # F2 links
+                "deep_link": booking_deep_link,
+                "cta_url": booking_full_url,
             },
         )
         
@@ -147,12 +153,19 @@ def message_created_create_notifications(sender, instance: Message, created, **k
     recipients = thread.participants.exclude(pk=instance.sender_id).all()
 
     notifs = []
-    queued_any_email = False  # <-- add this
+    queued_any_email = False
+
+    # Build once (same for all recipients)
+    deep_link = f"/app/threads/{thread.id}"
+    full_url = build_absolute_url(deep_link)
 
     for user in recipients:
         profile, _ = UserProfile.objects.get_or_create(user=user)
         if not getattr(profile, "notify_messages", True):
             continue
+
+        # Eligible recipient exists -> enqueue async email task later (even if template missing/disabled)
+        queued_any_email = True
 
         notifs.append(
             Notification(
@@ -173,15 +186,23 @@ def message_created_create_notifications(sender, instance: Message, created, **k
                 "sender": {"name": instance.sender.get_username()},
                 "thread_id": thread.id,
                 "message_id": instance.id,
+
+                # F2: link fields for the email button
+                "deep_link": deep_link,
+                "cta_url": full_url,
+
+                # Backwards compatible fields (if your template still uses them)
+                "thread_url": full_url,
+                "snippet": (instance.body[:200] or ""),
             },
         )
-        queued_any_email = True  # <-- add this
 
     if notifs:
         Notification.objects.bulk_create(notifs, ignore_conflicts=True)
 
+    # Enqueue once per message if at least one recipient opted-in
     if queued_any_email:
-        task_send_new_message_email.delay(instance.id)  # <-- add this
+        task_send_new_message_email.delay(instance.id)
         
         
 # -------------------------------------------------------------------
@@ -230,6 +251,8 @@ def tenancy_extension_notifications(sender, instance, created, **kwargs):
             type="tenancy_extension_proposed",
             title="Tenancy extension proposed",
             body=f"A tenancy extension was proposed for {t.room.title}.",
+            target_type="tenancy_extension",
+            target_id=t.id
         )
         return
 
@@ -246,12 +269,16 @@ def tenancy_extension_notifications(sender, instance, created, **kwargs):
             type="tenancy_extension_accepted",
             title="Tenancy extension accepted",
             body=f"The tenancy extension for {t.room.title} was accepted.",
+            target_type="tenancy_extension",
+            target_id=t.id,
         )
         Notification.objects.create(
             user=t.tenant,
             type="tenancy_extension_accepted",
             title="Tenancy extension accepted",
             body=f"The tenancy extension for {t.room.title} was accepted.",
+            target_type="tenancy_extension",
+            target_id=t.id,
         )
 
     elif new == instance.STATUS_REJECTED:
@@ -261,5 +288,6 @@ def tenancy_extension_notifications(sender, instance, created, **kwargs):
             type="tenancy_extension_rejected",
             title="Tenancy extension rejected",
             body=f"The tenancy extension for {t.room.title} was rejected.",
+            target_type="tenancy_extension",
+            target_id=t.id,
         )
-        

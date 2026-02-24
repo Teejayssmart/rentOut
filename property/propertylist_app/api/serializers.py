@@ -2248,6 +2248,8 @@ class PaymentTransactionDetailSerializer(serializers.ModelSerializer):
 
 
 class NotificationSerializer(serializers.ModelSerializer):
+    deep_link = serializers.SerializerMethodField()
+
     class Meta:
         model = Notification
         fields = [
@@ -2257,10 +2259,46 @@ class NotificationSerializer(serializers.ModelSerializer):
             "body",
             "thread",
             "message",
+            "target_type",
+            "target_id",
+            "deep_link",
             "is_read",
             "created_at",
         ]
         read_only_fields = fields
+
+    def get_deep_link(self, obj):
+        """
+        Returns app route path only.
+        Emails can prepend FRONTEND_BASE_URL.
+        Mobile app uses this path for navigation.
+        """
+
+        # 1) Message thread notification
+        if obj.thread_id:
+            return f"/app/threads/{obj.thread_id}"
+
+        # 2) Generic targets
+        if obj.target_type and obj.target_id:
+            t = obj.target_type
+
+            if t == "booking":
+                return f"/app/bookings/{obj.target_id}"
+
+            if t == "tenancy":
+                return f"/app/tenancies/{obj.target_id}"
+
+            if t == "tenancy_review":
+                return f"/app/tenancies/{obj.target_id}/reviews"
+
+            if t == "tenancy_extension":
+                return f"/app/tenancies/{obj.target_id}?tab=extension"
+
+            if t == "still_living_check":
+                return f"/app/tenancies/{obj.target_id}?tab=still-living"
+
+        # fallback
+        return "/app/inbox"
 
 
 class ReportSerializer(serializers.ModelSerializer):

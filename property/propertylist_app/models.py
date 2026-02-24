@@ -1204,6 +1204,8 @@ class Notification(models.Model):
 
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="notifications")
     type = models.CharField(max_length=32, choices=Type.choices, default=Type.MESSAGE)
+    target_type = models.CharField(max_length=50, blank=True, null=True)
+    target_id = models.BigIntegerField(blank=True, null=True)
 
     thread = models.ForeignKey(
         "MessageThread",

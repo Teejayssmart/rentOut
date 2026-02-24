@@ -124,6 +124,7 @@ INSTALLED_APPS = [
     "django_celery_beat",
     "user_app",
    
+   
 
 
 ]

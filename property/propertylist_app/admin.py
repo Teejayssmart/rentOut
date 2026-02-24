@@ -1,6 +1,7 @@
 from django.contrib import admin, messages
 from django.utils import timezone
 
+
 from propertylist_app.models import (
     # Core listings
     Room,
@@ -393,6 +394,8 @@ class NotificationAdmin(admin.ModelAdmin):
     list_filter = ("type", "is_read")
     search_fields = ("user__username", "title", "body")
     readonly_fields = ("created_at",)
+
+
 
 
 # Read receipts data is usually sensitive -> read-only in admin
