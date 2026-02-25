@@ -1,11 +1,25 @@
-# property/celery_app.py
 import os
-from celery import Celery
-from celery.schedules import crontab
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "property.settings")
 
+import django
+django.setup()
+
+from celery import Celery
+from celery.schedules import crontab
+
 app = Celery("property")
+app.config_from_object("django.conf:settings", namespace="CELERY")
+
+# Auto-discover tasks.py in installed apps
+app.autodiscover_tasks([
+    "propertylist_app",
+    "propertylist_app.notifications",
+])
+
+# Force-load bridge module so short task names register
+app.conf.imports = tuple(app.conf.get("imports", ())) + ("notifications.tasks",)
+import notifications.tasks  # noqa: F401
 
 # Read CELERY_* settings from Django settings.py (namespace)
 app.config_from_object("django.conf:settings", namespace="CELERY")
