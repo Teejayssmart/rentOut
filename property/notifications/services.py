@@ -1,3 +1,5 @@
+from urllib.parse import quote
+
 from django.template import Template, Context
 from django.utils import timezone
 from django.db import transaction
@@ -26,6 +28,33 @@ def send_mail(subject, message, from_email, recipient_list, *, html_message=None
     return email.send()
 
 
+def _safe_next_path(next_path: str | None, default: str = "/inbox") -> str:
+    """
+    Prevent open-redirects. Only allow internal paths like '/inbox?...'.
+    """
+    if not next_path or not isinstance(next_path, str):
+        return default
+    next_path = next_path.strip()
+    if not next_path.startswith("/"):
+        return default
+    return next_path
+
+
+def _frontend_base() -> str:
+    base = getattr(settings, "FRONTEND_BASE_URL", "") or ""
+    return base.rstrip("/")
+
+
+def build_login_redirect_url(next_path: str | None = "/inbox") -> str:
+    """
+    Returns: '{FRONTEND_BASE_URL}/login?next=/inbox...'
+    """
+    base = _frontend_base()
+    safe_next = _safe_next_path(next_path, default="/inbox")
+    # keep common URL chars safe (so '/inbox?focus=thread&id=1' stays readable)
+    return f"{base}/login?next={quote(safe_next, safe='/?:&=')}"
+
+
 class EmailTransport:
     @staticmethod
     def send(to_email: str, subject: str, body: str, *, html_message: str | None = None):
@@ -46,10 +75,41 @@ class EmailTransport:
 
 class NotificationService:
     @staticmethod
+    def _enrich_context(context_dict: dict) -> dict:
+        """
+        Adds standard context keys so templates can link safely back to the app.
+
+        Supported inputs:
+        - context['next_path'] (preferred): '/inbox?...'
+        - context['frontend_path']         : '/inbox?...'
+        - context['url']                   : if it's a relative path '/something', we treat it as next_path
+        """
+        ctx = dict(context_dict or {})
+
+        base = _frontend_base()
+        ctx.setdefault("frontend_base_url", base)
+
+        # determine next path from common keys
+        next_path = (
+            ctx.get("next_path")
+            or ctx.get("frontend_path")
+            or (ctx.get("url") if isinstance(ctx.get("url"), str) and ctx.get("url", "").startswith("/") else None)
+        )
+
+        next_path = _safe_next_path(next_path, default="/inbox")
+
+        # provide standard CTA URLs for templates
+        ctx.setdefault("next_path", next_path)
+        ctx.setdefault("cta_url", build_login_redirect_url(next_path))
+        ctx.setdefault("inbox_url", build_login_redirect_url("/inbox"))
+
+        return ctx
+
+    @staticmethod
     def render(template_obj: NotificationTemplate, context_dict: dict):
         subject_tpl = Template(template_obj.subject or "")
         body_tpl = Template(template_obj.body or "")
-        ctx = Context(context_dict or {})
+        ctx = Context(NotificationService._enrich_context(context_dict or {}))
         return subject_tpl.render(ctx), body_tpl.render(ctx)
 
     @staticmethod
@@ -86,11 +146,11 @@ class NotificationService:
             notification.save(update_fields=["status", "error"])
             return
 
+        # render now injects cta_url/inbox_url/next_path/frontend_base_url
         subject, body = NotificationService.render(tpl, notification.context)
 
         try:
             if notification.channel == "email":
-                # html support will be passed in later by the queue/deliverer when needed
                 res = EmailTransport.send(notification.user.email, subject, body)
             else:
                 res = {"sent": 0}
