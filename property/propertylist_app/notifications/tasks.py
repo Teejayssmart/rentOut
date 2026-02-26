@@ -97,8 +97,6 @@ def _enrich_context(ctx: dict) -> dict:
     return ctx
 
 
-
-
 def _allowed_to_send_template(*, profile: UserProfile, template_key: str) -> bool:
     """
     Maps email templates to Account -> Notifications toggles.
@@ -147,43 +145,6 @@ def notify_listing_expiring(days_ahead: int = 3) -> None:
                     "cta_url": _inbox_link(),
                 },
             )
-
-
-def _enrich_context(notif: OutboundNotification, ctx: dict) -> dict:
-    """
-    Ensure templates that reference nested vars like {{ room.title }} can render.
-
-    Supports:
-    - listing.expiring: expects room.title, room.paid_until, renew_url
-    """
-    ctx = dict(ctx or {})
-
-    # Provide common links if missing
-    ctx.setdefault("cta_url", _inbox_link())
-    ctx.setdefault("renew_url", _inbox_link())
-
-    # If context has room_id but template expects {{ room.title }} etc
-    room_id = ctx.get("room_id")
-    if room_id and "room" not in ctx:
-        try:
-            room = Room.objects.filter(id=room_id).only("title", "paid_until").first()
-            if room:
-                ctx["room"] = {
-                    "title": getattr(room, "title", ""),
-                    "paid_until": str(getattr(room, "paid_until", "")),
-                }
-        except Exception:
-            # don't break sending if room lookup fails
-            pass
-
-    # If paid_until was stored flat, also map it into room.paid_until when possible
-    if "room" in ctx and isinstance(ctx["room"], dict):
-        if "paid_until" not in ctx["room"] and ctx.get("paid_until"):
-            ctx["room"]["paid_until"] = str(ctx["paid_until"])
-
-    return ctx
-
-
 
 
 def send_due_notifications() -> dict:
@@ -241,8 +202,16 @@ def send_due_notifications() -> dict:
                 subject = subject or "Notification"
                 body = body or "You have a new notification."
 
-        #  Render {{ ... }} placeholders using notif.context
+        # Render {{ ... }} placeholders using notif.context
         ctx = _enrich_context(getattr(notif, "context", None) or {})
+
+        first = (getattr(user, "first_name", "") or "").strip()
+        if not first:
+            first = (getattr(user, "username", "") or "").strip()
+
+        ctx.setdefault("user", {})
+        ctx["user"].setdefault("first_name", first)
+
         subject = _render_template_string(subject, ctx)
         body = _render_template_string(body, ctx)
 
