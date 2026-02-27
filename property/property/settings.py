@@ -409,7 +409,12 @@ CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "redis://127.0.0.1:6379/0")
 CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", "redis://127.0.0.1:6379/1")
 CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
 
-
+# Celery routing safety: even if django-celery-beat PeriodicTask queue/routing_key are NULL,
+# Celery will still publish tasks to the queue our worker consumes.
+CELERY_TASK_DEFAULT_QUEUE = "celery"
+CELERY_TASK_DEFAULT_ROUTING_KEY = "celery"
+CELERY_TASK_DEFAULT_EXCHANGE = "celery"
+CELERY_TASK_DEFAULT_EXCHANGE_TYPE = "direct"
 
 
 
