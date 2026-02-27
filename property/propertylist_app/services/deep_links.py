@@ -18,16 +18,13 @@ def _safe_next_path(next_path: str, default: str = "/inbox") -> str:
 
 def build_absolute_url(path: str, *, force_login: bool = False) -> str:
     """
-    Build a frontend URL for use in emails.
+    Build a frontend URL for emails.
 
-    Old behaviour (force_login=False):
-        https://<frontend>/<path>
+    force_login=False (old):
+      <FRONTEND_BASE_URL><path>
 
-    New behaviour (force_login=True):
-        https://<frontend>/login?next=<path>
-
-    This is required for JWT apps (F3) so that logged-out users go to login
-    and are redirected back to the intended page.
+    force_login=True (F3-ready):
+      <FRONTEND_BASE_URL>/login?next=<path>
     """
     base = _frontend_base_url()
     safe_path = _safe_next_path(path, default="/inbox")
