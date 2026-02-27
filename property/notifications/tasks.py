@@ -7,6 +7,9 @@ We also register Celery tasks under the short dotted names:
 - notifications.tasks.notify_listing_expiring
 """
 
+
+
+
 # notifications/tasks.py
 from celery import shared_task
 from propertylist_app.notifications.tasks import (
@@ -21,3 +24,4 @@ def send_due_notifications():
 @shared_task(name="notifications.tasks.notify_listing_expiring")
 def notify_listing_expiring():
     return _impl_notify_listing_expiring()
+
