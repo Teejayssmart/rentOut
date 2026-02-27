@@ -1,14 +1,4 @@
 from django.apps import AppConfig
-# from django.db.models.signals import post_migrate
-# from django.utils import timezone
-
-
-
-
-
-
-
-
 
 
 class NotificationsConfig(AppConfig):
@@ -16,21 +6,24 @@ class NotificationsConfig(AppConfig):
     name = "notifications"
 
     def ready(self):
-        # Ensure celery-beat PeriodicTask config doesn't drift (queue/routing_key becoming None)
+        # Make celery-beat schedule self-healing after deploy/migrate
         try:
             from django.db.models.signals import post_migrate
-            post_migrate.connect(_ensure_periodic_tasks, sender=self)
+            post_migrate.connect(ensure_notification_periodic_tasks, sender=self)
         except Exception:
             # Never block startup
             pass
 
 
-def _ensure_periodic_tasks(**kwargs):
+def ensure_notification_periodic_tasks(**kwargs):
+    """
+    Guarantee PeriodicTask for sending due notifications exists and always targets
+    the same queue/routing_key so tasks don't get stuck as 'queued' forever.
+    """
     try:
         from django.utils import timezone
         from django_celery_beat.models import CrontabSchedule, PeriodicTask, PeriodicTasks
 
-        # every minute
         cron, _ = CrontabSchedule.objects.get_or_create(
             minute="*",
             hour="*",
@@ -40,7 +33,7 @@ def _ensure_periodic_tasks(**kwargs):
             timezone="Europe/London",
         )
 
-        t, _ = PeriodicTask.objects.update_or_create(
+        PeriodicTask.objects.update_or_create(
             name="send-due-notifications-every-minute",
             defaults={
                 "task": "notifications.tasks.send_due_notifications",
@@ -52,7 +45,7 @@ def _ensure_periodic_tasks(**kwargs):
             },
         )
 
-        # bump schedule version so beat reloads
+        # Force beat to reload DB schedule
         PeriodicTasks.objects.update_or_create(
             ident=1, defaults={"last_update": timezone.now()}
         )
