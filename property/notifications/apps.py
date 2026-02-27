@@ -1,30 +1,21 @@
 from django.apps import AppConfig
 
 
-class NotificationsConfig(AppConfig):
-    default_auto_field = "django.db.models.BigAutoField"
-    name = "notifications"
-
-    def ready(self):
-        # Make celery-beat schedule self-healing after deploy/migrate
-        try:
-            from django.db.models.signals import post_migrate
-            post_migrate.connect(ensure_notification_periodic_tasks, sender=self)
-        except Exception:
-            # Never block startup
-            pass
-
-
-def ensure_notification_periodic_tasks(**kwargs):
+def ensure_notification_periodic_tasks() -> None:
     """
-    Guarantee PeriodicTask for sending due notifications exists and always targets
-    the same queue/routing_key so tasks don't get stuck as 'queued' forever.
+    Make sure the beat PeriodicTask exists AND is routed to the 'celery' queue.
+
+    This must be idempotent (safe to run multiple times).
     """
     try:
         from django.utils import timezone
         from django_celery_beat.models import CrontabSchedule, PeriodicTask, PeriodicTasks
+    except Exception:
+        return
 
-        cron, _ = CrontabSchedule.objects.get_or_create(
+    try:
+        # run every minute (Europe/London like your admin shows)
+        crontab, _ = CrontabSchedule.objects.get_or_create(
             minute="*",
             hour="*",
             day_of_week="*",
@@ -37,18 +28,27 @@ def ensure_notification_periodic_tasks(**kwargs):
             name="send-due-notifications-every-minute",
             defaults={
                 "task": "notifications.tasks.send_due_notifications",
-                "crontab": cron,
+                "crontab": crontab,
                 "enabled": True,
+                # IMPORTANT: routing so it actually reaches the worker
                 "queue": "celery",
                 "routing_key": "celery",
                 "exchange": None,
             },
         )
 
-        # Force beat to reload DB schedule
+        # tell celery-beat DatabaseScheduler the schedule changed
         PeriodicTasks.objects.update_or_create(
             ident=1, defaults={"last_update": timezone.now()}
         )
     except Exception:
-        # Never block migrations/startup
-        pass
+        # DB might not be migrated yet, don't crash startup
+        return
+
+
+class NotificationsConfig(AppConfig):
+    default_auto_field = "django.db.models.BigAutoField"
+    name = "notifications"
+
+    def ready(self) -> None:
+        ensure_notification_periodic_tasks()
