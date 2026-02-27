@@ -10,7 +10,7 @@ from django.urls import reverse
 from rest_framework_simplejwt.views import TokenRefreshView
 from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 
-
+from django.db.models import Max
 from rest_framework.exceptions import ValidationError
 from rest_framework_simplejwt.tokens import AccessToken
 
@@ -2607,19 +2607,20 @@ class InboxListView(APIView):
 
         # 2) message threads (use latest message timestamp as created_at)
         #    assumes related name: thread.messages (your code shows thread.messages usage)
+      
+
+        # 2) message threads (use latest message timestamp as created_at)
         threads = (
             MessageThread.objects
             .filter(participants=user)
-            .annotate(last_msg_at=Max("messages__created_at"))
+            .annotate(last_msg_at=Max("messages__created"))   # FIX: created not created_at
             .order_by("-last_msg_at")
         )[:200]
 
-        # unread count per thread for this user
-        # unread = messages not sent by me AND I have no MessageRead record for them
         thread_items = []
         for t in threads:
             last_msg = (
-                t.messages.order_by("-created_at").first()
+                t.messages.order_by("-created").first()       # FIX: created not created_at
                 if hasattr(t, "messages") else None
             )
             if not last_msg:
@@ -2641,7 +2642,7 @@ class InboxListView(APIView):
             thread_items.append(
                 {
                     "kind": "thread",
-                    "created_at": getattr(last_msg, "created_at", None) or getattr(t, "last_msg_at", None),
+                    "created_at": getattr(last_msg, "created", None) or getattr(t, "last_msg_at", None),  # FIX
                     "title": title,
                     "preview": (getattr(last_msg, "body", "") or "")[:140],
                     "is_read": unread == 0,
