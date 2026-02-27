@@ -1,49 +1,43 @@
+# notifications/apps.py
+from __future__ import annotations
+
 from django.apps import AppConfig
+from django.db.models.signals import post_migrate
+from django.dispatch import receiver
 
 
-def ensure_notification_periodic_tasks() -> None:
+def ensure_notification_periodic_tasks(using: str | None = None) -> None:
     """
-    Make sure the beat PeriodicTask exists AND is routed to the 'celery' queue.
+    Ensure django-celery-beat PeriodicTask rows exist and are routed correctly.
 
-    This must be idempotent (safe to run multiple times).
+    IMPORTANT:
+    - This function touches the DB, so DO NOT call it directly from AppConfig.ready().
+    - It is triggered via post_migrate (safe time to query DB).
     """
-    try:
-        from django.utils import timezone
-        from django_celery_beat.models import CrontabSchedule, PeriodicTask, PeriodicTasks
-    except Exception:
-        return
+    from django_celery_beat.models import CrontabSchedule, PeriodicTask
 
-    try:
-        # run every minute (Europe/London like your admin shows)
-        crontab, _ = CrontabSchedule.objects.get_or_create(
-            minute="*",
-            hour="*",
-            day_of_week="*",
-            day_of_month="*",
-            month_of_year="*",
-            timezone="Europe/London",
-        )
+    # Run every minute (timezone-aware schedule)
+    schedule, _ = CrontabSchedule.objects.get_or_create(
+        minute="*",
+        hour="*",
+        day_of_week="*",
+        day_of_month="*",
+        month_of_year="*",
+        timezone="Europe/London",
+    )
 
-        PeriodicTask.objects.update_or_create(
-            name="send-due-notifications-every-minute",
-            defaults={
-                "task": "notifications.tasks.send_due_notifications",
-                "crontab": crontab,
-                "enabled": True,
-                # IMPORTANT: routing so it actually reaches the worker
-                "queue": "celery",
-                "routing_key": "celery",
-                "exchange": None,
-            },
-        )
-
-        # tell celery-beat DatabaseScheduler the schedule changed
-        PeriodicTasks.objects.update_or_create(
-            ident=1, defaults={"last_update": timezone.now()}
-        )
-    except Exception:
-        # DB might not be migrated yet, don't crash startup
-        return
+    PeriodicTask.objects.update_or_create(
+        name="send-due-notifications-every-minute",
+        defaults={
+            "task": "notifications.tasks.send_due_notifications",
+            "crontab": schedule,
+            "enabled": True,
+            # ✅ this is what was missing and caused “stuck queued”
+            "queue": "celery",
+            "routing_key": "celery",
+            "exchange": None,
+        },
+    )
 
 
 class NotificationsConfig(AppConfig):
@@ -51,4 +45,12 @@ class NotificationsConfig(AppConfig):
     name = "notifications"
 
     def ready(self) -> None:
-        ensure_notification_periodic_tasks()
+        # Connect signals only (NO DB queries here)
+        post_migrate.connect(run_notifications_post_migrate, sender=self)
+
+
+@receiver(post_migrate)
+def run_notifications_post_migrate(sender, using=None, **kwargs) -> None:
+    # Safe place to touch DB.
+    # Runs after migrations and ensures periodic tasks exist correctly.
+    ensure_notification_periodic_tasks(using=using)
