@@ -111,7 +111,7 @@ def booking_created_queue_emails(sender, instance: Booking, created, **kwargs):
     booker = instance.user
 
     booking_deep_link = f"/app/bookings/{instance.id}"
-    booking_full_url = build_absolute_url(booking_deep_link)
+    booking_full_url = build_absolute_url(booking_deep_link, force_login=True)
 
     if owner:
         _queue_email(
@@ -157,7 +157,7 @@ def message_created_create_notifications(sender, instance: Message, created, **k
 
     # Build once (same for all recipients)
     deep_link = f"/app/threads/{thread.id}"
-    full_url = build_absolute_url(deep_link)
+    full_url = build_absolute_url(deep_link, force_login=True)
 
     for user in recipients:
         profile, _ = UserProfile.objects.get_or_create(user=user)
@@ -231,7 +231,7 @@ def tenancy_extension_cache_old_status(sender, instance, **kwargs):
         return
     old = sender.objects.filter(pk=instance.pk).values_list("status", flat=True).first()
     instance._old_status = old
-
+template_key="message.new"
 
 @receiver(post_save, sender=apps.get_model("propertylist_app", "TenancyExtension"))
 def tenancy_extension_notifications(sender, instance, created, **kwargs):
@@ -246,7 +246,7 @@ def tenancy_extension_notifications(sender, instance, created, **kwargs):
 
     # build once (used by all emails)
     deep_link = f"/app/tenancies/{t.id}"
-    cta_url = build_absolute_url(deep_link)
+    cta_url = build_absolute_url(deep_link, force_login=True)
 
     def _maybe_queue(user, template_key: str):
         profile, _ = UserProfile.objects.get_or_create(user=user)
