@@ -132,6 +132,7 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
+    "property.middleware.RequestIDMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -274,17 +275,22 @@ REST_FRAMEWORK = {
 
 
 # Reason: avoid hardcoding and ensure Swagger "Servers" matches the current environment domain.
+# property/settings.py
+
 SPECTACULAR_SETTINGS = {
-    "TITLE": "RentOut API",
-    "DESCRIPTION": "SpareRoom-style listings, bookings, chat, payments, and moderation.",
-    "VERSION": "1.0.0",
-    "SERVERS": [
-        {"url": SITE_URL.rstrip("/"), "description": "current"},
-        {"url": "https://rentout-my5r.onrender.com", "description": "other-env"},
-    ],
-    "SWAGGER_UI_DIST": "SIDECAR",
-    "SWAGGER_UI_FAVICON_HREF": "SIDECAR",
-    "REDOC_DIST": "SIDECAR",
+    # ... your other settings ...
+
+    "ENUM_NAME_OVERRIDES": {
+    "RoomStatusEnum": "propertylist_app.api.schema_enums.ROOM_STATUS_CHOICES",
+    "BookingStatusEnum": "propertylist_app.api.schema_enums.BOOKING_STATUS_CHOICES",
+
+    "ReviewRoleEnum": "propertylist_app.api.schema_enums.REVIEW_ROLE_CHOICES",
+    "UserRoleEnum": "propertylist_app.api.schema_enums.USER_ROLE_CHOICES",
+
+    "SmokingEnum": "propertylist_app.api.schema_enums.SMOKING_CHOICES",
+    "YesNoNoPreferenceEnum": "propertylist_app.api.schema_enums.YES_NO_NO_PREFERENCE_CHOICES",
+    "StripeIntentStatusEnum": "propertylist_app.api.schema_enums.STRIPE_INTENT_STATUS_CHOICES",
+        },
 }
 
 
@@ -430,5 +436,35 @@ CELERY_TASK_ROUTES = {
 
 
 
-
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "filters": {
+        "request_id": {"()": "property.logging.RequestIDLogFilter"},
+    },
+    "formatters": {
+        "standard": {
+            "format": "%(levelname)s %(asctime)s request_id=%(request_id)s %(name)s %(message)s"
+        },
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "filters": ["request_id"],
+            "formatter": "standard",
+        },
+    },
+    "root": {
+        "handlers": ["console"],
+        "level": "INFO",
+    },
+    # Keep django.request visible (500s etc)
+    "loggers": {
+        "django.request": {
+            "handlers": ["console"],
+            "level": "WARNING",
+            "propagate": True,
+        },
+    },
+}
 

@@ -41,6 +41,11 @@ def debug_urls(request):
     )
 
 
+def health_root(request):
+    return JsonResponse({"status": "ok"}, status=200)
+
+
+
 class HttpResponsePermanentRedirect308(HttpResponseRedirectBase):
     status_code = 308
 
@@ -59,6 +64,10 @@ def redirect_api_to_v1(request, path=""):
 
 urlpatterns = [
     path("admin/", admin.site.urls),
+
+    #-----health-----#
+    path("health/", health_root),
+
 
     # DEBUG helper
     path("debug-urls/", debug_urls),

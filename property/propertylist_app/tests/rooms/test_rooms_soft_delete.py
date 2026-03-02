@@ -7,7 +7,6 @@ from propertylist_app.models import Room, RoomCategorie
 
 User = get_user_model()
 
-
 @pytest.mark.django_db
 def test_owner_can_soft_delete_and_room_disappears_from_alive():
     # Owner + category + room
@@ -86,5 +85,6 @@ def test_soft_deleted_room_not_in_public_rooms_endpoint():
     list_url = reverse("v1:room-list")
     r = c.get(list_url)
     assert r.status_code == 200
-    ids = [item["id"] for item in r.data]
+    payload = r.json()
+    ids = [item["id"] for item in payload["results"]]
     assert room.id not in ids

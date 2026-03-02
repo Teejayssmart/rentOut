@@ -27,7 +27,9 @@ def test_hidden_room_not_in_list_or_search():
     # room list should only show active
     r_list = client.get("/api/v1/rooms/")
     assert r_list.status_code == 200
-    titles = [r["title"] for r in r_list.json()]
+    payload = r_list.json()
+    rooms = payload["results"]
+    titles = [r["title"] for r in rooms]
     assert "Public Room" in titles
     assert "Hidden Room" not in titles
     assert "Expired Room" not in titles

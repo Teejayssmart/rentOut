@@ -12,6 +12,12 @@ from django.contrib.auth import get_user_model
 from django.db import transaction
 
 
+from typing import Optional, Any, Dict, List
+from drf_spectacular.types import OpenApiTypes
+
+
+
+from drf_spectacular.utils import extend_schema_field
 from propertylist_app.models import Room, Booking, Tenancy  # ensure Booking + Tenancy imported
 from propertylist_app.models import (
     Room, RoomCategorie, Review, UserProfile, RoomImage,
@@ -67,7 +73,8 @@ class UserReviewListSerializer(serializers.ModelSerializer):
             "booking",
         )
 
-    def get_reviewer_avatar(self, obj):
+    @extend_schema_field(OpenApiTypes.URI)
+    def get_reviewer_avatar(self, obj) -> Optional[str]:
         """
         reviewer.profile is your OneToOne related_name.
         Return the avatar URL if present, else None.
@@ -76,19 +83,18 @@ class UserReviewListSerializer(serializers.ModelSerializer):
         avatar = getattr(profile, "avatar", None)
         if not avatar:
             return None
+
+        request = self.context.get("request")
         try:
-            return avatar.url
+            url = avatar.url
         except Exception:
             return None
 
-# inside propertylist_app/api/serializers.py
-
-
-
-# make sure Review and Tenancy are already imported in this file
-# (your file already uses them in other serializers)
-
-
+        if request is not None:
+            return request.build_absolute_uri(url)
+        return url
+    
+    
 class BookingReviewCreateSerializer(serializers.ModelSerializer):
     booking_id = serializers.IntegerField(write_only=True, required=False)
     tenancy_id = serializers.IntegerField(write_only=True, required=False)
@@ -304,11 +310,13 @@ class ReviewSerializer(serializers.ModelSerializer):
         "broke_rules": "Broke the rules",
     }
 
-    def get_review_mode(self, obj):
+    @extend_schema_field(OpenApiTypes.STR)
+    def get_review_mode(self, obj) -> str:
         flags = obj.review_flags or []
         return "checklist" if flags else "text"
 
-    def get_positive_labels(self, obj):
+    @extend_schema_field(serializers.ListField(child=serializers.CharField()))
+    def get_positive_labels(self, obj) -> List[str]:
         flags = set(obj.review_flags or [])
         if obj.role == Review.ROLE_TENANT_TO_LANDLORD:
             pos = flags.intersection(self.TENANT_TO_LANDLORD_POS)
@@ -316,7 +324,8 @@ class ReviewSerializer(serializers.ModelSerializer):
             pos = flags.intersection(self.LANDLORD_TO_TENANT_POS)
         return [self.FLAG_LABELS.get(k, k) for k in sorted(pos)]
 
-    def get_negative_labels(self, obj):
+    @extend_schema_field(serializers.ListField(child=serializers.CharField()))
+    def get_negative_labels(self, obj) -> List[str]:
         flags = set(obj.review_flags or [])
         if obj.role == Review.ROLE_TENANT_TO_LANDLORD:
             neg = flags.intersection(self.TENANT_TO_LANDLORD_NEG)
@@ -324,7 +333,8 @@ class ReviewSerializer(serializers.ModelSerializer):
             neg = flags.intersection(self.LANDLORD_TO_TENANT_NEG)
         return [self.FLAG_LABELS.get(k, k) for k in sorted(neg)]
 
-    def get_display_summary(self, obj):
+    @extend_schema_field(OpenApiTypes.STR)
+    def get_display_summary(self, obj) -> str:
         """
         Hard rule:
         - If notes exist (text option), return notes EXACTLY as stored (no edits).
@@ -780,10 +790,10 @@ class RoomSerializer(serializers.ModelSerializer):
         queryset=RoomCategorie.objects.all(),
         write_only=True,
     )
+
     is_saved = serializers.SerializerMethodField(read_only=True)
     distance_miles = serializers.SerializerMethodField(read_only=True)
     allow_search_indexing_effective = serializers.SerializerMethodField(read_only=True)
-
 
     # extra fields for Find a Room cards
     owner_name = serializers.SerializerMethodField(read_only=True)
@@ -791,8 +801,8 @@ class RoomSerializer(serializers.ModelSerializer):
     main_photo = serializers.SerializerMethodField(read_only=True)
     photo_count = serializers.SerializerMethodField(read_only=True)
     listing_state = serializers.SerializerMethodField(read_only=True)
-    
-        # Amenity keys matching the Step 2/5 chips
+
+    # Amenity keys matching the Step 2/5 chips
     AMENITY_CHOICES = {
         # Home
         "in_unit_laundry",
@@ -807,7 +817,6 @@ class RoomSerializer(serializers.ModelSerializer):
         "pets_allowed",
         "large_closet",
         "private_bath",
-
         # Property
         "exercise_equipment",
         "elevator",
@@ -820,7 +829,6 @@ class RoomSerializer(serializers.ModelSerializer):
         "bbq_grill",
         "fire_pit",
         "pool_table",
-
         # Safety
         "smoke_alarm",
         "first_aid_kit",
@@ -830,7 +838,6 @@ class RoomSerializer(serializers.ModelSerializer):
         "disabled_accessible",
         "must_climb_stairs",
     }
-
 
     class Meta:
         model = Room
@@ -848,18 +855,14 @@ class RoomSerializer(serializers.ModelSerializer):
 
         words = [w for w in clean.split() if w.strip()]
         if len(words) < 25:
-            raise serializers.ValidationError(
-                "Description must be at least 25 words."
-            )
+            raise serializers.ValidationError("Description must be at least 25 words.")
 
         return clean
-
 
     def validate_price_per_month(self, value):
         value = normalise_price(value)
         return validate_price(value, min_val=50.0, max_val=20000.0)
-    
-    
+
     def validate_amenities(self, value):
         """
         Front-end sends a list of amenity *keys* (strings).
@@ -895,14 +898,11 @@ class RoomSerializer(serializers.ModelSerializer):
 
         return cleaned
 
-    
-    
     def validate_security_deposit(self, value):
         # normalise_price handles strings like "£200" or "200.00"
         value = normalise_price(value)
         # allow zero, but cap it to something sensible
         return validate_price(value, min_val=0.0, max_val=50000.0)
-
 
     def validate_location(self, value):
         text = str(value or "").strip()
@@ -911,7 +911,7 @@ class RoomSerializer(serializers.ModelSerializer):
 
         parts = text.split()
 
-        #  Accept both "... SW1A2AA" and "... SW1A 2AA"
+        # Accept both "... SW1A2AA" and "... SW1A 2AA"
         if len(parts) >= 2 and len(parts[-1]) <= 3:
             # last token looks like inward code ("2AA"), so combine last two tokens
             candidate = f"{parts[-2]} {parts[-1]}"
@@ -921,7 +921,6 @@ class RoomSerializer(serializers.ModelSerializer):
         normalize_uk_postcode(candidate)
         return value
 
-
     def validate_property_type(self, value):
         allowed = {c[0] for c in Room._meta.get_field("property_type").choices}
         return validate_choice(value, allowed, label="property_type")
@@ -930,8 +929,6 @@ class RoomSerializer(serializers.ModelSerializer):
         validate_listing_photos([value])
         assert_no_duplicate_files([value])
         return value
-    
-    
 
     def validate(self, attrs):
         price = attrs.get("price_per_month")
@@ -994,7 +991,9 @@ class RoomSerializer(serializers.ModelSerializer):
         max_final = attrs.get("max_stay_months", max_stay)
         if min_final is not None and max_final is not None and min_final > max_final:
             raise serializers.ValidationError(
-                {"min_stay_months": "Minimum rental period cannot be greater than maximum rental period."}
+                {
+                    "min_stay_months": "Minimum rental period cannot be greater than maximum rental period."
+                }
             )
 
         # --- Daily availability time window (optional HH:MM) ---
@@ -1013,7 +1012,6 @@ class RoomSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 {"availability_to_time": "Please provide an end time as well."}
             )
-
         if end_time and not start_time:
             raise serializers.ValidationError(
                 {"availability_from_time": "Please provide a start time as well."}
@@ -1045,7 +1043,9 @@ class RoomSerializer(serializers.ModelSerializer):
                 )
             if pref_min_int > pref_max_int:
                 raise serializers.ValidationError(
-                    {"preferred_flatmate_min_age": "Minimum preferred age cannot be greater than maximum preferred age."}
+                    {
+                        "preferred_flatmate_min_age": "Minimum preferred age cannot be greater than maximum preferred age."
+                    }
                 )
 
         # ----- Per-owner duplicate check -----
@@ -1073,88 +1073,71 @@ class RoomSerializer(serializers.ModelSerializer):
         if mode == "custom":
             if not custom_dates:
                 raise serializers.ValidationError(
-                    {"view_available_custom_dates": "Provide at least one date when using custom mode."}
+                    {
+                        "view_available_custom_dates": "Provide at least one date when using custom mode."
+                    }
                 )
         else:
             attrs["view_available_custom_dates"] = []
 
         return attrs
 
+    # ---------------------------
+    # SerializerMethodField getters (schema-typed)
+    # ---------------------------
 
-
-    def get_is_saved(self, obj):
+    @extend_schema_field(OpenApiTypes.BOOL)
+    def get_is_saved(self, obj) -> bool:
         request = self.context.get("request")
         user = request.user if request and hasattr(request, "user") else None
         if not user or not user.is_authenticated:
             return False
         return SavedRoom.objects.filter(user=user, room=obj).exists()
 
-
-    def get_distance_miles(self, obj):
+    @extend_schema_field(OpenApiTypes.NUMBER)
+    def get_distance_miles(self, obj) -> float | None:
         val = getattr(obj, "distance_miles", None)
-        return round(val, 2) if isinstance(val, (int, float)) else val
-    
-    def get_listing_state(self, obj):
-            """
-            Returns one of: 'draft', 'active', 'expired', 'hidden'.
-            Used by the 'My Listings' page to group into tabs:
-            - Draft    (listing_state == 'draft')
-            - Live     (listing_state == 'active')
-            - Expired  (listing_state == 'expired')
-            """
-            # If the queryset annotated a listing_state, reuse it.
-            state = getattr(obj, "listing_state", None)
-            if state:
-                return state
+        if val is None:
+            return None
+        try:
+            return round(float(val), 2)
+        except (TypeError, ValueError):
+            return None
 
-            from datetime import date
-            today = date.today()
+    @extend_schema_field(OpenApiTypes.BOOL)
+    def get_allow_search_indexing_effective(self, obj) -> bool:
+        val = getattr(obj, "allow_search_indexing_effective", None)
+        if val is None:
+            val = getattr(obj, "allow_search_indexing", True)
+        return bool(val)
 
-            # 1) Explicit hidden + past paid_until = expired
-            if obj.status == "hidden" and obj.paid_until and obj.paid_until < today:
-                return "expired"
-
-            # 2) Hidden but not clearly expired
-            if obj.status == "hidden":
-                return "hidden"
-
-            # 3) No paid_until at all = draft (never paid / not live yet)
-            if obj.paid_until is None:
-                return "draft"
-
-            # 4) Paid until date in the past = expired
-            if obj.paid_until < today:
-                return "expired"
-
-            # 5) Otherwise treat as active
-            return "active"
-
-
-
-    def get_owner_name(self, obj):
+    @extend_schema_field(OpenApiTypes.STR)
+    def get_owner_name(self, obj) -> str:
         user = getattr(obj, "property_owner", None)
         if not user:
             return ""
         full_name = (user.get_full_name() or "").strip()
         return full_name or user.username
 
-    def get_owner_avatar(self, obj):
+    @extend_schema_field(OpenApiTypes.URI)
+    def get_owner_avatar(self, obj) -> str | None:
         user = getattr(obj, "property_owner", None)
         if not user:
             return None
 
         profile = getattr(user, "profile", None)
-        if not profile or not profile.avatar:
+        avatar = getattr(profile, "avatar", None) if profile else None
+        if not avatar:
             return None
 
         request = self.context.get("request")
-        url = profile.avatar.url
+        url = avatar.url
         if request is not None:
             return request.build_absolute_uri(url)
         return url
 
-    def get_main_photo(self, obj):
-        # prefer first approved RoomImage; fall back to legacy Room.image
+    @extend_schema_field(OpenApiTypes.URI)
+    def get_main_photo(self, obj) -> str | None:
         first_image = (
             obj.roomimage_set.filter(status="approved")
             .order_by("id")
@@ -1162,7 +1145,7 @@ class RoomSerializer(serializers.ModelSerializer):
         )
         if first_image and first_image.image:
             url = first_image.image.url
-        elif obj.image:
+        elif getattr(obj, "image", None):
             url = obj.image.url
         else:
             return None
@@ -1172,14 +1155,49 @@ class RoomSerializer(serializers.ModelSerializer):
             return request.build_absolute_uri(url)
         return url
 
-    def get_photo_count(self, obj):
-        count = obj.roomimage_set.filter(status="approved").count()
-        if count > 0:
-            return count
-        return 1 if obj.image else 0
-    
-        # --- New helpers for 'View Available Days' ---
+    @extend_schema_field(OpenApiTypes.INT)
+    def get_photo_count(self, obj) -> int:
+        val = getattr(obj, "photo_count", None)
+        if isinstance(val, int):
+            return val
 
+        approved = obj.roomimage_set.filter(status="approved").count()
+        legacy = 1 if getattr(obj, "image", None) else 0
+        return approved + legacy
+
+    @extend_schema_field(OpenApiTypes.STR)
+    def get_listing_state(self, obj) -> str:
+        """
+        Returns one of: 'draft', 'active', 'expired', 'hidden'.
+        Used by the 'My Listings' page to group into tabs.
+        """
+        # If the queryset annotated a listing_state, reuse it.
+        state = getattr(obj, "listing_state", None)
+        if state:
+            return str(state)
+
+        today = date.today()
+
+        # 1) Explicit hidden + past paid_until = expired
+        if obj.status == "hidden" and obj.paid_until and obj.paid_until < today:
+            return "expired"
+
+        # 2) Hidden but not clearly expired
+        if obj.status == "hidden":
+            return "hidden"
+
+        # 3) No paid_until at all = draft (never paid / not live yet)
+        if obj.paid_until is None:
+            return "draft"
+
+        # 4) Paid until date in the past = expired
+        if obj.paid_until < today:
+            return "expired"
+
+        # 5) Otherwise treat as active
+        return "active"
+
+    # --- New helpers for 'View Available Days' ---
 
     def validate_view_available_days_mode(self, value):
         # DRF already checks choices; this is just a safety normaliser.
@@ -1219,91 +1237,38 @@ class RoomSerializer(serializers.ModelSerializer):
 
         return normalised
     
-    def get_allow_search_indexing_effective(self, obj):
-        """
-        Effective indexing rule:
-        - if listing override is set (True/False), use it
-        - else fall back to owner's profile default
-        """
-        override = getattr(obj, "allow_search_indexing_override", None)
-        if override is not None:
-            return bool(override)
-
-        owner = getattr(obj, "property_owner", None)
-        profile = getattr(owner, "profile", None) if owner else None
-        if profile is None:
-            return True  # safe default
-        return bool(getattr(profile, "allow_search_indexing_default", True))
-
-
-
+    
 # --------------------
 # Room Preview Serializer (Step 5/5)
 # --------------------
 class RoomPreviewSerializer(serializers.Serializer):
-    """
-    Used by Step 5/5 (Preview & Edit) screen.
-
-    Returns:
-      - full RoomSerializer payload (all fields)
-      - photos[] list with absolute URLs for approved images
-        and a fallback to legacy Room.image if no RoomImage exists.
-    """
-
     room = serializers.SerializerMethodField()
     photos = serializers.SerializerMethodField()
 
-    def get_room(self, obj):
-        """
-        Reuse the existing RoomSerializer so Step 5 gets
-        the same fields as other endpoints.
-        """
+    @extend_schema_field(OpenApiTypes.OBJECT)
+    def get_room(self, obj) -> Dict[str, Any]:
         return RoomSerializer(obj, context=self.context).data
 
-    def get_photos(self, obj):
-        """
-        Returns a list like:
-        [
-          {"id": 1, "url": "https://.../image1.jpg", "status": "approved"},
-          {"id": 2, "url": "https://.../image2.jpg", "status": "approved"},
-          ...
-        ]
-
-        If there are no RoomImage rows yet, but the legacy Room.image
-        field is set, we return one 'legacy' photo entry.
-        """
+    @extend_schema_field(serializers.ListField(child=serializers.DictField()))
+    def get_photos(self, obj) -> List[Dict[str, Any]]:
+        # keep your existing logic exactly as-is
         request = self.context.get("request")
         photos = []
 
-        # Prefer RoomImage objects with status='approved'
         qs = obj.roomimage_set.filter(status="approved").order_by("id")
-
         for img in qs:
             if not img.image:
                 continue
             url = img.image.url
             if request is not None:
                 url = request.build_absolute_uri(url)
-            photos.append(
-                {
-                    "id": img.id,
-                    "url": url,
-                    "status": img.status,
-                }
-            )
+            photos.append({"id": img.id, "url": url, "status": img.status})
 
-        # Fallback to legacy Room.image if no approved RoomImage exists
         if not photos and obj.image:
             url = obj.image.url
             if request is not None:
                 url = request.build_absolute_uri(url)
-            photos.append(
-                {
-                    "id": None,
-                    "url": url,
-                    "status": "legacy",
-                }
-            )
+            photos.append({"id": None, "url": url, "status": "legacy"})
 
         return photos
 
@@ -1745,8 +1710,9 @@ class UserSerializer(serializers.ModelSerializer):
         model = User
         fields = ["id", "username", "email", "first_name", "last_name", "has_password"]
 
-    def get_has_password(self, obj):
-        return obj.has_usable_password()
+    @extend_schema_field(OpenApiTypes.BOOL)
+    def get_has_password(self, obj) -> bool:
+        return bool(obj.has_usable_password())
         
 
 
@@ -1847,19 +1813,24 @@ class UserProfileSerializer(serializers.ModelSerializer):
         )
 
     # ---------- address placeholders (until you implement structured address fields) ----------
-    def get_address_line_1(self, obj):
+    @extend_schema_field(OpenApiTypes.STR)
+    def get_address_line_1(self, obj) -> str:
         return ""
 
-    def get_address_line_2(self, obj):
+    @extend_schema_field(OpenApiTypes.STR)
+    def get_address_line_2(self, obj) -> str:
         return ""
 
-    def get_city(self, obj):
+    @extend_schema_field(OpenApiTypes.STR)
+    def get_city(self, obj) -> str:
         return ""
 
-    def get_county(self, obj):
+    @extend_schema_field(OpenApiTypes.STR)
+    def get_county(self, obj) -> str:
         return ""
 
-    def get_country(self, obj):
+    @extend_schema_field(OpenApiTypes.STR)
+    def get_country(self, obj) -> str:
         return ""
 
     # ---------- normalisers / validators ----------
@@ -1929,29 +1900,36 @@ class UserProfileSerializer(serializers.ModelSerializer):
     
     
 class ReviewCardSerializer(serializers.ModelSerializer):
-        reviewer_name = serializers.CharField(source="reviewer.username", read_only=True)
-        reviewer_avatar = serializers.SerializerMethodField()
+    reviewer_name = serializers.CharField(source="reviewer.username", read_only=True)
+    reviewer_avatar = serializers.SerializerMethodField()
 
-        class Meta:
-            model = Review
-            fields = (
-                "id",
-                "overall_rating",
-                "notes",
-                "submitted_at",
-                "reviewer_name",
-                "reviewer_avatar",
-            )
+    class Meta:
+        model = Review
+        fields = (
+            "id",
+            "overall_rating",
+            "notes",
+            "submitted_at",
+            "reviewer_name",
+            "reviewer_avatar",
+        )
 
-        def get_reviewer_avatar(self, obj):
-            profile = getattr(getattr(obj, "reviewer", None), "profile", None)
-            avatar = getattr(profile, "avatar", None)
-            if not avatar:
-                return None
-            try:
-                return avatar.url
-            except Exception:
-                return None    
+    @extend_schema_field(OpenApiTypes.URI)
+    def get_reviewer_avatar(self, obj) -> Optional[str]:
+        reviewer = getattr(obj, "reviewer", None) or getattr(obj, "reviewer_user", None)
+        if not reviewer:
+            return None
+
+        profile = getattr(reviewer, "profile", None)
+        avatar = getattr(profile, "avatar", None) if profile else None
+        if not avatar:
+            return None
+
+        request = self.context.get("request")
+        url = avatar.url
+        if request is not None:
+            return request.build_absolute_uri(url)
+        return url
     
     
 class ProfilePageSerializer(serializers.Serializer):
@@ -2022,7 +2000,7 @@ class RoomImageSerializer(serializers.ModelSerializer):
         f = validated_data.get("image")
         if f:
             from django.utils.crypto import get_random_string  # local import if needed
-            from propertylist_app.services.images import (
+            from propertylist_app.services.image import (
                 generate_thumbnails_and_return_paths,
             )
 
@@ -2084,10 +2062,13 @@ class MessageThreadSerializer(serializers.ModelSerializer):
             "in_bin",
         ]
 
+
+    @extend_schema_field(MessageSerializer(allow_null=True))
     def get_last_message(self, obj):
         msg = obj.messages.order_by("-created").first()
         return MessageSerializer(msg).data if msg else None
 
+    @extend_schema_field(serializers.IntegerField())
     def get_unread_count(self, obj):
         request = self.context.get("request")
         if not request or not request.user.is_authenticated:
@@ -2115,12 +2096,14 @@ class MessageThreadSerializer(serializers.ModelSerializer):
         # Fallback: 1 query per thread
         return MessageThreadState.objects.filter(user=user, thread=obj).first()
 
+    @extend_schema_field(serializers.CharField(allow_null=True, required=False))
     def get_label(self, obj):
         st = self._get_state_for_user(obj)
         if not st or not st.label:
-            return None  # treated as "no status"
+            return None
         return st.label
 
+    @extend_schema_field(serializers.BooleanField())
     def get_in_bin(self, obj):
         st = self._get_state_for_user(obj)
         return bool(st.in_bin) if st else False
@@ -2151,6 +2134,33 @@ class MessageThreadStateUpdateSerializer(serializers.Serializer):
         if label == "no_status":
             attrs["label"] = ""  # clear label in DB
         return attrs
+
+
+
+#  INSERT: simple request serializers for thread actions (Spectacular needs these)
+
+class ThreadSetLabelRequestSerializer(serializers.Serializer):
+    label = serializers.ChoiceField(
+        choices=[
+            "viewing_scheduled",
+            "viewing_done",
+            "good_fit",
+            "unsure",
+            "not_a_fit",
+            "paperwork_pending",
+            "no_status",  # clears label
+        ]
+    )
+
+
+class ThreadMoveToBinRequestSerializer(serializers.Serializer):
+    in_bin = serializers.BooleanField()
+
+
+class ThreadMarkReadRequestSerializer(serializers.Serializer):
+    is_read = serializers.BooleanField(default=True)
+
+
 
 
 class BookingSerializer(serializers.ModelSerializer):
@@ -2186,8 +2196,29 @@ class AvailabilitySlotSerializer(serializers.ModelSerializer):
         fields = ["id", "room", "start", "end", "max_bookings", "is_full"]
         read_only_fields = ["room", "is_full"]
 
-    def get_is_full(self, obj):
-        return obj.is_full
+    @extend_schema_field(OpenApiTypes.BOOL)
+    def get_is_full(self, obj) -> bool:
+            return bool(obj.is_full)
+
+
+
+class StripeSuccessDataSerializer(serializers.Serializer):
+    detail = serializers.CharField()
+    session_id = serializers.CharField(required=False, allow_null=True)
+    payment_id = serializers.CharField(required=False, allow_null=True)
+
+class StripeCancelDataSerializer(serializers.Serializer):
+    detail = serializers.CharField()
+    payment_id = serializers.CharField(required=False, allow_null=True)
+
+class StripeSuccessResponseSerializer(serializers.Serializer):
+    ok = serializers.BooleanField()
+    data = StripeSuccessDataSerializer()
+
+class StripeCancelResponseSerializer(serializers.Serializer):
+    ok = serializers.BooleanField()
+    data = StripeCancelDataSerializer()
+
 
 
 class PaymentSerializer(serializers.ModelSerializer):
@@ -2225,7 +2256,9 @@ class PaymentTransactionListSerializer(serializers.ModelSerializer):
             "created_at",
         ]
 
-
+class WebhookAckSerializer(serializers.Serializer):
+    ok = serializers.BooleanField(required=False)
+    detail = serializers.CharField(required=False)
 
 class PaymentTransactionDetailSerializer(serializers.ModelSerializer):
     listing_title = serializers.CharField(source="room.title", read_only=True)
@@ -2267,7 +2300,8 @@ class NotificationSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = fields
 
-    def get_deep_link(self, obj):
+    @extend_schema_field(OpenApiTypes.STR)
+    def get_deep_link(self, obj) -> str:
         """
         Returns app route path only.
         Emails can prepend FRONTEND_BASE_URL.
@@ -2275,11 +2309,11 @@ class NotificationSerializer(serializers.ModelSerializer):
         """
 
         # 1) Message thread notification
-        if obj.thread_id:
+        if getattr(obj, "thread_id", None):
             return f"/app/threads/{obj.thread_id}"
 
         # 2) Generic targets
-        if obj.target_type and obj.target_id:
+        if getattr(obj, "target_type", None) and getattr(obj, "target_id", None):
             t = obj.target_type
 
             if t == "booking":
@@ -2494,6 +2528,14 @@ class NotificationPreferencesSerializer(serializers.ModelSerializer):
 
 
 
+class BookingPreflightRequestSerializer(serializers.Serializer):
+    room = serializers.IntegerField()
+    start = serializers.DateTimeField()
+    end = serializers.DateTimeField()
+
+class BookingPreflightResponseSerializer(serializers.Serializer):
+    detail = serializers.CharField()
+
 
 class InboxItemSerializer(serializers.Serializer):
     kind = serializers.ChoiceField(choices=["thread", "notification"])
@@ -2511,3 +2553,24 @@ class InboxItemSerializer(serializers.Serializer):
     # optional helper for routing in frontend
     deep_link = serializers.CharField(allow_blank=True, required=False)
     
+    
+class ProviderWebhookRequestSerializer(serializers.Serializer):
+    payload = serializers.JSONField()
+
+class ProviderWebhookResponseSerializer(serializers.Serializer):
+    detail = serializers.CharField()    
+    
+    
+class ChangePasswordRequestSerializer(serializers.Serializer):
+    current_password = serializers.CharField()
+    new_password = serializers.CharField()
+    confirm_password = serializers.CharField()
+
+class CreatePasswordRequestSerializer(serializers.Serializer):
+    new_password = serializers.CharField()
+    confirm_password = serializers.CharField()    
+    
+    
+class ChangeEmailRequestSerializer(serializers.Serializer):
+    current_password = serializers.CharField()
+    new_email = serializers.EmailField()    

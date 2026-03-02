@@ -23,6 +23,9 @@ def _extract_field_errors(data: Any) -> Optional[Dict[str, list]]:
     return None
 
 def custom_exception_handler(exc, context):
+    import traceback
+    print("API_EXCEPTION:", repr(exc), flush=True)
+    print(traceback.format_exc(), flush=True)
     """
     Wrap DRF's default exception_handler to return a consistent JSON shape,
     while preserving a human-readable top-level 'detail' string.

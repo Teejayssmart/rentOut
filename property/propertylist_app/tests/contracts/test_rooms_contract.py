@@ -71,11 +71,16 @@ def test_rooms_list_contract_v1_strict_item_shape():
     assert r.status_code == 200, getattr(r, "content", b"")
     data = r.json()
 
-    assert isinstance(data, list), f"/api/v1/rooms/ must return list, got {type(data)}"
-    assert data, "Rooms list is empty even after seeding."
+    # H1: v1 list endpoints must be paginated
+    assert isinstance(data, dict), f"/api/v1/rooms/ must return dict envelope, got {type(data)}"
+    assert "count" in data and isinstance(data["count"], int)
+    assert "next" in data
+    assert "previous" in data
+    assert "results" in data and isinstance(data["results"], list)
 
-    first = data[0]
-    assert isinstance(first, dict), f"First item must be dict, got {type(first)}"
+    assert len(data["results"]) >= 1, "Expected at least one room in results"
+    first = data["results"][0]
+    assert isinstance(first, dict)
 
     expected_item_keys = {
         "accessible_entry",
