@@ -178,7 +178,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Registration'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/Registration'
+                required:
+                - ok
+                - data
           description: ''
   /api/v1/auth/register/apple/:
     post:
@@ -203,7 +214,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/GoogleRegisterResponse'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/GoogleRegisterResponse'
+                required:
+                - ok
+                - data
           description: ''
         '400':
           description: Missing email.
@@ -232,7 +254,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/GoogleRegisterResponse'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/GoogleRegisterResponse'
+                required:
+                - ok
+                - data
           description: ''
         '400':
           description: Missing email.
@@ -346,7 +379,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PaginatedBookingList'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/PaginatedBookingList'
+                required:
+                - ok
+                - data
           description: ''
     post:
       operationId: api_v1_bookings_create
@@ -371,7 +415,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Booking'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/Booking'
+                required:
+                - ok
+                - data
           description: ''
   /api/v1/bookings/{booking_id}/reviews/:
     get:
@@ -451,7 +506,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Booking'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/Booking'
+                required:
+                - ok
+                - data
           description: ''
   /api/v1/bookings/{id}/cancel/:
     post:
@@ -569,7 +635,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/BookingPreflightResponse'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/BookingPreflightResponse'
+                required:
+                - ok
+                - data
           description: ''
         '400':
           description: Missing/invalid fields or invalid datetime format.
@@ -607,7 +684,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PaginatedRoomCategorieList'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/PaginatedRoomCategorieList'
+                required:
+                - ok
+                - data
           description: ''
     post:
       operationId: api_v1_category_create
@@ -633,7 +721,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/RoomCategorie'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/RoomCategorie'
+                required:
+                - ok
+                - data
           description: ''
   /api/v1/category/{id}/:
     get:
@@ -655,7 +754,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/RoomCategorie'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/RoomCategorie'
+                required:
+                - ok
+                - data
           description: ''
     put:
       operationId: api_v1_category_update
@@ -688,7 +798,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/RoomCategorie'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/RoomCategorie'
+                required:
+                - ok
+                - data
           description: ''
     patch:
       operationId: api_v1_category_partial_update
@@ -720,7 +841,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/RoomCategorie'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/RoomCategorie'
+                required:
+                - ok
+                - data
           description: ''
     delete:
       operationId: api_v1_category_destroy
@@ -783,7 +915,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ContactMessage'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/ContactMessage'
+                required:
+                - ok
+                - data
           description: ''
   /api/v1/health/:
     get:
@@ -884,7 +1027,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PaginatedMessageThreadList'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/PaginatedMessageThreadList'
+                required:
+                - ok
+                - data
           description: ''
     post:
       operationId: api_v1_messages_threads_create
@@ -917,7 +1071,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/MessageThread'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/MessageThread'
+                required:
+                - ok
+                - data
           description: ''
   /api/v1/messages/threads/{thread_id}/bin/:
     post:
@@ -1015,7 +1180,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PaginatedMessageList'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/PaginatedMessageList'
+                required:
+                - ok
+                - data
           description: ''
     post:
       operationId: api_v1_messages_threads_messages_create
@@ -1046,7 +1222,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Message'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/Message'
+                required:
+                - ok
+                - data
           description: ''
   /api/v1/messages/threads/{thread_id}/read/:
     post:
@@ -1095,7 +1282,18 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: {}
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    type: object
+                    additionalProperties: {}
+                required:
+                - ok
+                - data
           description: ''
         '404':
           content:
@@ -1140,7 +1338,18 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: {}
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    type: object
+                    additionalProperties: {}
+                required:
+                - ok
+                - data
           description: ''
         '400':
           content:
@@ -1189,7 +1398,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PaginatedReportList'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/PaginatedReportList'
+                required:
+                - ok
+                - data
           description: ''
   /api/v1/moderation/reports/{id}/:
     put:
@@ -1224,7 +1444,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Report'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/Report'
+                required:
+                - ok
+                - data
           description: ''
     patch:
       operationId: api_v1_moderation_reports_partial_update
@@ -1257,7 +1488,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Report'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/Report'
+                required:
+                - ok
+                - data
           description: ''
   /api/v1/moderation/rooms/{id}/status/:
     patch:
@@ -1295,7 +1537,18 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: {}
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    type: object
+                    additionalProperties: {}
+                required:
+                - ok
+                - data
           description: ''
         '400':
           content:
@@ -1331,9 +1584,20 @@ paths:
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Room'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Room'
+                required:
+                - ok
+                - data
           description: ''
   /api/v1/notifications/:
     get:
@@ -1349,9 +1613,20 @@ paths:
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Notification'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Notification'
+                required:
+                - ok
+                - data
           description: ''
   /api/v1/notifications/{id}/read/:
     post:
@@ -1372,7 +1647,18 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: {}
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    type: object
+                    additionalProperties: {}
+                required:
+                - ok
+                - data
           description: ''
         '404':
           content:
@@ -1394,7 +1680,18 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: {}
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    type: object
+                    additionalProperties: {}
+                required:
+                - ok
+                - data
           description: ''
   /api/v1/ops/stats/:
     get:
@@ -1412,7 +1709,18 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: {}
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    type: object
+                    additionalProperties: {}
+                required:
+                - ok
+                - data
           description: ''
   /api/v1/payments/cancel/:
     get:
@@ -1465,7 +1773,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/StripeCheckoutRedirectResponse'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/StripeCheckoutRedirectResponse'
+                required:
+                - ok
+                - data
           description: ''
         '400':
           description: Invalid request or validation error.
@@ -1491,7 +1810,18 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: {}
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    type: object
+                    additionalProperties: {}
+                required:
+                - ok
+                - data
           description: ''
         '502':
           content:
@@ -1519,7 +1849,18 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: {}
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    type: object
+                    additionalProperties: {}
+                required:
+                - ok
+                - data
           description: ''
         '400':
           content:
@@ -1554,7 +1895,18 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: {}
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    type: object
+                    additionalProperties: {}
+                required:
+                - ok
+                - data
           description: ''
         '400':
           content:
@@ -1586,7 +1938,18 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: {}
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    type: object
+                    additionalProperties: {}
+                required:
+                - ok
+                - data
           description: ''
         '502':
           content:
@@ -1651,7 +2014,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PaginatedPaymentTransactionListList'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/PaginatedPaymentTransactionListList'
+                required:
+                - ok
+                - data
           description: ''
   /api/v1/payments/transactions/{id}/:
     get:
@@ -1671,7 +2045,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PaymentTransactionDetail'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/PaymentTransactionDetail'
+                required:
+                - ok
+                - data
           description: ''
   /api/v1/payments/webhook/:
     post:
@@ -1692,7 +2077,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/WebhookAck'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/WebhookAck'
+                required:
+                - ok
+                - data
           description: ''
         '400':
           description: Invalid payload or invalid Stripe signature.
@@ -1724,7 +2120,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Report'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/Report'
+                required:
+                - ok
+                - data
           description: ''
   /api/v1/reports/{id}/moderate/:
     post:
@@ -1762,7 +2169,18 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: {}
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    type: object
+                    additionalProperties: {}
+                required:
+                - ok
+                - data
           description: ''
         '400':
           content:
@@ -1809,7 +2227,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PaginatedReviewList'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/PaginatedReviewList'
+                required:
+                - ok
+                - data
           description: ''
   /api/v1/reviews/{id}/:
     get:
@@ -1829,7 +2258,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Review'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/Review'
+                required:
+                - ok
+                - data
           description: ''
   /api/v1/reviews/create/:
     post:
@@ -1855,7 +2295,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ReviewCreate'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/ReviewCreate'
+                required:
+                - ok
+                - data
           description: ''
   /api/v1/room-categories/:
     get:
@@ -1869,9 +2320,20 @@ paths:
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/RoomCategorie'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/RoomCategorie'
+                required:
+                - ok
+                - data
           description: ''
     post:
       operationId: api_v1_room_categories_create
@@ -1896,7 +2358,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/RoomCategorie'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/RoomCategorie'
+                required:
+                - ok
+                - data
           description: ''
         '400':
           content:
@@ -1923,7 +2396,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/RoomCategorie'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/RoomCategorie'
+                required:
+                - ok
+                - data
           description: ''
         '404':
           content:
@@ -1961,7 +2445,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/RoomCategorie'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/RoomCategorie'
+                required:
+                - ok
+                - data
           description: ''
         '400':
           content:
@@ -2001,7 +2496,7 @@ paths:
           description: ''
   /api/v1/rooms/:
     get:
-      operationId: api_v1_rooms_retrieve
+      operationId: api_v1_rooms_list
       description: List active rooms (paid and not expired). Paginated with limit/offset.
       parameters:
       - in: query
@@ -2022,7 +2517,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PaginatedRoomListResponse'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/PaginatedRoomListResponse'
+                required:
+                - ok
+                - data
           description: ''
     post:
       operationId: api_v1_rooms_create
@@ -2048,7 +2554,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Room'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/Room'
+                required:
+                - ok
+                - data
           description: ''
         '400':
           description: Validation error.
@@ -2093,11 +2610,22 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PaginatedRoomList'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/PaginatedRoomList'
+                required:
+                - ok
+                - data
           description: ''
   /api/v1/rooms/{id}/:
     get:
-      operationId: api_v1_rooms_retrieve_2
+      operationId: api_v1_rooms_retrieve
       description: Retrieve a room by id.
       parameters:
       - in: path
@@ -2114,7 +2642,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Room'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/Room'
+                required:
+                - ok
+                - data
           description: ''
         '404':
           description: Not found.
@@ -2148,7 +2687,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Room'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/Room'
+                required:
+                - ok
+                - data
           description: ''
         '400':
           description: Validation error.
@@ -2188,7 +2738,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Room'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/Room'
+                required:
+                - ok
+                - data
           description: ''
         '400':
           description: Validation error or preview requires 3 photos.
@@ -2255,7 +2816,18 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: {}
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    type: object
+                    additionalProperties: {}
+                required:
+                - ok
+                - data
           description: ''
         '400':
           content:
@@ -2307,7 +2879,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PaginatedAvailabilitySlotList'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/PaginatedAvailabilitySlotList'
+                required:
+                - ok
+                - data
           description: ''
     post:
       operationId: api_v1_rooms_availability_slots_create
@@ -2338,7 +2921,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AvailabilitySlot'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/AvailabilitySlot'
+                required:
+                - ok
+                - data
           description: ''
   /api/v1/rooms/{id}/availability/slots/{slot_id}/:
     delete:
@@ -2398,7 +2992,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PaginatedAvailabilitySlotList'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/PaginatedAvailabilitySlotList'
+                required:
+                - ok
+                - data
           description: ''
   /api/v1/rooms/{id}/photos/:
     get:
@@ -2421,9 +3026,20 @@ paths:
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/RoomImage'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/RoomImage'
+                required:
+                - ok
+                - data
           description: ''
         '404':
           description: Room not found.
@@ -2463,7 +3079,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/RoomImage'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/RoomImage'
+                required:
+                - ok
+                - data
           description: ''
         '400':
           description: Invalid file or validation error.
@@ -2537,7 +3164,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/RoomPreview'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/RoomPreview'
+                required:
+                - ok
+                - data
           description: ''
         '403':
           content:
@@ -2572,7 +3210,18 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: {}
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    type: object
+                    additionalProperties: {}
+                required:
+                - ok
+                - data
           description: ''
         '404':
           content:
@@ -2622,7 +3271,18 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: {}
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    type: object
+                    additionalProperties: {}
+                required:
+                - ok
+                - data
           description: ''
         '404':
           content:
@@ -2649,7 +3309,18 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: {}
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    type: object
+                    additionalProperties: {}
+                required:
+                - ok
+                - data
           description: ''
   /api/v1/rooms/{id}/soft-delete/:
     post:
@@ -2671,7 +3342,18 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: {}
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    type: object
+                    additionalProperties: {}
+                required:
+                - ok
+                - data
           description: ''
         '403':
           content:
@@ -2706,7 +3388,18 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: {}
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    type: object
+                    additionalProperties: {}
+                required:
+                - ok
+                - data
           description: ''
         '403':
           content:
@@ -2752,7 +3445,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/MessageThread'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/MessageThread'
+                required:
+                - ok
+                - data
           description: ''
         '400':
           content:
@@ -2799,7 +3503,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PaginatedRoomList'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/PaginatedRoomList'
+                required:
+                - ok
+                - data
           description: ''
   /api/v1/rooms/nearby/:
     get:
@@ -2836,7 +3551,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PaginatedRoomList'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/PaginatedRoomList'
+                required:
+                - ok
+                - data
           description: ''
   /api/v1/schema/:
     get:
@@ -2981,7 +3707,18 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: {}
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    type: object
+                    additionalProperties: {}
+                required:
+                - ok
+                - data
           description: ''
   /api/v1/search/find-address/:
     get:
@@ -3009,7 +3746,18 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: {}
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    type: object
+                    additionalProperties: {}
+                required:
+                - ok
+                - data
           description: ''
         '400':
           content:
@@ -3065,7 +3813,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PaginatedRoomList'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/PaginatedRoomList'
+                required:
+                - ok
+                - data
           description: ''
   /api/v1/tenancies/{tenancy_id}/extensions/:
     post:
@@ -3097,7 +3856,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/TenancyExtensionResponse'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/TenancyExtensionResponse'
+                required:
+                - ok
+                - data
           description: ''
         '400':
           content:
@@ -3154,7 +3924,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/TenancyExtensionResponse'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/TenancyExtensionResponse'
+                required:
+                - ok
+                - data
           description: ''
         '400':
           content:
@@ -3207,7 +3988,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/TenancyDetail'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/TenancyDetail'
+                required:
+                - ok
+                - data
           description: ''
         '400':
           content:
@@ -3253,7 +4045,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Review'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/Review'
+                required:
+                - ok
+                - data
           description: ''
         '400':
           content:
@@ -3281,7 +4084,18 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: {}
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    type: object
+                    additionalProperties: {}
+                required:
+                - ok
+                - data
           description: ''
         '400':
           content:
@@ -3335,7 +4149,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PaginatedTenancyDetailList'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/PaginatedTenancyDetailList'
+                required:
+                - ok
+                - data
           description: ''
   /api/v1/tenancies/propose/:
     post:
@@ -3361,7 +4186,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/TenancyDetail'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/TenancyDetail'
+                required:
+                - ok
+                - data
           description: ''
         '400':
           content:
@@ -3389,7 +4225,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/UserReviewSummary'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/UserReviewSummary'
+                required:
+                - ok
+                - data
           description: ''
   /api/v1/users/{user_id}/reviews/:
     get:
@@ -3428,7 +4275,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PaginatedUserReviewListList'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/PaginatedUserReviewListList'
+                required:
+                - ok
+                - data
           description: ''
   /api/v1/users/me/:
     get:
@@ -3442,7 +4300,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/User'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/User'
+                required:
+                - ok
+                - data
           description: ''
     put:
       operationId: api_v1_users_me_update
@@ -3467,7 +4336,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/User'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/User'
+                required:
+                - ok
+                - data
           description: ''
     patch:
       operationId: api_v1_users_me_partial_update
@@ -3491,7 +4371,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/User'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/User'
+                required:
+                - ok
+                - data
           description: ''
   /api/v1/users/me/change-email/:
     post:
@@ -3518,7 +4409,18 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: {}
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    type: object
+                    additionalProperties: {}
+                required:
+                - ok
+                - data
           description: ''
         '400':
           content:
@@ -3552,7 +4454,18 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: {}
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    type: object
+                    additionalProperties: {}
+                required:
+                - ok
+                - data
           description: ''
         '400':
           content:
@@ -3586,7 +4499,18 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: {}
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    type: object
+                    additionalProperties: {}
+                required:
+                - ok
+                - data
           description: ''
         '400':
           content:
@@ -3608,7 +4532,18 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: {}
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    type: object
+                    additionalProperties: {}
+                required:
+                - ok
+                - data
           description: ''
   /api/v1/users/me/delete-account/:
     post:
@@ -3635,7 +4570,18 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: {}
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    type: object
+                    additionalProperties: {}
+                required:
+                - ok
+                - data
           description: ''
   /api/v1/users/me/delete-account/cancel/:
     post:
@@ -3662,7 +4608,18 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: {}
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    type: object
+                    additionalProperties: {}
+                required:
+                - ok
+                - data
           description: ''
   /api/v1/users/me/delete/confirm/:
     post:
@@ -3693,7 +4650,18 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: {}
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    type: object
+                    additionalProperties: {}
+                required:
+                - ok
+                - data
           description: ''
         '400':
           content:
@@ -3718,7 +4686,18 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: {}
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    type: object
+                    additionalProperties: {}
+                required:
+                - ok
+                - data
           description: ''
   /api/v1/users/me/export/:
     post:
@@ -3749,7 +4728,18 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: {}
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    type: object
+                    additionalProperties: {}
+                required:
+                - ok
+                - data
           description: ''
   /api/v1/users/me/export/latest/:
     get:
@@ -3767,7 +4757,18 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: {}
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    type: object
+                    additionalProperties: {}
+                required:
+                - ok
+                - data
           description: ''
         '404':
           content:
@@ -3788,7 +4789,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/NotificationPreferences'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/NotificationPreferences'
+                required:
+                - ok
+                - data
           description: ''
     patch:
       operationId: api_v1_users_me_notification_preferences_partial_update
@@ -3812,7 +4824,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/NotificationPreferences'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/NotificationPreferences'
+                required:
+                - ok
+                - data
           description: ''
   /api/v1/users/me/onboarding/complete/:
     post:
@@ -3840,7 +4863,18 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: {}
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    type: object
+                    additionalProperties: {}
+                required:
+                - ok
+                - data
           description: ''
   /api/v1/users/me/privacy-preferences/:
     get:
@@ -3854,7 +4888,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PrivacyPreferences'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/PrivacyPreferences'
+                required:
+                - ok
+                - data
           description: ''
     patch:
       operationId: api_v1_users_me_privacy_preferences_partial_update
@@ -3878,7 +4923,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PrivacyPreferences'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/PrivacyPreferences'
+                required:
+                - ok
+                - data
           description: ''
   /api/v1/users/me/profile/:
     get:
@@ -3892,7 +4948,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/UserProfile'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/UserProfile'
+                required:
+                - ok
+                - data
           description: ''
     put:
       operationId: api_v1_users_me_profile_update
@@ -3916,7 +4983,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/UserProfile'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/UserProfile'
+                required:
+                - ok
+                - data
           description: ''
     patch:
       operationId: api_v1_users_me_profile_partial_update
@@ -3940,7 +5018,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/UserProfile'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/UserProfile'
+                required:
+                - ok
+                - data
           description: ''
   /api/v1/users/me/profile-page/:
     get:
@@ -3954,7 +5043,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ProfilePage'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/ProfilePage'
+                required:
+                - ok
+                - data
           description: ''
   /api/v1/users/me/profile/avatar/:
     post:
@@ -4007,11 +5107,22 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PaginatedRoomList'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/PaginatedRoomList'
+                required:
+                - ok
+                - data
           description: ''
   /api/v1/webhooks/{provider}/incoming/:
     post:
-      operationId: api_v1_webhooks_incoming_create_2
+      operationId: api_v1_webhooks_provider_incoming_create
       parameters:
       - in: path
         name: provider
@@ -4040,7 +5151,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ProviderWebhookResponse'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/ProviderWebhookResponse'
+                required:
+                - ok
+                - data
           description: ''
   /api/v1/webhooks/incoming/:
     post:
@@ -4067,7 +5189,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ProviderWebhookResponse'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/ProviderWebhookResponse'
+                required:
+                - ok
+                - data
           description: ''
 components:
   schemas:
@@ -4124,19 +5257,6 @@ components:
           format: uri
       required:
       - avatar
-    BathroomTypeEnum:
-      enum:
-      - private
-      - shared
-      - no_preference
-      type: string
-      description: |-
-        * `private` - Private
-        * `shared` - Shared
-        * `no_preference` - No preference
-    BlankEnum:
-      enum:
-      - ''
     Booking:
       type: object
       properties:
@@ -4158,7 +5278,16 @@ components:
           type: string
           format: date-time
         status:
-          $ref: '#/components/schemas/BookingStatusEnum'
+          enum:
+          - active
+          - cancelled
+          - suspended
+          type: string
+          description: |-
+            * `active` - Active
+            * `cancelled` - Cancelled
+            * `suspended` - Suspended
+          x-spec-enum-id: db816ffb4aaa99d7
         created_at:
           type: string
           format: date-time
@@ -4268,16 +5397,6 @@ components:
       required:
       - data
       - ok
-    BookingStatusEnum:
-      enum:
-      - active
-      - cancelled
-      - suspended
-      type: string
-      description: |-
-        * `active` - Active
-        * `cancelled` - Cancelled
-        * `suspended` - Suspended
     BookingSuspendData:
       type: object
       properties:
@@ -4435,28 +5554,6 @@ components:
       required:
       - data
       - ok
-    ExistingFlatmateGenderEnum:
-      enum:
-      - male
-      - female
-      - non_binary
-      - prefer_not_to_say
-      type: string
-      description: |-
-        * `male` - Male
-        * `female` - Female
-        * `non_binary` - Non-binary
-        * `prefer_not_to_say` - Prefer not to say
-    ExistingFlatmateOccupationEnum:
-      enum:
-      - professional
-      - student
-      - prefer_not_to_say
-      type: string
-      description: |-
-        * `professional` - Professional
-        * `student` - Student
-        * `prefer_not_to_say` - Prefer not to say
     GDPRDeleteConfirm:
       type: object
       properties:
@@ -4547,35 +5644,18 @@ components:
       - latest_rooms
       - popular_cities
       - stats
-    HouseholdEnvironmentEnum:
-      enum:
-      - quiet
-      - sociable
-      - mixed
-      - no_preference
-      type: string
-      description: |-
-        * `quiet` - Quiet
-        * `sociable` - Sociable
-        * `mixed` - Mixed
-        * `no_preference` - No preference
-    HouseholdTypeEnum:
-      enum:
-      - professional
-      - student
-      - mixed
-      - no_preference
-      type: string
-      description: |-
-        * `professional` - Professional
-        * `student` - Student
-        * `mixed` - Mixed
-        * `no_preference` - No preference
     InboxItem:
       type: object
       properties:
         kind:
-          $ref: '#/components/schemas/KindEnum'
+          enum:
+          - thread
+          - notification
+          type: string
+          description: |-
+            * `thread` - thread
+            * `notification` - notification
+          x-spec-enum-id: fac57b0f54f4c299
         created_at:
           type: string
           format: date-time
@@ -4607,14 +5687,6 @@ components:
       required:
       - data
       - ok
-    KindEnum:
-      enum:
-      - thread
-      - notification
-      type: string
-      description: |-
-        * `thread` - thread
-        * `notification` - notification
     Login:
       type: object
       properties:
@@ -4748,24 +5820,6 @@ components:
       - last_message
       - participants
       - unread_count
-    MessageThreadStateUpdateLabelEnum:
-      enum:
-      - viewing_scheduled
-      - viewing_done
-      - good_fit
-      - unsure
-      - not_a_fit
-      - paperwork_pending
-      - no_status
-      type: string
-      description: |-
-        * `viewing_scheduled` - viewing_scheduled
-        * `viewing_done` - viewing_done
-        * `good_fit` - good_fit
-        * `unsure` - unsure
-        * `not_a_fit` - not_a_fit
-        * `paperwork_pending` - paperwork_pending
-        * `no_status` - no_status
     Notification:
       type: object
       properties:
@@ -4773,8 +5827,11 @@ components:
           type: integer
           readOnly: true
         type:
-          allOf:
-          - $ref: '#/components/schemas/TypeEnum'
+          enum:
+          - message
+          type: string
+          description: '* `message` - Message'
+          x-spec-enum-id: 4108adc59c72f92a
           readOnly: true
         title:
           type: string
@@ -4837,9 +5894,6 @@ components:
           type: boolean
         notify_confirmations:
           type: boolean
-    NullEnum:
-      enum:
-      - null
     OnboardingComplete:
       type: object
       properties:
@@ -5182,7 +6236,24 @@ components:
         to update per-user label and/or in_bin.
       properties:
         label:
-          $ref: '#/components/schemas/MessageThreadStateUpdateLabelEnum'
+          enum:
+          - viewing_scheduled
+          - viewing_done
+          - good_fit
+          - unsure
+          - not_a_fit
+          - paperwork_pending
+          - no_status
+          type: string
+          description: |-
+            * `viewing_scheduled` - viewing_scheduled
+            * `viewing_done` - viewing_done
+            * `good_fit` - good_fit
+            * `unsure` - unsure
+            * `not_a_fit` - not_a_fit
+            * `paperwork_pending` - paperwork_pending
+            * `no_status` - no_status
+          x-spec-enum-id: cbf901550524e676
         in_bin:
           type: boolean
     PatchedNotificationPreferences:
@@ -5206,7 +6277,14 @@ components:
         allow_search_indexing_default:
           type: boolean
         preferred_language:
-          $ref: '#/components/schemas/PreferredLanguageEnum'
+          enum:
+          - en-GB
+          - en-US
+          type: string
+          description: |-
+            * `en-GB` - English (UK)
+            * `en-US` - English (US)
+          x-spec-enum-id: 8a33d790289546ea
     PatchedReport:
       type: object
       properties:
@@ -5217,7 +6295,18 @@ components:
           type: integer
           readOnly: true
         target_type:
-          $ref: '#/components/schemas/TargetTypeEnum'
+          enum:
+          - room
+          - review
+          - message
+          - user
+          type: string
+          description: |-
+            * `room` - room
+            * `review` - review
+            * `message` - message
+            * `user` - user
+          x-spec-enum-id: 419efe661ee3fa5f
         object_id:
           type: integer
           maximum: 2147483647
@@ -5228,8 +6317,18 @@ components:
         details:
           type: string
         status:
-          allOf:
-          - $ref: '#/components/schemas/ReportStatusEnum'
+          enum:
+          - open
+          - in_review
+          - resolved
+          - rejected
+          type: string
+          description: |-
+            * `open` - Open
+            * `in_review` - In review
+            * `resolved` - Resolved
+            * `rejected` - Rejected
+          x-spec-enum-id: 4789b708f7d66383
           readOnly: true
         handled_by:
           type: integer
@@ -5342,21 +6441,55 @@ components:
           maximum: 2147483647
           minimum: -2147483648
         bathroom_type:
-          oneOf:
-          - $ref: '#/components/schemas/BathroomTypeEnum'
-          - $ref: '#/components/schemas/BlankEnum'
+          enum:
+          - private
+          - shared
+          - no_preference
+          - ''
+          type: string
+          description: |-
+            * `private` - Private
+            * `shared` - Shared
+            * `no_preference` - No preference
+          x-spec-enum-id: 2472ac1c3c68f340
         shared_living_space:
-          oneOf:
-          - $ref: '#/components/schemas/YesNoNoPreferenceEnum'
-          - $ref: '#/components/schemas/BlankEnum'
+          enum:
+          - 'yes'
+          - 'no'
+          - no_preference
+          - ''
+          type: string
+          description: |-
+            * `yes` - Yes
+            * `no` - No
+            * `no_preference` - No preference
+          x-spec-enum-id: 1220d6d51d23a789
         smoking_allowed_in_property:
-          oneOf:
-          - $ref: '#/components/schemas/YesNoNoPreferenceEnum'
-          - $ref: '#/components/schemas/BlankEnum'
+          enum:
+          - 'yes'
+          - 'no'
+          - no_preference
+          - ''
+          type: string
+          description: |-
+            * `yes` - Yes
+            * `no` - No
+            * `no_preference` - No preference
+          x-spec-enum-id: 1220d6d51d23a789
         suitable_for:
-          oneOf:
-          - $ref: '#/components/schemas/SuitableForEnum'
-          - $ref: '#/components/schemas/BlankEnum'
+          enum:
+          - one_person
+          - couple
+          - max_occupants
+          - no_preference
+          - ''
+          type: string
+          description: |-
+            * `one_person` - One person
+            * `couple` - Couple
+            * `max_occupants` - Maximum occupants
+            * `no_preference` - No preference
+          x-spec-enum-id: 3e382fda57d4ea8e
         max_occupants:
           type: integer
           maximum: 10
@@ -5373,29 +6506,82 @@ components:
           minimum: 0
           nullable: true
         household_type:
-          oneOf:
-          - $ref: '#/components/schemas/HouseholdTypeEnum'
-          - $ref: '#/components/schemas/BlankEnum'
+          enum:
+          - professional
+          - student
+          - mixed
+          - no_preference
+          - ''
+          type: string
+          description: |-
+            * `professional` - Professional
+            * `student` - Student
+            * `mixed` - Mixed
+            * `no_preference` - No preference
+          x-spec-enum-id: 96a53eeb1b8ed5ff
         household_environment:
-          oneOf:
-          - $ref: '#/components/schemas/HouseholdEnvironmentEnum'
-          - $ref: '#/components/schemas/BlankEnum'
+          enum:
+          - quiet
+          - sociable
+          - mixed
+          - no_preference
+          - ''
+          type: string
+          description: |-
+            * `quiet` - Quiet
+            * `sociable` - Sociable
+            * `mixed` - Mixed
+            * `no_preference` - No preference
+          x-spec-enum-id: 96d5fc2dead48820
         pets_allowed:
-          oneOf:
-          - $ref: '#/components/schemas/YesNoNoPreferenceEnum'
-          - $ref: '#/components/schemas/BlankEnum'
+          enum:
+          - 'yes'
+          - 'no'
+          - no_preference
+          - ''
+          type: string
+          description: |-
+            * `yes` - Yes
+            * `no` - No
+            * `no_preference` - No preference
+          x-spec-enum-id: 1220d6d51d23a789
         inclusive_household:
-          oneOf:
-          - $ref: '#/components/schemas/YesNoNoPreferenceEnum'
-          - $ref: '#/components/schemas/BlankEnum'
+          enum:
+          - 'yes'
+          - 'no'
+          - no_preference
+          - ''
+          type: string
+          description: |-
+            * `yes` - Yes
+            * `no` - No
+            * `no_preference` - No preference
+          x-spec-enum-id: 1220d6d51d23a789
         accessible_entry:
-          oneOf:
-          - $ref: '#/components/schemas/YesNoNoPreferenceEnum'
-          - $ref: '#/components/schemas/BlankEnum'
+          enum:
+          - 'yes'
+          - 'no'
+          - no_preference
+          - ''
+          type: string
+          description: |-
+            * `yes` - Yes
+            * `no` - No
+            * `no_preference` - No preference
+          x-spec-enum-id: 1220d6d51d23a789
         free_to_contact:
           type: boolean
         property_type:
-          $ref: '#/components/schemas/PropertyTypeEnum'
+          enum:
+          - flat
+          - house
+          - studio
+          type: string
+          description: |-
+            * `flat` - Flat
+            * `house` - House
+            * `studio` - Studio
+          x-spec-enum-id: fb3aa58064314015
         parking_available:
           type: boolean
         avg_rating:
@@ -5418,7 +6604,16 @@ components:
           format: date
           nullable: true
         status:
-          $ref: '#/components/schemas/RoomStatusEnum'
+          enum:
+          - draft
+          - active
+          - hidden
+          type: string
+          description: |-
+            * `draft` - Draft
+            * `active` - Active
+            * `hidden` - Hidden
+          x-spec-enum-id: d48488fd6e64bcb3
         is_shared_room:
           type: boolean
           description: Room is in an existing flat/house share.
@@ -5443,9 +6638,29 @@ components:
           minimum: 0
           nullable: true
         room_for:
-          $ref: '#/components/schemas/RoomForEnum'
+          enum:
+          - any
+          - females
+          - males
+          - couples
+          type: string
+          description: |-
+            * `any` - Don't mind
+            * `females` - Females
+            * `males` - Males
+            * `couples` - Couples
+          x-spec-enum-id: a929ee7f5195bbd7
         room_size:
-          $ref: '#/components/schemas/RoomSizeEnum'
+          enum:
+          - dont_mind
+          - single
+          - double
+          type: string
+          description: |-
+            * `dont_mind` - Don't mind
+            * `single` - Single
+            * `double` - Double
+          x-spec-enum-id: 2096c1823c8a5f8c
         existing_flatmate_age:
           type: integer
           maximum: 32767
@@ -5453,13 +6668,31 @@ components:
           nullable: true
           description: Approximate age of current flatmate or average age in the household.
         existing_flatmate_gender:
-          oneOf:
-          - $ref: '#/components/schemas/ExistingFlatmateGenderEnum'
-          - $ref: '#/components/schemas/BlankEnum'
+          enum:
+          - male
+          - female
+          - non_binary
+          - prefer_not_to_say
+          - ''
+          type: string
+          description: |-
+            * `male` - Male
+            * `female` - Female
+            * `non_binary` - Non-binary
+            * `prefer_not_to_say` - Prefer not to say
+          x-spec-enum-id: 35b719100039a96b
         existing_flatmate_occupation:
-          oneOf:
-          - $ref: '#/components/schemas/ExistingFlatmateOccupationEnum'
-          - $ref: '#/components/schemas/BlankEnum'
+          enum:
+          - professional
+          - student
+          - prefer_not_to_say
+          - ''
+          type: string
+          description: |-
+            * `professional` - Professional
+            * `student` - Student
+            * `prefer_not_to_say` - Prefer not to say
+          x-spec-enum-id: 143f737aa5eaec44
         existing_flatmate_nationality:
           type: string
           maxLength: 100
@@ -5467,35 +6700,47 @@ components:
           type: string
           maxLength: 100
         existing_flatmate_smoking:
+          enum:
+          - 'yes'
+          - 'no'
+          - no_preference
+          - ''
+          type: string
+          x-spec-enum-id: 1220d6d51d23a789
           description: |-
             Do existing flatmates smoke?
 
             * `yes` - Yes
             * `no` - No
             * `no_preference` - No preference
-          oneOf:
-          - $ref: '#/components/schemas/YesNoNoPreferenceEnum'
-          - $ref: '#/components/schemas/BlankEnum'
         existing_flatmate_pets:
+          enum:
+          - 'yes'
+          - 'no'
+          - no_preference
+          - ''
+          type: string
+          x-spec-enum-id: 1220d6d51d23a789
           description: |-
             Are there pets in the home?
 
             * `yes` - Yes
             * `no` - No
             * `no_preference` - No preference
-          oneOf:
-          - $ref: '#/components/schemas/YesNoNoPreferenceEnum'
-          - $ref: '#/components/schemas/BlankEnum'
         existing_flatmate_lgbtqia_household:
+          enum:
+          - 'yes'
+          - 'no'
+          - no_preference
+          - ''
+          type: string
+          x-spec-enum-id: 1220d6d51d23a789
           description: |-
             Whether the household includes LGBTQIA+ people.
 
             * `yes` - Yes
             * `no` - No
             * `no_preference` - No preference
-          oneOf:
-          - $ref: '#/components/schemas/YesNoNoPreferenceEnum'
-          - $ref: '#/components/schemas/BlankEnum'
         preferred_flatmate_nationality:
           type: string
           description: Preferred nationality of future flatmate (free text from dropdown).
@@ -5515,26 +6760,42 @@ components:
           minimum: 0
           nullable: true
         preferred_flatmate_occupation:
+          enum:
+          - students_only
+          - not_for_students
+          - open_to_everyone
+          - ''
+          type: string
+          x-spec-enum-id: 6edc56ab54b6a786
           description: |-
             Student / non-student preference for future flatmate.
 
             * `students_only` - For students only
             * `not_for_students` - Not for students
             * `open_to_everyone` - Open to everyone
-          oneOf:
-          - $ref: '#/components/schemas/PreferredFlatmateOccupationEnum'
-          - $ref: '#/components/schemas/BlankEnum'
         preferred_flatmate_pets:
+          enum:
+          - 'yes'
+          - 'no'
+          - no_preference
+          - ''
+          type: string
+          x-spec-enum-id: 1220d6d51d23a789
           description: |-
             Whether future flatmate can have / be around pets.
 
             * `yes` - Yes
             * `no` - No
             * `no_preference` - No preference
-          oneOf:
-          - $ref: '#/components/schemas/YesNoNoPreferenceEnum'
-          - $ref: '#/components/schemas/BlankEnum'
         preferred_flatmate_gender:
+          enum:
+          - no_preference
+          - male
+          - female
+          - others
+          - ''
+          type: string
+          x-spec-enum-id: 1d6dd04be4fe9acb
           description: |-
             Preferred gender of future flatmate.
 
@@ -5542,48 +6803,60 @@ components:
             * `male` - Male
             * `female` - Female
             * `others` - Others
-          oneOf:
-          - $ref: '#/components/schemas/PreferredFlatmateGenderEnum'
-          - $ref: '#/components/schemas/BlankEnum'
         preferred_flatmate_smoking:
+          enum:
+          - 'yes'
+          - 'no'
+          - no_preference
+          - ''
+          type: string
+          x-spec-enum-id: 1220d6d51d23a789
           description: |-
             Whether future flatmate can smoke or not.
 
             * `yes` - Yes
             * `no` - No
             * `no_preference` - No preference
-          oneOf:
-          - $ref: '#/components/schemas/YesNoNoPreferenceEnum'
-          - $ref: '#/components/schemas/BlankEnum'
         preferred_flatmate_partners_allowed:
+          enum:
+          - 'yes'
+          - 'no'
+          - ''
+          type: string
+          x-spec-enum-id: 5af41d13614a5c41
           description: |-
             Whether partners are allowed to stay over.
 
             * `yes` - Yes
             * `no` - No
-          oneOf:
-          - $ref: '#/components/schemas/PreferredFlatmatePartnersAllowedEnum'
-          - $ref: '#/components/schemas/BlankEnum'
         preferred_flatmate_lgbtqia:
+          enum:
+          - 'yes'
+          - 'no'
+          - no_preference
+          - ''
+          type: string
+          x-spec-enum-id: 1220d6d51d23a789
           description: |-
             Preference about LGBTQIA+ flatmates.
 
             * `yes` - Yes
             * `no` - No
             * `no_preference` - No preference
-          oneOf:
-          - $ref: '#/components/schemas/YesNoNoPreferenceEnum'
-          - $ref: '#/components/schemas/BlankEnum'
         preferred_flatmate_vegan_vegetarian:
+          enum:
+          - 'yes'
+          - 'no'
+          - no_preference
+          - ''
+          type: string
+          x-spec-enum-id: 1220d6d51d23a789
           description: |-
             Preference about vegan/vegetarian flatmates.
 
             * `yes` - Yes
             * `no` - No
             * `no_preference` - No preference
-          oneOf:
-          - $ref: '#/components/schemas/YesNoNoPreferenceEnum'
-          - $ref: '#/components/schemas/BlankEnum'
         availability_from_time:
           type: string
           format: time
@@ -5596,8 +6869,13 @@ components:
           type: boolean
           nullable: true
         view_available_days_mode:
-          allOf:
-          - $ref: '#/components/schemas/ViewAvailableDaysModeEnum'
+          enum:
+          - everyday
+          - weekdays
+          - weekends
+          - custom
+          type: string
+          x-spec-enum-id: d2a75cae62838bd5
           description: |-
             Everyday / weekdays only / weekends only / custom dates.
 
@@ -5638,7 +6916,14 @@ components:
       type: object
       properties:
         action:
-          $ref: '#/components/schemas/TenancyExtensionRespondActionEnum'
+          enum:
+          - accept
+          - reject
+          type: string
+          description: |-
+            * `accept` - accept
+            * `reject` - reject
+          x-spec-enum-id: 5f16d67796b09e01
     PatchedUser:
       type: object
       properties:
@@ -5675,7 +6960,14 @@ components:
           type: integer
           readOnly: true
         role:
-          $ref: '#/components/schemas/UserRoleEnum'
+          enum:
+          - landlord
+          - seeker
+          type: string
+          description: |-
+            * `landlord` - Landlord
+            * `seeker` - Seeker
+          x-spec-enum-id: 0ef412fbe3235c72
         role_detail:
           type: string
           maxLength: 64
@@ -5770,7 +7062,20 @@ components:
           type: string
           readOnly: true
         status:
-          $ref: '#/components/schemas/StripeIntentStatusEnum'
+          enum:
+          - requires_payment_method
+          - requires_action
+          - processing
+          - succeeded
+          - canceled
+          type: string
+          description: |-
+            * `requires_payment_method` - Requires payment
+            * `requires_action` - Requires action
+            * `processing` - Processing
+            * `succeeded` - Succeeded
+            * `canceled` - Canceled
+          x-spec-enum-id: 65a072a37a6fe5c2
         amount:
           type: string
           format: decimal
@@ -5803,7 +7108,20 @@ components:
           type: string
           readOnly: true
         status:
-          $ref: '#/components/schemas/StripeIntentStatusEnum'
+          enum:
+          - requires_payment_method
+          - requires_action
+          - processing
+          - succeeded
+          - canceled
+          type: string
+          description: |-
+            * `requires_payment_method` - Requires payment
+            * `requires_action` - Requires action
+            * `processing` - Processing
+            * `succeeded` - Succeeded
+            * `canceled` - Canceled
+          x-spec-enum-id: 65a072a37a6fe5c2
         amount:
           type: string
           format: decimal
@@ -5871,44 +7189,6 @@ components:
       required:
       - data
       - ok
-    PreferredFlatmateGenderEnum:
-      enum:
-      - no_preference
-      - male
-      - female
-      - others
-      type: string
-      description: |-
-        * `no_preference` - No preference
-        * `male` - Male
-        * `female` - Female
-        * `others` - Others
-    PreferredFlatmateOccupationEnum:
-      enum:
-      - students_only
-      - not_for_students
-      - open_to_everyone
-      type: string
-      description: |-
-        * `students_only` - For students only
-        * `not_for_students` - Not for students
-        * `open_to_everyone` - Open to everyone
-    PreferredFlatmatePartnersAllowedEnum:
-      enum:
-      - 'yes'
-      - 'no'
-      type: string
-      description: |-
-        * `yes` - Yes
-        * `no` - No
-    PreferredLanguageEnum:
-      enum:
-      - en-GB
-      - en-US
-      type: string
-      description: |-
-        * `en-GB` - English (UK)
-        * `en-US` - English (US)
     PrivacyPreferences:
       type: object
       properties:
@@ -5917,7 +7197,14 @@ components:
         allow_search_indexing_default:
           type: boolean
         preferred_language:
-          $ref: '#/components/schemas/PreferredLanguageEnum'
+          enum:
+          - en-GB
+          - en-US
+          type: string
+          description: |-
+            * `en-GB` - English (UK)
+            * `en-US` - English (US)
+          x-spec-enum-id: 8a33d790289546ea
     ProfilePage:
       type: object
       properties:
@@ -5992,16 +7279,6 @@ components:
       - tenant_reviews_count
       - total_reviews
       - username
-    PropertyTypeEnum:
-      enum:
-      - flat
-      - house
-      - studio
-      type: string
-      description: |-
-        * `flat` - Flat
-        * `house` - House
-        * `studio` - Studio
     ProviderWebhookRequest:
       type: object
       properties:
@@ -6041,7 +7318,14 @@ components:
         last_name:
           type: string
         role:
-          $ref: '#/components/schemas/UserRoleEnum'
+          enum:
+          - landlord
+          - seeker
+          type: string
+          description: |-
+            * `landlord` - Landlord
+            * `seeker` - Seeker
+          x-spec-enum-id: 0ef412fbe3235c72
         terms_accepted:
           type: boolean
         terms_version:
@@ -6065,7 +7349,18 @@ components:
           type: integer
           readOnly: true
         target_type:
-          $ref: '#/components/schemas/TargetTypeEnum'
+          enum:
+          - room
+          - review
+          - message
+          - user
+          type: string
+          description: |-
+            * `room` - room
+            * `review` - review
+            * `message` - message
+            * `user` - user
+          x-spec-enum-id: 419efe661ee3fa5f
         object_id:
           type: integer
           maximum: 2147483647
@@ -6076,8 +7371,18 @@ components:
         details:
           type: string
         status:
-          allOf:
-          - $ref: '#/components/schemas/ReportStatusEnum'
+          enum:
+          - open
+          - in_review
+          - resolved
+          - rejected
+          type: string
+          description: |-
+            * `open` - Open
+            * `in_review` - In review
+            * `resolved` - Resolved
+            * `rejected` - Rejected
+          x-spec-enum-id: 4789b708f7d66383
           readOnly: true
         handled_by:
           type: integer
@@ -6105,18 +7410,6 @@ components:
       - status
       - target_type
       - updated_at
-    ReportStatusEnum:
-      enum:
-      - open
-      - in_review
-      - resolved
-      - rejected
-      type: string
-      description: |-
-        * `open` - Open
-        * `in_review` - In review
-        * `resolved` - Resolved
-        * `rejected` - Rejected
     Review:
       type: object
       properties:
@@ -6140,11 +7433,17 @@ components:
           readOnly: true
           nullable: true
         role:
+          enum:
+          - tenant_to_landlord
+          - landlord_to_tenant
+          - null
+          type: string
+          description: |-
+            * `tenant_to_landlord` - Tenant → Landlord
+            * `landlord_to_tenant` - Landlord → Tenant
+          x-spec-enum-id: a042d183b0d52418
           readOnly: true
           nullable: true
-          oneOf:
-          - $ref: '#/components/schemas/RoleA04Enum'
-          - $ref: '#/components/schemas/NullEnum'
         review_flags:
           readOnly: true
         overall_rating:
@@ -6250,14 +7549,6 @@ components:
           nullable: true
       required:
       - tenancy_id
-    RoleA04Enum:
-      enum:
-      - tenant_to_landlord
-      - landlord_to_tenant
-      type: string
-      description: |-
-        * `tenant_to_landlord` - Tenant → Landlord
-        * `landlord_to_tenant` - Landlord → Tenant
     Room:
       type: object
       properties:
@@ -6354,21 +7645,55 @@ components:
           maximum: 2147483647
           minimum: -2147483648
         bathroom_type:
-          oneOf:
-          - $ref: '#/components/schemas/BathroomTypeEnum'
-          - $ref: '#/components/schemas/BlankEnum'
+          enum:
+          - private
+          - shared
+          - no_preference
+          - ''
+          type: string
+          description: |-
+            * `private` - Private
+            * `shared` - Shared
+            * `no_preference` - No preference
+          x-spec-enum-id: 2472ac1c3c68f340
         shared_living_space:
-          oneOf:
-          - $ref: '#/components/schemas/YesNoNoPreferenceEnum'
-          - $ref: '#/components/schemas/BlankEnum'
+          enum:
+          - 'yes'
+          - 'no'
+          - no_preference
+          - ''
+          type: string
+          description: |-
+            * `yes` - Yes
+            * `no` - No
+            * `no_preference` - No preference
+          x-spec-enum-id: 1220d6d51d23a789
         smoking_allowed_in_property:
-          oneOf:
-          - $ref: '#/components/schemas/YesNoNoPreferenceEnum'
-          - $ref: '#/components/schemas/BlankEnum'
+          enum:
+          - 'yes'
+          - 'no'
+          - no_preference
+          - ''
+          type: string
+          description: |-
+            * `yes` - Yes
+            * `no` - No
+            * `no_preference` - No preference
+          x-spec-enum-id: 1220d6d51d23a789
         suitable_for:
-          oneOf:
-          - $ref: '#/components/schemas/SuitableForEnum'
-          - $ref: '#/components/schemas/BlankEnum'
+          enum:
+          - one_person
+          - couple
+          - max_occupants
+          - no_preference
+          - ''
+          type: string
+          description: |-
+            * `one_person` - One person
+            * `couple` - Couple
+            * `max_occupants` - Maximum occupants
+            * `no_preference` - No preference
+          x-spec-enum-id: 3e382fda57d4ea8e
         max_occupants:
           type: integer
           maximum: 10
@@ -6385,29 +7710,82 @@ components:
           minimum: 0
           nullable: true
         household_type:
-          oneOf:
-          - $ref: '#/components/schemas/HouseholdTypeEnum'
-          - $ref: '#/components/schemas/BlankEnum'
+          enum:
+          - professional
+          - student
+          - mixed
+          - no_preference
+          - ''
+          type: string
+          description: |-
+            * `professional` - Professional
+            * `student` - Student
+            * `mixed` - Mixed
+            * `no_preference` - No preference
+          x-spec-enum-id: 96a53eeb1b8ed5ff
         household_environment:
-          oneOf:
-          - $ref: '#/components/schemas/HouseholdEnvironmentEnum'
-          - $ref: '#/components/schemas/BlankEnum'
+          enum:
+          - quiet
+          - sociable
+          - mixed
+          - no_preference
+          - ''
+          type: string
+          description: |-
+            * `quiet` - Quiet
+            * `sociable` - Sociable
+            * `mixed` - Mixed
+            * `no_preference` - No preference
+          x-spec-enum-id: 96d5fc2dead48820
         pets_allowed:
-          oneOf:
-          - $ref: '#/components/schemas/YesNoNoPreferenceEnum'
-          - $ref: '#/components/schemas/BlankEnum'
+          enum:
+          - 'yes'
+          - 'no'
+          - no_preference
+          - ''
+          type: string
+          description: |-
+            * `yes` - Yes
+            * `no` - No
+            * `no_preference` - No preference
+          x-spec-enum-id: 1220d6d51d23a789
         inclusive_household:
-          oneOf:
-          - $ref: '#/components/schemas/YesNoNoPreferenceEnum'
-          - $ref: '#/components/schemas/BlankEnum'
+          enum:
+          - 'yes'
+          - 'no'
+          - no_preference
+          - ''
+          type: string
+          description: |-
+            * `yes` - Yes
+            * `no` - No
+            * `no_preference` - No preference
+          x-spec-enum-id: 1220d6d51d23a789
         accessible_entry:
-          oneOf:
-          - $ref: '#/components/schemas/YesNoNoPreferenceEnum'
-          - $ref: '#/components/schemas/BlankEnum'
+          enum:
+          - 'yes'
+          - 'no'
+          - no_preference
+          - ''
+          type: string
+          description: |-
+            * `yes` - Yes
+            * `no` - No
+            * `no_preference` - No preference
+          x-spec-enum-id: 1220d6d51d23a789
         free_to_contact:
           type: boolean
         property_type:
-          $ref: '#/components/schemas/PropertyTypeEnum'
+          enum:
+          - flat
+          - house
+          - studio
+          type: string
+          description: |-
+            * `flat` - Flat
+            * `house` - House
+            * `studio` - Studio
+          x-spec-enum-id: fb3aa58064314015
         parking_available:
           type: boolean
         avg_rating:
@@ -6430,7 +7808,16 @@ components:
           format: date
           nullable: true
         status:
-          $ref: '#/components/schemas/RoomStatusEnum'
+          enum:
+          - draft
+          - active
+          - hidden
+          type: string
+          description: |-
+            * `draft` - Draft
+            * `active` - Active
+            * `hidden` - Hidden
+          x-spec-enum-id: d48488fd6e64bcb3
         is_shared_room:
           type: boolean
           description: Room is in an existing flat/house share.
@@ -6455,9 +7842,29 @@ components:
           minimum: 0
           nullable: true
         room_for:
-          $ref: '#/components/schemas/RoomForEnum'
+          enum:
+          - any
+          - females
+          - males
+          - couples
+          type: string
+          description: |-
+            * `any` - Don't mind
+            * `females` - Females
+            * `males` - Males
+            * `couples` - Couples
+          x-spec-enum-id: a929ee7f5195bbd7
         room_size:
-          $ref: '#/components/schemas/RoomSizeEnum'
+          enum:
+          - dont_mind
+          - single
+          - double
+          type: string
+          description: |-
+            * `dont_mind` - Don't mind
+            * `single` - Single
+            * `double` - Double
+          x-spec-enum-id: 2096c1823c8a5f8c
         existing_flatmate_age:
           type: integer
           maximum: 32767
@@ -6465,13 +7872,31 @@ components:
           nullable: true
           description: Approximate age of current flatmate or average age in the household.
         existing_flatmate_gender:
-          oneOf:
-          - $ref: '#/components/schemas/ExistingFlatmateGenderEnum'
-          - $ref: '#/components/schemas/BlankEnum'
+          enum:
+          - male
+          - female
+          - non_binary
+          - prefer_not_to_say
+          - ''
+          type: string
+          description: |-
+            * `male` - Male
+            * `female` - Female
+            * `non_binary` - Non-binary
+            * `prefer_not_to_say` - Prefer not to say
+          x-spec-enum-id: 35b719100039a96b
         existing_flatmate_occupation:
-          oneOf:
-          - $ref: '#/components/schemas/ExistingFlatmateOccupationEnum'
-          - $ref: '#/components/schemas/BlankEnum'
+          enum:
+          - professional
+          - student
+          - prefer_not_to_say
+          - ''
+          type: string
+          description: |-
+            * `professional` - Professional
+            * `student` - Student
+            * `prefer_not_to_say` - Prefer not to say
+          x-spec-enum-id: 143f737aa5eaec44
         existing_flatmate_nationality:
           type: string
           maxLength: 100
@@ -6479,35 +7904,47 @@ components:
           type: string
           maxLength: 100
         existing_flatmate_smoking:
+          enum:
+          - 'yes'
+          - 'no'
+          - no_preference
+          - ''
+          type: string
+          x-spec-enum-id: 1220d6d51d23a789
           description: |-
             Do existing flatmates smoke?
 
             * `yes` - Yes
             * `no` - No
             * `no_preference` - No preference
-          oneOf:
-          - $ref: '#/components/schemas/YesNoNoPreferenceEnum'
-          - $ref: '#/components/schemas/BlankEnum'
         existing_flatmate_pets:
+          enum:
+          - 'yes'
+          - 'no'
+          - no_preference
+          - ''
+          type: string
+          x-spec-enum-id: 1220d6d51d23a789
           description: |-
             Are there pets in the home?
 
             * `yes` - Yes
             * `no` - No
             * `no_preference` - No preference
-          oneOf:
-          - $ref: '#/components/schemas/YesNoNoPreferenceEnum'
-          - $ref: '#/components/schemas/BlankEnum'
         existing_flatmate_lgbtqia_household:
+          enum:
+          - 'yes'
+          - 'no'
+          - no_preference
+          - ''
+          type: string
+          x-spec-enum-id: 1220d6d51d23a789
           description: |-
             Whether the household includes LGBTQIA+ people.
 
             * `yes` - Yes
             * `no` - No
             * `no_preference` - No preference
-          oneOf:
-          - $ref: '#/components/schemas/YesNoNoPreferenceEnum'
-          - $ref: '#/components/schemas/BlankEnum'
         preferred_flatmate_nationality:
           type: string
           description: Preferred nationality of future flatmate (free text from dropdown).
@@ -6527,26 +7964,42 @@ components:
           minimum: 0
           nullable: true
         preferred_flatmate_occupation:
+          enum:
+          - students_only
+          - not_for_students
+          - open_to_everyone
+          - ''
+          type: string
+          x-spec-enum-id: 6edc56ab54b6a786
           description: |-
             Student / non-student preference for future flatmate.
 
             * `students_only` - For students only
             * `not_for_students` - Not for students
             * `open_to_everyone` - Open to everyone
-          oneOf:
-          - $ref: '#/components/schemas/PreferredFlatmateOccupationEnum'
-          - $ref: '#/components/schemas/BlankEnum'
         preferred_flatmate_pets:
+          enum:
+          - 'yes'
+          - 'no'
+          - no_preference
+          - ''
+          type: string
+          x-spec-enum-id: 1220d6d51d23a789
           description: |-
             Whether future flatmate can have / be around pets.
 
             * `yes` - Yes
             * `no` - No
             * `no_preference` - No preference
-          oneOf:
-          - $ref: '#/components/schemas/YesNoNoPreferenceEnum'
-          - $ref: '#/components/schemas/BlankEnum'
         preferred_flatmate_gender:
+          enum:
+          - no_preference
+          - male
+          - female
+          - others
+          - ''
+          type: string
+          x-spec-enum-id: 1d6dd04be4fe9acb
           description: |-
             Preferred gender of future flatmate.
 
@@ -6554,48 +8007,60 @@ components:
             * `male` - Male
             * `female` - Female
             * `others` - Others
-          oneOf:
-          - $ref: '#/components/schemas/PreferredFlatmateGenderEnum'
-          - $ref: '#/components/schemas/BlankEnum'
         preferred_flatmate_smoking:
+          enum:
+          - 'yes'
+          - 'no'
+          - no_preference
+          - ''
+          type: string
+          x-spec-enum-id: 1220d6d51d23a789
           description: |-
             Whether future flatmate can smoke or not.
 
             * `yes` - Yes
             * `no` - No
             * `no_preference` - No preference
-          oneOf:
-          - $ref: '#/components/schemas/YesNoNoPreferenceEnum'
-          - $ref: '#/components/schemas/BlankEnum'
         preferred_flatmate_partners_allowed:
+          enum:
+          - 'yes'
+          - 'no'
+          - ''
+          type: string
+          x-spec-enum-id: 5af41d13614a5c41
           description: |-
             Whether partners are allowed to stay over.
 
             * `yes` - Yes
             * `no` - No
-          oneOf:
-          - $ref: '#/components/schemas/PreferredFlatmatePartnersAllowedEnum'
-          - $ref: '#/components/schemas/BlankEnum'
         preferred_flatmate_lgbtqia:
+          enum:
+          - 'yes'
+          - 'no'
+          - no_preference
+          - ''
+          type: string
+          x-spec-enum-id: 1220d6d51d23a789
           description: |-
             Preference about LGBTQIA+ flatmates.
 
             * `yes` - Yes
             * `no` - No
             * `no_preference` - No preference
-          oneOf:
-          - $ref: '#/components/schemas/YesNoNoPreferenceEnum'
-          - $ref: '#/components/schemas/BlankEnum'
         preferred_flatmate_vegan_vegetarian:
+          enum:
+          - 'yes'
+          - 'no'
+          - no_preference
+          - ''
+          type: string
+          x-spec-enum-id: 1220d6d51d23a789
           description: |-
             Preference about vegan/vegetarian flatmates.
 
             * `yes` - Yes
             * `no` - No
             * `no_preference` - No preference
-          oneOf:
-          - $ref: '#/components/schemas/YesNoNoPreferenceEnum'
-          - $ref: '#/components/schemas/BlankEnum'
         availability_from_time:
           type: string
           format: time
@@ -6608,8 +8073,13 @@ components:
           type: boolean
           nullable: true
         view_available_days_mode:
-          allOf:
-          - $ref: '#/components/schemas/ViewAvailableDaysModeEnum'
+          enum:
+          - everyday
+          - weekdays
+          - weekends
+          - custom
+          type: string
+          x-spec-enum-id: d2a75cae62838bd5
           description: |-
             Everyday / weekdays only / weekends only / custom dates.
 
@@ -6670,18 +8140,6 @@ components:
       - id
       - name
       - slug
-    RoomForEnum:
-      enum:
-      - any
-      - females
-      - males
-      - couples
-      type: string
-      description: |-
-        * `any` - Don't mind
-        * `females` - Females
-        * `males` - Males
-        * `couples` - Couples
     RoomImage:
       type: object
       properties:
@@ -6695,24 +8153,22 @@ components:
           type: string
           format: uri
         status:
-          allOf:
-          - $ref: '#/components/schemas/RoomImageStatusEnum'
+          enum:
+          - pending
+          - approved
+          - rejected
+          type: string
+          description: |-
+            * `pending` - Pending
+            * `approved` - Approved
+            * `rejected` - Rejected
+          x-spec-enum-id: de3702061fc1d433
           readOnly: true
       required:
       - id
       - image
       - room
       - status
-    RoomImageStatusEnum:
-      enum:
-      - pending
-      - approved
-      - rejected
-      type: string
-      description: |-
-        * `pending` - Pending
-        * `approved` - Approved
-        * `rejected` - Rejected
     RoomPhotoUploadRequest:
       type: object
       properties:
@@ -6737,26 +8193,6 @@ components:
       required:
       - photos
       - room
-    RoomSizeEnum:
-      enum:
-      - dont_mind
-      - single
-      - double
-      type: string
-      description: |-
-        * `dont_mind` - Don't mind
-        * `single` - Single
-        * `double` - Double
-    RoomStatusEnum:
-      enum:
-      - draft
-      - active
-      - hidden
-      type: string
-      description: |-
-        * `draft` - Draft
-        * `active` - Active
-        * `hidden` - Hidden
     StripeCancelData:
       type: object
       properties:
@@ -6788,20 +8224,6 @@ components:
       required:
       - checkout_url
       - session_id
-    StripeIntentStatusEnum:
-      enum:
-      - requires_payment_method
-      - requires_action
-      - processing
-      - succeeded
-      - canceled
-      type: string
-      description: |-
-        * `requires_payment_method` - Requires payment
-        * `requires_action` - Requires action
-        * `processing` - Processing
-        * `succeeded` - Succeeded
-        * `canceled` - Canceled
     StripeSuccessData:
       type: object
       properties:
@@ -6825,30 +8247,6 @@ components:
       required:
       - data
       - ok
-    SuitableForEnum:
-      enum:
-      - one_person
-      - couple
-      - max_occupants
-      - no_preference
-      type: string
-      description: |-
-        * `one_person` - One person
-        * `couple` - Couple
-        * `max_occupants` - Maximum occupants
-        * `no_preference` - No preference
-    TargetTypeEnum:
-      enum:
-      - room
-      - review
-      - message
-      - user
-      type: string
-      description: |-
-        * `room` - room
-        * `review` - review
-        * `message` - message
-        * `user` - user
     TenancyDetail:
       type: object
       properties:
@@ -6886,8 +8284,20 @@ components:
           readOnly: true
           nullable: true
         status:
-          allOf:
-          - $ref: '#/components/schemas/TenancyDetailStatusEnum'
+          enum:
+          - proposed
+          - confirmed
+          - active
+          - ended
+          - cancelled
+          type: string
+          description: |-
+            * `proposed` - Proposed
+            * `confirmed` - Confirmed
+            * `active` - Active
+            * `ended` - Ended
+            * `cancelled` - Cancelled
+          x-spec-enum-id: bed60eff9785955c
           readOnly: true
         review_open_at:
           type: string
@@ -6934,20 +8344,6 @@ components:
       - tenant
       - tenant_confirmed_at
       - updated_at
-    TenancyDetailStatusEnum:
-      enum:
-      - proposed
-      - confirmed
-      - active
-      - ended
-      - cancelled
-      type: string
-      description: |-
-        * `proposed` - Proposed
-        * `confirmed` - Confirmed
-        * `active` - Active
-        * `ended` - Ended
-        * `cancelled` - Cancelled
     TenancyExtensionCreate:
       type: object
       properties:
@@ -6957,14 +8353,6 @@ components:
           minimum: 1
       required:
       - proposed_duration_months
-    TenancyExtensionRespondActionEnum:
-      enum:
-      - accept
-      - reject
-      type: string
-      description: |-
-        * `accept` - accept
-        * `reject` - reject
     TenancyExtensionResponse:
       type: object
       properties:
@@ -7035,7 +8423,16 @@ components:
         Expected by tests in propertylist_app/tests/tenancies/test_tenancy_proposal_flow.py
       properties:
         action:
-          $ref: '#/components/schemas/TenancyRespondActionEnum'
+          enum:
+          - confirm
+          - propose_changes
+          - cancel
+          type: string
+          description: |-
+            * `confirm` - confirm
+            * `propose_changes` - propose_changes
+            * `cancel` - cancel
+          x-spec-enum-id: b35f3268601df572
         move_in_date:
           type: string
           format: date
@@ -7045,16 +8442,6 @@ components:
           minimum: 1
       required:
       - action
-    TenancyRespondActionEnum:
-      enum:
-      - confirm
-      - propose_changes
-      - cancel
-      type: string
-      description: |-
-        * `confirm` - confirm
-        * `propose_changes` - propose_changes
-        * `cancel` - cancel
     ThreadMarkReadData:
       type: object
       properties:
@@ -7103,27 +8490,26 @@ components:
       type: object
       properties:
         label:
-          $ref: '#/components/schemas/ThreadSetLabelRequestLabelEnum'
+          enum:
+          - none
+          - viewing_scheduled
+          - viewing_done
+          - good_fit
+          - unsure
+          - not_a_fit
+          - paperwork_pending
+          type: string
+          description: |-
+            * `none` - none
+            * `viewing_scheduled` - viewing_scheduled
+            * `viewing_done` - viewing_done
+            * `good_fit` - good_fit
+            * `unsure` - unsure
+            * `not_a_fit` - not_a_fit
+            * `paperwork_pending` - paperwork_pending
+          x-spec-enum-id: 756a1165a13994a8
       required:
       - label
-    ThreadSetLabelRequestLabelEnum:
-      enum:
-      - none
-      - viewing_scheduled
-      - viewing_done
-      - good_fit
-      - unsure
-      - not_a_fit
-      - paperwork_pending
-      type: string
-      description: |-
-        * `none` - none
-        * `viewing_scheduled` - viewing_scheduled
-        * `viewing_done` - viewing_done
-        * `good_fit` - good_fit
-        * `unsure` - unsure
-        * `not_a_fit` - not_a_fit
-        * `paperwork_pending` - paperwork_pending
     ThreadSetLabelResponse:
       type: object
       properties:
@@ -7184,11 +8570,6 @@ components:
           type: string
       required:
       - refresh
-    TypeEnum:
-      enum:
-      - message
-      type: string
-      description: '* `message` - Message'
     User:
       type: object
       properties:
@@ -7229,7 +8610,14 @@ components:
           type: integer
           readOnly: true
         role:
-          $ref: '#/components/schemas/UserRoleEnum'
+          enum:
+          - landlord
+          - seeker
+          type: string
+          description: |-
+            * `landlord` - Landlord
+            * `seeker` - Seeker
+          x-spec-enum-id: 0ef412fbe3235c72
         role_detail:
           type: string
           maxLength: 64
@@ -7332,11 +8720,17 @@ components:
           type: integer
           readOnly: true
         role:
+          enum:
+          - tenant_to_landlord
+          - landlord_to_tenant
+          - ''
+          - null
+          type: string
+          description: |-
+            * `tenant_to_landlord` - Tenant → Landlord
+            * `landlord_to_tenant` - Landlord → Tenant
+          x-spec-enum-id: a042d183b0d52418
           nullable: true
-          oneOf:
-          - $ref: '#/components/schemas/RoleA04Enum'
-          - $ref: '#/components/schemas/BlankEnum'
-          - $ref: '#/components/schemas/NullEnum'
         overall_rating:
           type: integer
           maximum: 5
@@ -7400,26 +8794,6 @@ components:
       - tenant_average
       - tenant_count
       - total_reviews_count
-    UserRoleEnum:
-      enum:
-      - landlord
-      - seeker
-      type: string
-      description: |-
-        * `landlord` - Landlord
-        * `seeker` - Seeker
-    ViewAvailableDaysModeEnum:
-      enum:
-      - everyday
-      - weekdays
-      - weekends
-      - custom
-      type: string
-      description: |-
-        * `everyday` - Everyday
-        * `weekdays` - Weekdays only
-        * `weekends` - Weekends only
-        * `custom` - Custom dates
     WebhookAck:
       type: object
       properties:
@@ -7427,16 +8801,6 @@ components:
           type: boolean
         detail:
           type: string
-    YesNoNoPreferenceEnum:
-      enum:
-      - 'yes'
-      - 'no'
-      - no_preference
-      type: string
-      description: |-
-        * `yes` - Yes
-        * `no` - No
-        * `no_preference` - No preference
   securitySchemes:
     jwtAuth:
       type: http

@@ -1,0 +1,35 @@
+from rest_framework.renderers import JSONRenderer
+
+
+class EnvelopeJSONRenderer(JSONRenderer):
+    """
+    Wrap successful (2xx) responses into:
+      { "ok": true, "message": null, "data": ... }
+
+    - Leaves non-2xx responses untouched (your custom_exception_handler already formats those)
+    - Avoids double-wrapping if the response already contains an envelope
+    """
+
+    def render(self, data, accepted_media_type=None, renderer_context=None):
+        renderer_context = renderer_context or {}
+        response = renderer_context.get("response")
+
+        # If no Response context, render as-is.
+        if response is None:
+            return super().render(data, accepted_media_type, renderer_context)
+
+        status_code = getattr(response, "status_code", 200)
+
+        # Only wrap successful responses
+        if 200 <= status_code < 300:
+            # If already enveloped, don't wrap again
+            if isinstance(data, dict) and "ok" in data and "data" in data:
+                # Ensure message key exists for consistency
+                if "message" not in data:
+                    data = {**data, "message": None}
+                return super().render(data, accepted_media_type, renderer_context)
+
+            wrapped = {"ok": True, "message": None, "data": data}
+            return super().render(wrapped, accepted_media_type, renderer_context)
+
+        return super().render(data, accepted_media_type, renderer_context)

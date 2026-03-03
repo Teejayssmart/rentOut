@@ -9,7 +9,7 @@ import traceback
 from django.urls import reverse
 from rest_framework_simplejwt.views import TokenRefreshView
 from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
-
+from drf_spectacular.utils import extend_schema, extend_schema_view
 from datetime import datetime, timezone as dt_timezone
 
 from rest_framework.exceptions import ValidationError
@@ -298,16 +298,15 @@ def _pagination_meta(paginator):
     return {"count": count, "next": next_link, "previous": prev_link}
 
 
-def ok_response(data, *, meta=None, status_code=200):
+def ok_response(data, *, message=None, meta=None, status_code=200):
     """
-    Option A success response format (A3):
-    {"ok": true, "data": ..., "meta": ...?}
+    Standard success response envelope:
+    {"ok": true, "message": <str|null>, "data": ..., "meta": ...?}
 
-    Backwards-compatible keys for paginated list endpoints (tests/clients that still
-    expect DRF-style pagination):
+    Backwards-compatible keys for paginated list endpoints:
     - count, next, previous, results
     """
-    payload = {"ok": True, "data": data}
+    payload = {"ok": True, "message": message, "data": data}
 
     if meta is not None:
         payload["meta"] = meta
@@ -1049,6 +1048,11 @@ class RoomCategorieDetailAV(APIView):
 # Rooms
 # --------------------
 
+
+
+@extend_schema_view(
+    get=extend_schema(operation_id="api_v1_rooms_alt_list")
+)
 class RoomListGV(CachedAnonymousGETMixin, generics.ListAPIView):
     queryset = Room.objects.alive()
     serializer_class = RoomSerializer
@@ -1056,14 +1060,11 @@ class RoomListGV(CachedAnonymousGETMixin, generics.ListAPIView):
     ordering_fields = ["avg_rating", "category__name"]
     pagination_class = RoomLOPagination
 
-    # cache configuration for this endpoint
     cache_prefix = "rooms:list"
-    cache_ttl = 60  # short, keeps list fresh
-
+    cache_ttl = 60
 
     def list(self, request, *args, **kwargs):
         return super().list(request, *args, **kwargs)
-
 
 
 class RoomAV(APIView):
@@ -1072,39 +1073,40 @@ class RoomAV(APIView):
 
 
     @extend_schema(
-    responses={
-        200: inline_serializer(
-            name="PaginatedRoomListResponse",
-            fields={
-                "count": serializers.IntegerField(),
-                "next": serializers.CharField(required=False, allow_null=True),
-                "previous": serializers.CharField(required=False, allow_null=True),
-                "results": RoomSerializer(many=True),
-            },
+        operation_id="api_v1_rooms_list",
+        responses={
+            200: inline_serializer(
+                name="PaginatedRoomListResponse",
+                fields={
+                    "count": serializers.IntegerField(),
+                    "next": serializers.CharField(required=False, allow_null=True),
+                    "previous": serializers.CharField(required=False, allow_null=True),
+                    "results": RoomSerializer(many=True),
+                },
+            )
+        },
+        parameters=[
+            OpenApiParameter(name="limit", type=int, location=OpenApiParameter.QUERY, required=False),
+            OpenApiParameter(name="offset", type=int, location=OpenApiParameter.QUERY, required=False),
+        ],
+        description="List active rooms (paid and not expired). Paginated with limit/offset.",
         )
-    },
-    parameters=[
-        OpenApiParameter(name="limit", type=int, location=OpenApiParameter.QUERY, required=False),
-        OpenApiParameter(name="offset", type=int, location=OpenApiParameter.QUERY, required=False),
-    ],
-    description="List active rooms (paid and not expired). Paginated with limit/offset.",
-    )
     def get(self, request, *args, **kwargs):
-        today = timezone.now().date()
+            today = timezone.now().date()
 
-        qs = (
-            Room.objects.alive()
-            .filter(status="active")
-            .filter(Q(paid_until__isnull=True) | Q(paid_until__gte=today))
-            .order_by("-id")
-        )
+            qs = (
+                Room.objects.alive()
+                .filter(status="active")
+                .filter(Q(paid_until__isnull=True) | Q(paid_until__gte=today))
+                .order_by("-id")
+            )
 
-        paginator = LimitOffsetPagination()
-        page = paginator.paginate_queryset(qs, request, view=self)
+            paginator = LimitOffsetPagination()
+            page = paginator.paginate_queryset(qs, request, view=self)
 
-        serializer = RoomSerializer(page, many=True, context={"request": request})
-        return paginator.get_paginated_response(serializer.data)
-        
+            serializer = RoomSerializer(page, many=True, context={"request": request})
+            return paginator.get_paginated_response(serializer.data)
+            
 
 
 
@@ -1188,9 +1190,10 @@ class RoomDetailAV(APIView):
 
 
     @extend_schema(
-    responses={200: RoomSerializer, 404: OpenApiResponse(description="Not found.")},
-    description="Retrieve a room by id.",
-    )
+        operation_id="api_v1_rooms_retrieve", 
+        responses={200: RoomSerializer, 404: OpenApiResponse(description="Not found.")},
+        description="Retrieve a room by id.",
+        )
     def get(self, request, pk, *args, **kwargs):
         room = get_object_or_404(Room.objects.alive(), pk=pk)
         serializer = RoomSerializer(room, context={"request": request})
@@ -1492,6 +1495,7 @@ def create_booking(request):
 
 
 @extend_schema(
+    operation_id="api_v1_webhooks_incoming_create",
     request=ProviderWebhookRequestSerializer,
     responses={200: ProviderWebhookResponseSerializer},
 )
@@ -1518,6 +1522,7 @@ class ProviderWebhookView(APIView):
 
 
     @extend_schema(
+        operation_id="api_v1_webhooks_provider_incoming_create",
         request=ProviderWebhookRequestSerializer,
         responses={200: ProviderWebhookResponseSerializer},
     )
@@ -5104,6 +5109,9 @@ def stripe_webhook(request):
     # -----------------------------
     # E3: webhook idempotency guard (event-level)
     # -----------------------------
+        # -----------------------------
+    # E3: webhook idempotency guard (event-level)
+    # -----------------------------
     if event_id:
         try:
             with transaction.atomic():
@@ -5128,8 +5136,64 @@ def stripe_webhook(request):
             except Exception:
                 pass
 
-    elif event["type"] == "checkout.session.expired":
-        session = event["data"]["object"]
+    # -----------------------------
+    # Handle Stripe event types
+    # -----------------------------
+    evt_type = event.get("type")
+
+    if evt_type == "checkout.session.completed":
+        session = (event.get("data") or {}).get("object") or {}
+        metadata = session.get("metadata") or {}
+
+        payment_id = metadata.get("payment_id")
+        payment_intent = session.get("payment_intent")
+
+        if payment_id:
+            try:
+                with transaction.atomic():
+                    # idempotent: only transition once
+                    updated = (
+                        Payment.objects
+                        .filter(id=payment_id)
+                        .exclude(status="succeeded")
+                        .update(
+                            status="succeeded",
+                            stripe_payment_intent_id=str(payment_intent or ""),
+                        )
+                    )
+
+                    if updated == 1:
+                        logger.info(
+                            "stripe_webhook_payment_succeeded payment_id=%s payment_intent=%s",
+                            payment_id,
+                            (payment_intent or ""),
+                        )
+
+                        payment = Payment.objects.select_related("room").get(id=payment_id)
+                        room = payment.room
+
+                        if room:
+                            today = timezone.now().date()
+                            base = room.paid_until if (room.paid_until and room.paid_until > today) else today
+                            room.paid_until = base + timedelta(days=30)
+                            room.save(update_fields=["paid_until"])
+
+                        # create exactly once (only when updated == 1)
+                        Notification.objects.create(
+                            user=payment.user,
+                            type="confirmation",
+                            title="Payment confirmed",
+                            body="Your listing payment was successful.",
+                            target_type="payment",
+                            target_id=payment.id,
+                        )
+            except Exception:
+                logger.exception("stripe_webhook_payment_success_failed")
+
+        return Response({"ok": True}, status=200)
+
+    elif evt_type == "checkout.session.expired":
+        session = (event.get("data") or {}).get("object") or {}
         metadata = session.get("metadata") or {}
         payment_id = metadata.get("payment_id")
 
@@ -5146,8 +5210,9 @@ def stripe_webhook(request):
                     payment_id,
                 )
 
-    return Response(status=200)
+        return Response({"ok": True}, status=200)
 
+    return Response({"ok": True}, status=200)
 
 class SavedCardsListView(APIView):
     """

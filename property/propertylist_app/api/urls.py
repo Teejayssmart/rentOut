@@ -4,7 +4,7 @@ app_name = "api"
 from django.conf import settings
 from django.conf.urls.static import static
 from django.urls import path, include
-
+from drf_spectacular.utils import extend_schema
 
 from rest_framework.routers import DefaultRouter
 
@@ -104,7 +104,7 @@ urlpatterns = [
     path("rooms/<int:pk>/preview/",    RoomPreviewView.as_view(),   name="room-preview"), 
     
     # Cached alt list
-    path("rooms-alt/",                 cache_page(60)(RoomListGV.as_view()),  name="room-list-alt"),
+    path("rooms-alt/", cache_page(60)(RoomListGV.as_view()), name="room-list-alt"),
     path("", include(router.urls)),
 
     # Room categories

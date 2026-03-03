@@ -7,7 +7,14 @@
 
 from propertylist_app.models import Review, UserProfile, Payment  # import what you need
 
+# propertylist_app/api/schema_enums.py
 
+
+
+
+
+# if you created STRIPE_INTENT_STATUS_CHOICES yourself, keep it,
+# otherwise point it to the real source too (if you have one).
 
 
 # if you created STRIPE_INTENT_STATUS_CHOICES yourself, keep it,
@@ -62,3 +69,15 @@ STRIPE_INTENT_STATUS_CHOICES = (
 
 # User profile role enum (this is your Role0efEnum)
 USER_ROLE_CHOICES = getattr(UserProfile, "ROLE_CHOICES", (("landlord","Landlord"), ("seeker","Seeker")))
+REVIEW_ROLE_CHOICES = Review.ROLE_CHOICES  # <-- or whatever your model uses
+
+
+
+
+
+
+
+
+
+
+
