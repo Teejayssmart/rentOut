@@ -125,7 +125,7 @@ from propertylist_app.validators import (
 )
 
 # API plumbing
-from propertylist_app.api.pagination import RoomCPagination, RoomLOPagination
+from propertylist_app.api.pagination import RoomCPagination, StandardLimitOffsetPagination
 from propertylist_app.api.permissions import IsAdminOrReadOnly, IsOwnerOrReadOnly
 from propertylist_app.api.serializers import (
     AvailabilitySlotSerializer,
@@ -1058,7 +1058,7 @@ class RoomListGV(CachedAnonymousGETMixin, generics.ListAPIView):
     serializer_class = RoomSerializer
     filter_backends = [filters.OrderingFilter]
     ordering_fields = ["avg_rating", "category__name"]
-    pagination_class = RoomLOPagination
+    pagination_class = StandardLimitOffsetPagination
 
     cache_prefix = "rooms:list"
     cache_ttl = 60
@@ -2318,7 +2318,7 @@ class RoomPhotoDeleteView(APIView):
 class MyRoomsView(generics.ListAPIView):
     serializer_class = RoomSerializer
     permission_classes = [IsAuthenticated]
-    pagination_class = RoomLOPagination
+    pagination_class = StandardLimitOffsetPagination
 
     def get_queryset(self):
         if getattr(self, "swagger_fake_view", False):
@@ -2489,7 +2489,7 @@ class SearchRoomsView(generics.ListAPIView):
     """
     serializer_class = RoomSerializer
     permission_classes = [permissions.AllowAny]
-    pagination_class = RoomLOPagination
+    pagination_class = StandardLimitOffsetPagination
 
     _ordered_ids = None
     _distance_by_id = None
@@ -3112,7 +3112,7 @@ class NearbyRoomsView(generics.ListAPIView):
     """
     serializer_class = RoomSerializer
     permission_classes = [AllowAny]
-    pagination_class = RoomLOPagination
+    pagination_class = StandardLimitOffsetPagination
 
     _ordered_ids = None
     _distance_by_id = None
@@ -3245,7 +3245,7 @@ class RoomSaveToggleView(APIView):
 class MySavedRoomsView(generics.ListAPIView):
     serializer_class = RoomSerializer
     permission_classes = [IsAuthenticated]
-    pagination_class = RoomLOPagination
+    pagination_class = StandardLimitOffsetPagination
 
     def get_queryset(self):
         # drf-spectacular calls get_queryset without a real request/user context sometimes.
@@ -3306,7 +3306,7 @@ class MessageThreadListCreateView(generics.ListCreateAPIView):
     """
     serializer_class = MessageThreadSerializer
     permission_classes = [IsAuthenticated]
-    pagination_class = RoomLOPagination
+    pagination_class = StandardLimitOffsetPagination
     throttle_classes = []
 
     # throttle_classes = [UserRateThrottle, MessagingScopedThrottle]  # keep off if tests expect no 429
@@ -4058,7 +4058,7 @@ class BookingListCreateView(generics.ListCreateAPIView):
     """GET my bookings / POST create (slot OR direct)."""
     serializer_class = BookingSerializer
     permission_classes = [IsAuthenticated]
-    pagination_class = RoomLOPagination
+    pagination_class = StandardLimitOffsetPagination
     throttle_classes = [UserRateThrottle]
     # >>> Added to enable ?ordering=... on this endpoint <<<
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
@@ -5363,11 +5363,13 @@ class PaymentTransactionsListView(ListAPIView):
             )
         },
         parameters=[
-            OpenApiParameter(name="limit", type=int, location=OpenApiParameter.QUERY, required=False),
-            OpenApiParameter(name="offset", type=int, location=OpenApiParameter.QUERY, required=False),
+           
+            
             OpenApiParameter(name="q", type=str, location=OpenApiParameter.QUERY, required=False),
             OpenApiParameter(name="range", type=str, location=OpenApiParameter.QUERY, required=False),
-            OpenApiParameter(name="start", type=str, location=OpenApiParameter.QUERY, required=False),
+            OpenApiParameter(name="offset", type=int, location=OpenApiParameter.QUERY, required=False),
+            OpenApiParameter(name="limit", type=int, location=OpenApiParameter.QUERY, required=False),
+            OpenApiParameter(name="start", type=str, location=OpenApiParameter.QUERY, required=False, deprecated=True),
             OpenApiParameter(name="end", type=str, location=OpenApiParameter.QUERY, required=False),
         ],
         description="List payment transactions. DRF paginated response (count/next/previous/results). Supports filters.",
@@ -5611,7 +5613,7 @@ class ModerationReportListView(generics.ListAPIView):
     """GET /api/moderation/reports/?status=open|in_review|resolved|rejected — staff only."""
     serializer_class = ReportSerializer
     permission_classes = [IsAdminUser]
-    pagination_class = RoomLOPagination
+    pagination_class = StandardLimitOffsetPagination
 
     def get_queryset(self):
         status_q = self.request.query_params.get("status") or "open"

@@ -358,18 +358,18 @@ paths:
         description: Number of results to return per page.
         schema:
           type: integer
+      - name: offset
+        required: false
+        in: query
+        description: The initial index from which to return the results.
+        schema:
+          type: integer
       - name: ordering
         required: false
         in: query
         description: Which field to use when ordering the results.
         schema:
           type: string
-      - name: start
-        required: false
-        in: query
-        description: The initial index from which to return the results.
-        schema:
-          type: integer
       tags:
       - api
       security:
@@ -1006,18 +1006,18 @@ paths:
         description: Number of results to return per page.
         schema:
           type: integer
+      - name: offset
+        required: false
+        in: query
+        description: The initial index from which to return the results.
+        schema:
+          type: integer
       - name: ordering
         required: false
         in: query
         description: Which field to use when ordering the results.
         schema:
           type: string
-      - name: start
-        required: false
-        in: query
-        description: The initial index from which to return the results.
-        schema:
-          type: integer
       tags:
       - api
       security:
@@ -1377,18 +1377,18 @@ paths:
         description: Number of results to return per page.
         schema:
           type: integer
+      - name: offset
+        required: false
+        in: query
+        description: The initial index from which to return the results.
+        schema:
+          type: integer
       - name: ordering
         required: false
         in: query
         description: Which field to use when ordering the results.
         schema:
           type: string
-      - name: start
-        required: false
-        in: query
-        description: The initial index from which to return the results.
-        schema:
-          type: integer
       tags:
       - api
       security:
@@ -2588,18 +2588,18 @@ paths:
         description: Number of results to return per page.
         schema:
           type: integer
+      - name: offset
+        required: false
+        in: query
+        description: The initial index from which to return the results.
+        schema:
+          type: integer
       - name: ordering
         required: false
         in: query
         description: Which field to use when ordering the results.
         schema:
           type: string
-      - name: start
-        required: false
-        in: query
-        description: The initial index from which to return the results.
-        schema:
-          type: integer
       tags:
       - api
       security:
@@ -3482,18 +3482,18 @@ paths:
         description: Number of results to return per page.
         schema:
           type: integer
+      - name: offset
+        required: false
+        in: query
+        description: The initial index from which to return the results.
+        schema:
+          type: integer
       - name: ordering
         required: false
         in: query
         description: Which field to use when ordering the results.
         schema:
           type: string
-      - name: start
-        required: false
-        in: query
-        description: The initial index from which to return the results.
-        schema:
-          type: integer
       tags:
       - api
       security:
@@ -3529,18 +3529,18 @@ paths:
         description: Number of results to return per page.
         schema:
           type: integer
+      - name: offset
+        required: false
+        in: query
+        description: The initial index from which to return the results.
+        schema:
+          type: integer
       - name: ordering
         required: false
         in: query
         description: Which field to use when ordering the results.
         schema:
           type: string
-      - name: start
-        required: false
-        in: query
-        description: The initial index from which to return the results.
-        schema:
-          type: integer
       tags:
       - api
       security:
@@ -3791,18 +3791,18 @@ paths:
         description: Number of results to return per page.
         schema:
           type: integer
+      - name: offset
+        required: false
+        in: query
+        description: The initial index from which to return the results.
+        schema:
+          type: integer
       - name: ordering
         required: false
         in: query
         description: Which field to use when ordering the results.
         schema:
           type: string
-      - name: start
-        required: false
-        in: query
-        description: The initial index from which to return the results.
-        schema:
-          type: integer
       tags:
       - api
       security:
@@ -5086,18 +5086,18 @@ paths:
         description: Number of results to return per page.
         schema:
           type: integer
+      - name: offset
+        required: false
+        in: query
+        description: The initial index from which to return the results.
+        schema:
+          type: integer
       - name: ordering
         required: false
         in: query
         description: Which field to use when ordering the results.
         schema:
           type: string
-      - name: start
-        required: false
-        in: query
-        description: The initial index from which to return the results.
-        schema:
-          type: integer
       tags:
       - api
       security:
@@ -5937,12 +5937,12 @@ components:
           type: string
           nullable: true
           format: uri
-          example: http://api.example.org/accounts/?start=400&limit=100
+          example: http://api.example.org/accounts/?offset=400&limit=100
         previous:
           type: string
           nullable: true
           format: uri
-          example: http://api.example.org/accounts/?start=200&limit=100
+          example: http://api.example.org/accounts/?offset=200&limit=100
         results:
           type: array
           items:
@@ -5979,12 +5979,12 @@ components:
           type: string
           nullable: true
           format: uri
-          example: http://api.example.org/accounts/?start=400&limit=100
+          example: http://api.example.org/accounts/?offset=400&limit=100
         previous:
           type: string
           nullable: true
           format: uri
-          example: http://api.example.org/accounts/?start=200&limit=100
+          example: http://api.example.org/accounts/?offset=200&limit=100
         results:
           type: array
           items:
@@ -6025,12 +6025,12 @@ components:
           type: string
           nullable: true
           format: uri
-          example: http://api.example.org/accounts/?start=400&limit=100
+          example: http://api.example.org/accounts/?offset=400&limit=100
         previous:
           type: string
           nullable: true
           format: uri
-          example: http://api.example.org/accounts/?start=200&limit=100
+          example: http://api.example.org/accounts/?offset=200&limit=100
         results:
           type: array
           items:
@@ -6094,12 +6094,12 @@ components:
           type: string
           nullable: true
           format: uri
-          example: http://api.example.org/accounts/?start=400&limit=100
+          example: http://api.example.org/accounts/?offset=400&limit=100
         previous:
           type: string
           nullable: true
           format: uri
-          example: http://api.example.org/accounts/?start=200&limit=100
+          example: http://api.example.org/accounts/?offset=200&limit=100
         results:
           type: array
           items:
