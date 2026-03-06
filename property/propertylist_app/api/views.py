@@ -182,6 +182,10 @@ from propertylist_app.api.serializers import (
     ChangePasswordRequestSerializer,
     CreatePasswordRequestSerializer,
     ChangeEmailRequestSerializer,
+    StripeCheckoutSessionCreateRequestSerializer,
+    StripeWebhookEventRequestSerializer,
+    StripeWebhookAckResponseSerializer,
+    StripeWebhookErrorResponseSerializer,
        
     )
 
@@ -217,6 +221,9 @@ from .serializers import (
     ThreadMarkReadRequestSerializer,
     ProviderWebhookRequestSerializer,
     ProviderWebhookResponseSerializer,
+    BookingSerializer,
+    BookingCreateRequestSerializer,
+    BookingResponseEnvelopeSerializer,
     
 )
 
@@ -334,23 +341,70 @@ def _wrap_success_payload(payload):
     Wrap successful DRF responses into a consistent shape.
 
     Rules:
-    - If payload is paginated (has "results"), put results into "data"
-      and pagination fields into "meta".
+    - If payload is already our success envelope, do not wrap again.
+    - If payload is DRF paginated (has "results"), put results into "data"
+      and pagination fields into "meta", while also keeping the legacy
+      pagination keys for backwards compatibility.
+    - If payload is a plain list, put list into "data" and also expose
+      "results" for backwards compatibility.
     - Otherwise, payload goes into "data".
     """
+
+    # Already wrapped by ok_response(...) or similar
+    if (
+        isinstance(payload, dict)
+        and payload.get("ok") is True
+        and "data" in payload
+        and "message" in payload
+    ):
+        data = payload.get("data")
+
+        # If wrapped data is a plain list, keep results alias too
+        if isinstance(data, list):
+            payload.setdefault("results", data)
+
+        # If wrapped data itself is paginated, flatten pagination keys too
+        if isinstance(data, dict) and "results" in data:
+            payload["results"] = data.get("results", [])
+            payload["count"] = data.get("count")
+            payload["next"] = data.get("next")
+            payload["previous"] = data.get("previous")
+
+        return payload
+
+    # DRF paginated response
     if isinstance(payload, dict) and "results" in payload:
-        return {
-            "ok": True,
-            "data": payload.get("results"),
-            "meta": {
-                "count": payload.get("count"),
-                "next": payload.get("next"),
-                "previous": payload.get("previous"),
-            },
+        results = payload.get("results", [])
+        meta = {
+            "count": payload.get("count"),
+            "next": payload.get("next"),
+            "previous": payload.get("previous"),
         }
 
+        return {
+            "ok": True,
+            "message": None,
+            "data": results,
+            "meta": meta,
+            "count": meta["count"],
+            "next": meta["next"],
+            "previous": meta["previous"],
+            "results": results,
+        }
+
+    # Plain list response
+    if isinstance(payload, list):
+        return {
+            "ok": True,
+            "message": None,
+            "data": payload,
+            "results": payload,
+        }
+
+    # Non-paginated object response
     return {
         "ok": True,
+        "message": None,
         "data": payload,
     }
 
@@ -1101,12 +1155,12 @@ class RoomAV(APIView):
                 .order_by("-id")
             )
 
-            paginator = LimitOffsetPagination()
+            paginator = StandardLimitOffsetPagination()
             page = paginator.paginate_queryset(qs, request, view=self)
 
             serializer = RoomSerializer(page, many=True, context={"request": request})
-            return paginator.get_paginated_response(serializer.data)
-            
+            resp = paginator.get_paginated_response(serializer.data)
+            return _wrap_response_success(resp)
 
 
 
@@ -1190,14 +1244,24 @@ class RoomDetailAV(APIView):
 
 
     @extend_schema(
-        operation_id="api_v1_rooms_retrieve", 
-        responses={200: RoomSerializer, 404: OpenApiResponse(description="Not found.")},
-        description="Retrieve a room by id.",
-        )
+        operation_id="api_v1_rooms_retrieve",
+        responses={
+            200: inline_serializer(
+                name="RoomDetailOkResponse",
+                fields={
+                    "ok": serializers.BooleanField(),
+                    "message": serializers.CharField(required=False, allow_null=True),
+                    "data": RoomSerializer(),
+                },
+            ),
+            404: OpenApiResponse(description="Not found."),
+        },
+        description="Retrieve a room by id. Returns ok_response envelope.",
+    )
     def get(self, request, pk, *args, **kwargs):
         room = get_object_or_404(Room.objects.alive(), pk=pk)
         serializer = RoomSerializer(room, context={"request": request})
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        return ok_response(serializer.data, status_code=status.HTTP_200_OK)
 
 
 
@@ -1344,7 +1408,7 @@ class RoomPreviewView(APIView):
             )
 
         serializer = RoomPreviewSerializer(room, context={"request": request})
-        return Response(serializer.data)
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
 
 class RoomListAlt(CachedAnonymousGETMixin, generics.ListAPIView):
@@ -2863,8 +2927,8 @@ class SearchRoomsView(generics.ListAPIView):
     def list(self, request, *args, **kwargs):
         """
         Preserve distance ordering (when postcode/radius search is used)
-        but return standard DRF pagination envelope:
-        {count, next, previous, results}
+        and return wrapped success responses with backwards-compatible
+        pagination keys: count, next, previous, results.
         """
         queryset = self.get_queryset()
 
@@ -2900,12 +2964,13 @@ class SearchRoomsView(generics.ListAPIView):
         page = self.paginate_queryset(ordered_objs)
         if page is not None:
             serializer = self.get_serializer(page, many=True)
-            return self.get_paginated_response(serializer.data)
+            return _wrap_response_success(
+                self.get_paginated_response(serializer.data)
+            )
 
-        # If pagination is disabled for some reason, return a normal list
+        # If pagination is disabled for some reason, return wrapped list
         serializer = self.get_serializer(ordered_objs, many=True)
-        return Response(serializer.data, status=status.HTTP_200_OK)
-
+        return ok_response(serializer.data, status_code=status.HTTP_200_OK)
 
 
 class MyListingsView(generics.ListAPIView):
@@ -4065,6 +4130,44 @@ class BookingListCreateView(generics.ListCreateAPIView):
     ordering_fields = ["start", "end", "created_at", "id"]
     ordering = ["-created_at"]
 
+
+    @extend_schema(
+        request=BookingCreateRequestSerializer,
+        responses={
+            201: BookingResponseEnvelopeSerializer,
+            400: OpenApiResponse(description="Validation error."),
+            401: OpenApiResponse(description="Authentication required."),
+        },
+        description="Create a booking using either a slot OR room/start/end.",
+    )
+    def create(self, request, *args, **kwargs):
+        return super().create(request, *args, **kwargs)
+    
+  
+    @extend_schema(
+        responses={
+            200: inline_serializer(
+                name="BookingListResponse",
+                fields={
+                    "ok": serializers.BooleanField(),
+                    "data": inline_serializer(
+                        name="BookingListData",
+                        fields={
+                            "count": serializers.IntegerField(),
+                            "next": serializers.CharField(allow_null=True),
+                            "previous": serializers.CharField(allow_null=True),
+                            "results": BookingSerializer(many=True),
+                        },
+                    ),
+                },
+            )
+        },
+        description="List bookings for the authenticated user.",
+    )
+    def get(self, request, *args, **kwargs):
+        return super().get(request, *args, **kwargs)
+
+     
     def get_queryset(self): 
         if getattr(self, "swagger_fake_view", False):
             return Booking.objects.none()
@@ -4219,6 +4322,19 @@ class BookingDetailView(generics.RetrieveAPIView):
         if self.request.user.is_staff:
             return Booking.objects.filter(is_deleted=False)
         return Booking.objects.filter(user=self.request.user, is_deleted=False)
+    
+    
+    @extend_schema(
+        responses={
+            200: BookingResponseEnvelopeSerializer,
+            401: OpenApiResponse(description="Authentication required."),
+            404: OpenApiResponse(description="Booking not found."),
+        },
+        description="Retrieve a booking owned by the authenticated user.",
+    )
+    def get(self, request, *args, **kwargs):
+        return super().get(request, *args, **kwargs)
+        
     
     
     def retrieve(self, request, *args, **kwargs):
@@ -4913,14 +5029,19 @@ class CreateListingCheckoutSessionView(APIView):
     permission_classes = [IsAuthenticated]
 
     @extend_schema(
-    request=OpenApiTypes.OBJECT,
-    responses={
-        200: StripeCheckoutRedirectResponseSerializer,
-        400: OpenApiResponse(description="Invalid request or validation error."),
-        401: OpenApiResponse(description="Authentication required."),
-        403: OpenApiResponse(description="Forbidden (not the room owner)."),
-        404: OpenApiResponse(description="Room not found."),
+        request=StripeCheckoutSessionCreateRequestSerializer,
+        responses={
+            200: StripeCheckoutRedirectResponseSerializer,
+            400: OpenApiResponse(description="Invalid request or validation error."),
+            401: OpenApiResponse(description="Authentication required."),
+            403: OpenApiResponse(description="Forbidden (not the room owner)."),
+            404: OpenApiResponse(description="Room not found."),
         },
+        description=(
+            "Creates a Stripe Checkout Session for the specified room listing fee. "
+            "Request body may include an optional payment_method_id. "
+            "Returns the Stripe-hosted checkout_url and session_id."
+        ),
     )
     def post(self, request, pk):
         room = get_object_or_404(Room.objects.filter(is_deleted=False), pk=pk)
@@ -5022,19 +5143,19 @@ class CreateListingCheckoutSessionView(APIView):
         payment.stripe_checkout_session_id = str(session_id) if session_id else ""
         payment.save(update_fields=["stripe_checkout_session_id"])
 
-        return Response(
+        return ok_response(
             {
                 "checkout_url": checkout_url,
                 "session_id": str(session_id) if session_id else None,
             },
-            status=status.HTTP_200_OK,
+            status_code=status.HTTP_200_OK,
         )
 
 @extend_schema(
-    request=None,
+    request=StripeWebhookEventRequestSerializer,
     responses={
-        200: WebhookAckSerializer,
-        400: OpenApiResponse(description="Invalid payload or invalid Stripe signature."),
+        200: StripeWebhookAckResponseSerializer,
+        400: StripeWebhookErrorResponseSerializer,
     },
     parameters=[
         OpenApiParameter(
@@ -5046,10 +5167,12 @@ class CreateListingCheckoutSessionView(APIView):
         ),
     ],
     auth=[],
-    description="Stripe webhook endpoint. Verifies signature and processes checkout.session events.",
+    description=(
+        "Stripe webhook endpoint. Verifies the Stripe-Signature header and processes "
+        "Stripe event payloads. Currently handles checkout.session.completed and "
+        "checkout.session.expired. Other event types are acknowledged and ignored."
+    ),
 )
-
-
 @csrf_exempt
 @api_view(["POST"])
 @permission_classes([AllowAny])
@@ -5065,10 +5188,16 @@ def stripe_webhook(request):
         )
     except (ValueError, stripe.error.SignatureVerificationError):
         logger.warning("stripe_webhook_signature_failed")
-        return Response(status=400)
+        return Response(
+            {"detail": "Invalid payload or invalid Stripe signature."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
     except Exception:
         logger.exception("stripe_webhook_construct_event_failed")
-        return Response(status=400)
+        return Response(
+            {"detail": "Unable to construct Stripe event."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
     
     logger.info(
         "stripe_webhook_received event_id=%s type=%s",
@@ -5127,7 +5256,14 @@ def stripe_webhook(request):
                 )
         except IntegrityError:
             logger.info("stripe_webhook_duplicate event_id=%s", event_id)
-            return Response({"ok": True, "detail": "duplicate"}, status=200)
+            return ok_response(
+                {
+                    "detail": "duplicate",
+                    "event_id": event_id,
+                    "event_type": event.get("type"),
+                },
+                status_code=status.HTTP_200_OK,
+            )
         except Exception:
             # Never fail webhook processing because receipt logging failed.
             try:
@@ -5190,7 +5326,15 @@ def stripe_webhook(request):
             except Exception:
                 logger.exception("stripe_webhook_payment_success_failed")
 
-        return Response({"ok": True}, status=200)
+        return ok_response(
+            {
+                "detail": "checkout.session.completed processed",
+                "event_id": event_id,
+                "event_type": evt_type,
+                "payment_id": str(payment_id) if payment_id else None,
+            },
+            status_code=status.HTTP_200_OK,
+        )
 
     elif evt_type == "checkout.session.expired":
         session = (event.get("data") or {}).get("object") or {}
@@ -5210,9 +5354,24 @@ def stripe_webhook(request):
                     payment_id,
                 )
 
-        return Response({"ok": True}, status=200)
+        return ok_response(
+            {
+                "detail": "checkout.session.completed processed",
+                "event_id": event_id,
+                "event_type": evt_type,
+                "payment_id": str(payment_id) if payment_id else None,
+            },
+            status_code=status.HTTP_200_OK,
+        )
 
-    return Response({"ok": True}, status=200)
+    return ok_response(
+        {
+            "detail": f"ignored event {evt_type}",
+            "event_id": event_id,
+            "event_type": evt_type,
+        },
+        status_code=status.HTTP_200_OK,
+    )
 
 class SavedCardsListView(APIView):
     """
@@ -5502,6 +5661,7 @@ class StripeSuccessView(APIView):
     permission_classes = [AllowAny]
 
     @extend_schema(
+        request=None,
         responses={
             200: StripeSuccessResponseSerializer,
         },
@@ -5522,7 +5682,11 @@ class StripeSuccessView(APIView):
             ),
         ],
         auth=[],
-        description="Landing endpoint after successful Stripe Checkout redirect. Webhook finalises the listing."
+        description=(
+            "Landing endpoint after successful Stripe Checkout redirect. "
+            "This endpoint acknowledges the redirect only; the Stripe webhook "
+            "is responsible for final payment confirmation and room listing activation."
+        ),
     )
     def get(self, request):
         session_id = request.query_params.get("session_id")
@@ -5542,6 +5706,7 @@ class StripeCancelView(APIView):
     permission_classes = [AllowAny]
 
     @extend_schema(
+        request=None,
         responses={
             200: StripeCancelResponseSerializer,
         },
@@ -5555,7 +5720,7 @@ class StripeCancelView(APIView):
             ),
         ],
         auth=[],
-        description="Landing endpoint after a cancelled Stripe Checkout redirect."
+        description="Landing endpoint after a cancelled Stripe Checkout redirect.",
     )
     def get(self, request):
         payment_id = request.query_params.get("payment_id")
@@ -6411,4 +6576,6 @@ class MyPrivacyPreferencesView(APIView):
         serializer.is_valid(raise_exception=True)
         serializer.save()
         return Response(serializer.data, status=status.HTTP_200_OK)
+        
+        
         

@@ -350,7 +350,7 @@ paths:
   /api/v1/bookings/:
     get:
       operationId: api_v1_bookings_list
-      description: GET my bookings / POST create (slot OR direct).
+      description: List bookings for the authenticated user.
       parameters:
       - name: limit
         required: false
@@ -387,7 +387,7 @@ paths:
                     type: string
                     nullable: true
                   data:
-                    $ref: '#/components/schemas/PaginatedBookingList'
+                    $ref: '#/components/schemas/PaginatedBookingListResponseList'
                 required:
                 - ok
                 - data
@@ -490,7 +490,7 @@ paths:
   /api/v1/bookings/{id}/:
     get:
       operationId: api_v1_bookings_retrieve
-      description: GET /api/bookings/<id>/ → see my booking
+      description: Retrieve a booking owned by the authenticated user.
       parameters:
       - in: path
         name: id
@@ -506,19 +506,12 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  ok:
-                    type: boolean
-                  message:
-                    type: string
-                    nullable: true
-                  data:
-                    $ref: '#/components/schemas/Booking'
-                required:
-                - ok
-                - data
+                $ref: '#/components/schemas/BookingResponseEnvelope'
           description: ''
+        '401':
+          description: Authentication required.
+        '404':
+          description: Booking not found.
   /api/v1/bookings/{id}/cancel/:
     post:
       operationId: api_v1_bookings_cancel_create
@@ -1744,6 +1737,9 @@ paths:
   /api/v1/payments/checkout/rooms/{id}/:
     post:
       operationId: api_v1_payments_checkout_rooms_create
+      description: Creates a Stripe Checkout Session for the specified room listing
+        fee. Request body may include an optional payment_method_id. Returns the Stripe-hosted
+        checkout_url and session_id.
       parameters:
       - in: path
         name: id
@@ -1756,16 +1752,13 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: {}
+              $ref: '#/components/schemas/StripeCheckoutSessionCreateRequest'
           application/x-www-form-urlencoded:
             schema:
-              type: object
-              additionalProperties: {}
+              $ref: '#/components/schemas/StripeCheckoutSessionCreateRequest'
           multipart/form-data:
             schema:
-              type: object
-              additionalProperties: {}
+              $ref: '#/components/schemas/StripeCheckoutSessionCreateRequest'
       security:
       - jwtAuth: []
       responses:
@@ -1773,18 +1766,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  ok:
-                    type: boolean
-                  message:
-                    type: string
-                    nullable: true
-                  data:
-                    $ref: '#/components/schemas/StripeCheckoutRedirectResponse'
-                required:
-                - ok
-                - data
+                $ref: '#/components/schemas/StripeCheckoutRedirectResponse'
           description: ''
         '400':
           description: Invalid request or validation error.
@@ -1961,8 +1943,9 @@ paths:
   /api/v1/payments/success/:
     get:
       operationId: api_v1_payments_success_retrieve
-      description: Landing endpoint after successful Stripe Checkout redirect. Webhook
-        finalises the listing.
+      description: Landing endpoint after successful Stripe Checkout redirect. This
+        endpoint acknowledges the redirect only; the Stripe webhook is responsible
+        for final payment confirmation and room listing activation.
       parameters:
       - in: query
         name: payment_id
@@ -2061,8 +2044,9 @@ paths:
   /api/v1/payments/webhook/:
     post:
       operationId: api_v1_payments_webhook_create
-      description: Stripe webhook endpoint. Verifies signature and processes checkout.session
-        events.
+      description: Stripe webhook endpoint. Verifies the Stripe-Signature header and
+        processes Stripe event payloads. Currently handles checkout.session.completed
+        and checkout.session.expired. Other event types are acknowledged and ignored.
       parameters:
       - in: header
         name: Stripe-Signature
@@ -2072,26 +2056,30 @@ paths:
         required: true
       tags:
       - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StripeWebhookEventRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/StripeWebhookEventRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/StripeWebhookEventRequest'
       responses:
         '200':
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  ok:
-                    type: boolean
-                  message:
-                    type: string
-                    nullable: true
-                  data:
-                    $ref: '#/components/schemas/WebhookAck'
-                required:
-                - ok
-                - data
+                $ref: '#/components/schemas/StripeWebhookAckResponse'
           description: ''
         '400':
-          description: Invalid payload or invalid Stripe signature.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StripeWebhookErrorResponse'
+          description: ''
   /api/v1/reports/:
     post:
       operationId: api_v1_reports_create
@@ -2626,7 +2614,7 @@ paths:
   /api/v1/rooms/{id}/:
     get:
       operationId: api_v1_rooms_retrieve
-      description: Retrieve a room by id.
+      description: Retrieve a room by id. Returns ok_response envelope.
       parameters:
       - in: path
         name: id
@@ -2642,18 +2630,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  ok:
-                    type: boolean
-                  message:
-                    type: string
-                    nullable: true
-                  data:
-                    $ref: '#/components/schemas/Room'
-                required:
-                - ok
-                - data
+                $ref: '#/components/schemas/RoomDetailOkResponse'
           description: ''
         '404':
           description: Not found.
@@ -5336,6 +5313,36 @@ components:
       required:
       - data
       - ok
+    BookingListData:
+      type: object
+      properties:
+        count:
+          type: integer
+        next:
+          type: string
+          nullable: true
+        previous:
+          type: string
+          nullable: true
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/Booking'
+      required:
+      - count
+      - next
+      - previous
+      - results
+    BookingListResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        data:
+          $ref: '#/components/schemas/BookingListData'
+      required:
+      - data
+      - ok
     BookingPreflightRequest:
       type: object
       properties:
@@ -5358,6 +5365,16 @@ components:
           type: string
       required:
       - detail
+    BookingResponseEnvelope:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        data:
+          $ref: '#/components/schemas/Booking'
+      required:
+      - data
+      - ok
     BookingReviewCreate:
       type: object
       properties:
@@ -5712,17 +5729,33 @@ components:
       type: object
       properties:
         tokens:
-          $ref: '#/components/schemas/TokenPairWithExpiry'
+          $ref: '#/components/schemas/LoginTokens'
         user:
-          type: object
-          additionalProperties: {}
+          $ref: '#/components/schemas/User'
         profile:
-          type: object
-          additionalProperties: {}
+          $ref: '#/components/schemas/UserProfile'
       required:
       - profile
       - tokens
       - user
+    LoginTokens:
+      type: object
+      properties:
+        access:
+          type: string
+        refresh:
+          type: string
+        access_expires_at:
+          type: string
+          format: date-time
+        refresh_expires_at:
+          type: string
+          format: date-time
+      required:
+      - access
+      - access_expires_at
+      - refresh
+      - refresh_expires_at
     LogoutData:
       type: object
       properties:
@@ -5924,7 +5957,7 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/AvailabilitySlot'
-    PaginatedBookingList:
+    PaginatedBookingListResponseList:
       type: object
       required:
       - count
@@ -5946,7 +5979,7 @@ components:
         results:
           type: array
           items:
-            $ref: '#/components/schemas/Booking'
+            $ref: '#/components/schemas/BookingListResponse'
     PaginatedMessageList:
       type: object
       required:
@@ -8140,6 +8173,19 @@ components:
       - id
       - name
       - slug
+    RoomDetailOkResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        message:
+          type: string
+          nullable: true
+        data:
+          $ref: '#/components/schemas/Room'
+      required:
+      - data
+      - ok
     RoomImage:
       type: object
       properties:
@@ -8213,7 +8259,7 @@ components:
       required:
       - data
       - ok
-    StripeCheckoutRedirectResponse:
+    StripeCheckoutRedirectData:
       type: object
       properties:
         checkout_url:
@@ -8221,9 +8267,27 @@ components:
           format: uri
         session_id:
           type: string
+          nullable: true
       required:
       - checkout_url
       - session_id
+    StripeCheckoutRedirectResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        data:
+          $ref: '#/components/schemas/StripeCheckoutRedirectData'
+      required:
+      - data
+      - ok
+    StripeCheckoutSessionCreateRequest:
+      type: object
+      properties:
+        payment_method_id:
+          type: string
+          nullable: true
+          description: Optional saved Stripe PaymentMethod ID for future use.
     StripeSuccessData:
       type: object
       properties:
@@ -8247,6 +8311,52 @@ components:
       required:
       - data
       - ok
+    StripeWebhookAckData:
+      type: object
+      properties:
+        detail:
+          type: string
+          nullable: true
+        event_id:
+          type: string
+          nullable: true
+        event_type:
+          type: string
+          nullable: true
+        payment_id:
+          type: string
+          nullable: true
+    StripeWebhookAckResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        data:
+          $ref: '#/components/schemas/StripeWebhookAckData'
+      required:
+      - data
+      - ok
+    StripeWebhookErrorResponse:
+      type: object
+      properties:
+        detail:
+          type: string
+      required:
+      - detail
+    StripeWebhookEventRequest:
+      type: object
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+        created:
+          type: integer
+        livemode:
+          type: boolean
+        data: {}
+        object:
+          type: string
     TenancyDetail:
       type: object
       properties:
@@ -8520,24 +8630,6 @@ components:
       required:
       - data
       - ok
-    TokenPairWithExpiry:
-      type: object
-      properties:
-        access:
-          type: string
-        refresh:
-          type: string
-        access_expires_at:
-          type: string
-          format: date-time
-        refresh_expires_at:
-          type: string
-          format: date-time
-      required:
-      - access
-      - access_expires_at
-      - refresh
-      - refresh_expires_at
     TokenRefreshData:
       type: object
       properties:
@@ -8794,13 +8886,6 @@ components:
       - tenant_average
       - tenant_count
       - total_reviews_count
-    WebhookAck:
-      type: object
-      properties:
-        ok:
-          type: boolean
-        detail:
-          type: string
   securitySchemes:
     jwtAuth:
       type: http

@@ -14,6 +14,13 @@ pytestmark = pytest.mark.django_db
 def assert_exact_keys(obj: dict, expected_keys: set[str]) -> None:
     assert isinstance(obj, dict), f"Expected dict, got {type(obj)}"
     assert set(obj.keys()) == expected_keys, f"Keys mismatch.\nGot: {set(obj.keys())}\nExpected: {expected_keys}"
+    
+def unwrap_ok_data(payload: dict) -> dict:
+    assert isinstance(payload, dict), f"Expected dict, got {type(payload)}"
+    assert payload.get("ok") is True, f"Expected ok=True, got: {payload}"
+    assert "data" in payload, f"Expected 'data' in payload, got: {payload}"
+    assert isinstance(payload["data"], dict), f"Expected payload['data'] to be dict, got: {type(payload['data'])}"
+    return payload["data"]
 
 
 def assert_is_str(value, field_name: str) -> None:
@@ -49,8 +56,8 @@ def test_register_contract_api_and_v1_match_shape():
     url_api = reverse("api:auth-register")
     r_api = post_json(client, url_api, payload_api)
     assert r_api.status_code in (200, 201), r_api.data
-    data_api = r_api.json()
-
+    body_api = r_api.json()
+    data_api = unwrap_ok_data(body_api)
     expected_keys = {"id", "username", "email", "email_masked", "need_otp"}
     assert_exact_keys(data_api, expected_keys)
     assert isinstance(data_api["id"], int)
@@ -68,8 +75,8 @@ def test_register_contract_api_and_v1_match_shape():
     url_v1 = reverse("v1:auth-register")
     r_v1 = post_json(client, url_v1, payload_v1)
     assert r_v1.status_code in (200, 201), r_v1.data
-    data_v1 = r_v1.json()
-
+    body_v1 = r_v1.json()
+    data_v1 = unwrap_ok_data(body_v1)
     assert_exact_keys(data_v1, expected_keys)
 
     # Parity check (types and keys only)

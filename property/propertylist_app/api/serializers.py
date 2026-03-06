@@ -1612,97 +1612,21 @@ class RegistrationSerializer(serializers.ModelSerializer):
             "email_masked": masked,
             "need_otp": True,
         }
+        
 
-
+    
 class LoginSerializer(serializers.Serializer):
     identifier = serializers.CharField()  # username OR email
     password = serializers.CharField(write_only=True)
-    
-    
-class TokenPairWithExpirySerializer(serializers.Serializer):
+ 
+ 
+class LoginTokensSerializer(serializers.Serializer):
     access = serializers.CharField()
     refresh = serializers.CharField()
     access_expires_at = serializers.DateTimeField()
     refresh_expires_at = serializers.DateTimeField()
 
 
-class LoginSuccessDataSerializer(serializers.Serializer):
-    tokens = TokenPairWithExpirySerializer()
-    user = serializers.DictField()
-    profile = serializers.DictField()
-
-
-class LoginResponseSerializer(serializers.Serializer):
-    ok = serializers.BooleanField()
-    data = LoginSuccessDataSerializer()
-    
-
-class TokenRefreshRequestSerializer(serializers.Serializer):
-    refresh = serializers.CharField()
-
-
-class TokenRefreshResponseSerializer(serializers.Serializer):
-    ok = serializers.BooleanField()
-    data = serializers.DictField()  
-
-
-class PasswordResetRequestSerializer(serializers.Serializer):
-    email = serializers.EmailField()
-
-
-class PasswordResetConfirmSerializer(serializers.Serializer):
-    email = serializers.EmailField()
-    token = serializers.CharField()  # we will use the 6-digit OTP code
-    new_password = serializers.CharField(write_only=True)
-    confirm_password = serializers.CharField(write_only=True)
-
-    def validate(self, attrs):
-        pw1 = attrs.get("new_password") or ""
-        pw2 = attrs.get("confirm_password") or ""
-        if pw1 != pw2:
-            raise serializers.ValidationError({"confirm_password": "Passwords do not match."})
-
-        # Reuse Django validators (strong password rules)
-        password_validation.validate_password(pw1)
-        return attrs
-
-
-
-
-class AccountDeleteRequestSerializer(serializers.Serializer):
-    confirm = serializers.BooleanField()
-    current_password = serializers.CharField(required=False, allow_blank=True, write_only=True)
-
-    def validate(self, attrs):
-        request = self.context.get("request")
-        user = getattr(request, "user", None)
-
-        if not attrs.get("confirm"):
-            raise serializers.ValidationError({"confirm": "You must confirm account deletion."})
-
-        # if user has a password, require it (extra safety)
-        if user and user.has_usable_password():
-            pw = (attrs.get("current_password") or "").strip()
-            if not pw:
-                raise serializers.ValidationError({"current_password": "This field is required."})
-
-            authed = authenticate(username=user.username, password=pw)
-            if not authed:
-                raise serializers.ValidationError({"current_password": "Password is incorrect."})
-
-        return attrs
-
-
-class AccountDeleteCancelSerializer(serializers.Serializer):
-    confirm = serializers.BooleanField()
-
-    def validate(self, attrs):
-        if not attrs.get("confirm"):
-            raise serializers.ValidationError({"confirm": "You must confirm cancellation."})
-        return attrs
-
-
-        
 class UserSerializer(serializers.ModelSerializer):
     has_password = serializers.SerializerMethodField()
 
@@ -1713,39 +1637,6 @@ class UserSerializer(serializers.ModelSerializer):
     @extend_schema_field(OpenApiTypes.BOOL)
     def get_has_password(self, obj) -> bool:
         return bool(obj.has_usable_password())
-        
-
-
-
-
-
-_UK_POSTCODE_RE = re.compile(
-    r"^(GIR 0AA|"
-    r"((([A-Z]{1,2}[0-9]{1,2})|"
-    r"([A-Z]{1,2}[0-9][A-Z])|"
-    r"([A-Z]{1}[0-9]{1,2})|"
-    r"([A-Z]{1}[0-9][A-Z]))\s?[0-9][A-Z]{2}))$"
-)
-
-
-def _normalise_postcode(value: str) -> str:
-    if value is None:
-        return ""
-    v = str(value).strip().upper()
-    v = re.sub(r"\s+", "", v)  # remove all spaces
-    if len(v) <= 3:
-        return v
-    return f"{v[:-3]} {v[-3:]}"  # insert single space before last 3
-
-
-def _age_in_years(dob: date) -> int:
-    today = timezone.localdate()
-    years = today.year - dob.year
-    if (today.month, today.day) < (dob.month, dob.day):
-        years -= 1
-    return years
-
-
 
 
 class UserProfileSerializer(serializers.ModelSerializer):
@@ -1897,7 +1788,138 @@ class UserProfileSerializer(serializers.ModelSerializer):
         return data
     
     
+
+class LoginSuccessDataSerializer(serializers.Serializer):
+    tokens = LoginTokensSerializer()
+    user = UserSerializer()
+    profile = UserProfileSerializer()
+
+
+class LoginResponseSerializer(serializers.Serializer):
+    ok = serializers.BooleanField()
+    data = LoginSuccessDataSerializer()    
     
+class TokenPairWithExpirySerializer(serializers.Serializer):
+    access = serializers.CharField()
+    refresh = serializers.CharField()
+    access_expires_at = serializers.DateTimeField()
+    refresh_expires_at = serializers.DateTimeField()
+
+
+
+class LoginResponseSerializer(serializers.Serializer):
+    ok = serializers.BooleanField()
+    data = LoginSuccessDataSerializer()
+    
+
+class TokenRefreshRequestSerializer(serializers.Serializer):
+    refresh = serializers.CharField()
+
+
+class TokenRefreshDataSerializer(serializers.Serializer):
+    access = serializers.CharField()
+    access_expires_at = serializers.DateTimeField()
+    refresh_expires_at = serializers.DateTimeField()
+
+    # only present if you ever rotate refresh tokens
+    refresh = serializers.CharField(required=False)
+
+
+
+class PasswordResetRequestSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+
+
+class PasswordResetConfirmSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+    token = serializers.CharField()  # we will use the 6-digit OTP code
+    new_password = serializers.CharField(write_only=True)
+    confirm_password = serializers.CharField(write_only=True)
+
+    def validate(self, attrs):
+        pw1 = attrs.get("new_password") or ""
+        pw2 = attrs.get("confirm_password") or ""
+        if pw1 != pw2:
+            raise serializers.ValidationError({"confirm_password": "Passwords do not match."})
+
+        # Reuse Django validators (strong password rules)
+        password_validation.validate_password(pw1)
+        return attrs
+
+
+
+
+class AccountDeleteRequestSerializer(serializers.Serializer):
+    confirm = serializers.BooleanField()
+    current_password = serializers.CharField(required=False, allow_blank=True, write_only=True)
+
+    def validate(self, attrs):
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+
+        if not attrs.get("confirm"):
+            raise serializers.ValidationError({"confirm": "You must confirm account deletion."})
+
+        # if user has a password, require it (extra safety)
+        if user and user.has_usable_password():
+            pw = (attrs.get("current_password") or "").strip()
+            if not pw:
+                raise serializers.ValidationError({"current_password": "This field is required."})
+
+            authed = authenticate(username=user.username, password=pw)
+            if not authed:
+                raise serializers.ValidationError({"current_password": "Password is incorrect."})
+
+        return attrs
+
+
+class AccountDeleteCancelSerializer(serializers.Serializer):
+    confirm = serializers.BooleanField()
+
+    def validate(self, attrs):
+        if not attrs.get("confirm"):
+            raise serializers.ValidationError({"confirm": "You must confirm cancellation."})
+        return attrs
+
+
+        
+
+        
+
+
+
+
+
+_UK_POSTCODE_RE = re.compile(
+    r"^(GIR 0AA|"
+    r"((([A-Z]{1,2}[0-9]{1,2})|"
+    r"([A-Z]{1,2}[0-9][A-Z])|"
+    r"([A-Z]{1}[0-9]{1,2})|"
+    r"([A-Z]{1}[0-9][A-Z]))\s?[0-9][A-Z]{2}))$"
+)
+
+
+def _normalise_postcode(value: str) -> str:
+    if value is None:
+        return ""
+    v = str(value).strip().upper()
+    v = re.sub(r"\s+", "", v)  # remove all spaces
+    if len(v) <= 3:
+        return v
+    return f"{v[:-3]} {v[-3:]}"  # insert single space before last 3
+
+
+def _age_in_years(dob: date) -> int:
+    today = timezone.localdate()
+    years = today.year - dob.year
+    if (today.month, today.day) < (dob.month, dob.day):
+        years -= 1
+    return years
+
+
+
+
+
     
 class ReviewCardSerializer(serializers.ModelSerializer):
     reviewer_name = serializers.CharField(source="reviewer.username", read_only=True)
@@ -2018,9 +2040,23 @@ class AvatarUploadRequestSerializer(serializers.Serializer):
     avatar = serializers.ImageField(required=True)
 
 
-class StripeCheckoutRedirectResponseSerializer(serializers.Serializer):
+class StripeCheckoutSessionCreateRequestSerializer(serializers.Serializer):
+    payment_method_id = serializers.CharField(
+        required=False,
+        allow_null=True,
+        allow_blank=True,
+        help_text="Optional saved Stripe PaymentMethod ID for future use."
+    )
+
+
+class StripeCheckoutRedirectDataSerializer(serializers.Serializer):
     checkout_url = serializers.URLField()
-    session_id = serializers.CharField()
+    session_id = serializers.CharField(allow_null=True)
+
+
+class StripeCheckoutRedirectResponseSerializer(serializers.Serializer):
+    ok = serializers.BooleanField()
+    data = StripeCheckoutRedirectDataSerializer()
 
 class RoomPhotoUploadRequestSerializer(serializers.Serializer):
     image = serializers.ImageField(required=True)
@@ -2188,6 +2224,24 @@ class BookingSerializer(serializers.ModelSerializer):
         }
 
 
+class BookingCreateRequestSerializer(serializers.Serializer):
+    room = serializers.IntegerField(required=False)
+    slot = serializers.IntegerField(required=False)
+    start = serializers.DateTimeField(required=False)
+    end = serializers.DateTimeField(required=False)
+    
+    
+class BookingResponseEnvelopeSerializer(serializers.Serializer):
+    ok = serializers.BooleanField()
+    data = BookingSerializer()
+    
+    
+    
+class BookingResponseEnvelopeSerializer(serializers.Serializer):
+    ok = serializers.BooleanField()
+    data = BookingSerializer()        
+
+
 class AvailabilitySlotSerializer(serializers.ModelSerializer):
     is_full = serializers.SerializerMethodField()
 
@@ -2259,6 +2313,32 @@ class PaymentTransactionListSerializer(serializers.ModelSerializer):
 class WebhookAckSerializer(serializers.Serializer):
     ok = serializers.BooleanField(required=False)
     detail = serializers.CharField(required=False)
+    
+    
+class StripeWebhookEventRequestSerializer(serializers.Serializer):
+    id = serializers.CharField(required=False)
+    type = serializers.CharField(required=False)
+    created = serializers.IntegerField(required=False)
+    livemode = serializers.BooleanField(required=False)
+    data = serializers.JSONField(required=False)
+    object = serializers.CharField(required=False)
+
+
+class StripeWebhookAckDataSerializer(serializers.Serializer):
+    detail = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    event_id = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    event_type = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    payment_id = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+
+
+class StripeWebhookAckResponseSerializer(serializers.Serializer):
+    ok = serializers.BooleanField()
+    data = StripeWebhookAckDataSerializer()
+
+
+class StripeWebhookErrorResponseSerializer(serializers.Serializer):
+    detail = serializers.CharField()    
+    
 
 class PaymentTransactionDetailSerializer(serializers.ModelSerializer):
     listing_title = serializers.CharField(source="room.title", read_only=True)
@@ -2573,4 +2653,18 @@ class CreatePasswordRequestSerializer(serializers.Serializer):
     
 class ChangeEmailRequestSerializer(serializers.Serializer):
     current_password = serializers.CharField()
-    new_email = serializers.EmailField()    
+    new_email = serializers.EmailField()   
+    
+    
+    
+class LogoutRequestSerializer(serializers.Serializer):
+    refresh = serializers.CharField()
+
+
+class LogoutDataSerializer(serializers.Serializer):
+    detail = serializers.CharField()
+
+
+class LogoutResponseSerializer(serializers.Serializer):
+    ok = serializers.BooleanField()
+    data = LogoutDataSerializer()     

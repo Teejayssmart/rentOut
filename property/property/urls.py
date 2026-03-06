@@ -15,7 +15,7 @@ import os
 from django.urls import re_path
 from django.views.static import serve
 
-from propertylist_app.api.views import LoginView, TokenRefreshEnvelopeView
+
 
 
 
