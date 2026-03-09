@@ -1,15 +1,16 @@
 openapi: 3.0.3
 info:
-  title: ''
-  version: 0.0.0
+  title: RentOut API
+  version: v1
+  description: Backend API for RentOut property platform.
 paths:
   /api/v1/auth/login/:
     post:
-      operationId: api_v1_auth_login_create
+      operationId: auth_login_create
       description: Login using either email or username in 'identifier'. Returns JWT
         refresh/access tokens on success.
       tags:
-      - api
+      - auth
       requestBody:
         content:
           application/json:
@@ -37,10 +38,10 @@ paths:
           description: Too many failed attempts.
   /api/v1/auth/logout/:
     post:
-      operationId: api_v1_auth_logout_create
+      operationId: auth_logout_create
       description: Logout current user. Returns ok_response envelope.
       tags:
-      - api
+      - auth
       security:
       - jwtAuth: []
       responses:
@@ -54,10 +55,10 @@ paths:
           description: Authentication required.
   /api/v1/auth/password-reset/:
     post:
-      operationId: api_v1_auth_password_reset_create
+      operationId: auth_password_reset_create
       description: Request a password reset email. Returns ok_response envelope.
       tags:
-      - api
+      - auth
       requestBody:
         content:
           application/json:
@@ -81,9 +82,9 @@ paths:
           description: Validation error.
   /api/v1/auth/password-reset/confirm/:
     post:
-      operationId: api_v1_auth_password_reset_confirm_create
+      operationId: auth_password_reset_confirm_create
       tags:
-      - api
+      - auth
       requestBody:
         content:
           application/json:
@@ -107,9 +108,9 @@ paths:
           description: Validation error.
   /api/v1/auth/phone/start/:
     post:
-      operationId: api_v1_auth_phone_start_create
+      operationId: auth_phone_start_create
       tags:
-      - api
+      - auth
       requestBody:
         content:
           application/json:
@@ -131,9 +132,9 @@ paths:
           description: ''
   /api/v1/auth/phone/verify/:
     post:
-      operationId: api_v1_auth_phone_verify_create
+      operationId: auth_phone_verify_create
       tags:
-      - api
+      - auth
       requestBody:
         content:
           application/json:
@@ -155,9 +156,9 @@ paths:
           description: ''
   /api/v1/auth/register/:
     post:
-      operationId: api_v1_auth_register_create
+      operationId: auth_register_create
       tags:
-      - api
+      - auth
       requestBody:
         content:
           application/json:
@@ -193,10 +194,10 @@ paths:
           description: ''
   /api/v1/auth/register/apple/:
     post:
-      operationId: api_v1_auth_register_apple_create
+      operationId: auth_register_apple_create
       description: Mock Google register/login. Returns refresh and access tokens.
       tags:
-      - api
+      - auth
       requestBody:
         content:
           application/json:
@@ -233,10 +234,10 @@ paths:
           description: Google sign-up not implemented.
   /api/v1/auth/register/google/:
     post:
-      operationId: api_v1_auth_register_google_create
+      operationId: auth_register_google_create
       description: Mock Google register/login. Returns refresh and access tokens.
       tags:
-      - api
+      - auth
       requestBody:
         content:
           application/json:
@@ -273,9 +274,9 @@ paths:
           description: Google sign-up not implemented.
   /api/v1/auth/resend-otp/:
     post:
-      operationId: api_v1_auth_resend_otp_create
+      operationId: auth_resend_otp_create
       tags:
-      - api
+      - auth
       requestBody:
         content:
           application/json:
@@ -297,11 +298,11 @@ paths:
           description: ''
   /api/v1/auth/token/refresh/:
     post:
-      operationId: api_v1_auth_token_refresh_create
+      operationId: auth_token_refresh_create
       description: Exchange a refresh token for a new access token. Returns ok_response
         envelope.
       tags:
-      - api
+      - auth
       requestBody:
         content:
           application/json:
@@ -325,9 +326,9 @@ paths:
           description: Invalid or expired refresh token.
   /api/v1/auth/verify-otp/:
     post:
-      operationId: api_v1_auth_verify_otp_create
+      operationId: auth_verify_otp_create
       tags:
-      - api
+      - auth
       requestBody:
         content:
           application/json:
@@ -349,7 +350,7 @@ paths:
           description: ''
   /api/v1/bookings/:
     get:
-      operationId: api_v1_bookings_list
+      operationId: bookings_list
       description: List bookings for the authenticated user.
       parameters:
       - name: limit
@@ -371,7 +372,7 @@ paths:
         schema:
           type: string
       tags:
-      - api
+      - bookings
       security:
       - jwtAuth: []
       responses:
@@ -393,10 +394,10 @@ paths:
                 - data
           description: ''
     post:
-      operationId: api_v1_bookings_create
+      operationId: bookings_create
       description: GET my bookings / POST create (slot OR direct).
       tags:
-      - api
+      - bookings
       requestBody:
         content:
           application/json:
@@ -430,7 +431,7 @@ paths:
           description: ''
   /api/v1/bookings/{booking_id}/reviews/:
     get:
-      operationId: api_v1_bookings_reviews_retrieve
+      operationId: bookings_reviews_retrieve
       description: List booking reviews. Returns ok_response envelope.
       parameters:
       - in: path
@@ -439,7 +440,7 @@ paths:
           type: integer
         required: true
       tags:
-      - api
+      - bookings
       security:
       - jwtAuth: []
       responses:
@@ -451,7 +452,7 @@ paths:
           description: ''
   /api/v1/bookings/{booking_id}/reviews/create/:
     post:
-      operationId: api_v1_bookings_reviews_create_create
+      operationId: bookings_reviews_create_create
       description: Create a booking review. Returns ok_response envelope.
       parameters:
       - in: path
@@ -460,7 +461,7 @@ paths:
           type: integer
         required: true
       tags:
-      - api
+      - bookings
       requestBody:
         content:
           application/json:
@@ -489,7 +490,7 @@ paths:
           description: Not found.
   /api/v1/bookings/{id}/:
     get:
-      operationId: api_v1_bookings_retrieve
+      operationId: bookings_retrieve
       description: Retrieve a booking owned by the authenticated user.
       parameters:
       - in: path
@@ -498,7 +499,7 @@ paths:
           type: integer
         required: true
       tags:
-      - api
+      - bookings
       security:
       - jwtAuth: []
       responses:
@@ -514,7 +515,7 @@ paths:
           description: Booking not found.
   /api/v1/bookings/{id}/cancel/:
     post:
-      operationId: api_v1_bookings_cancel_create
+      operationId: bookings_cancel_create
       description: Cancel a booking. Returns ok_response envelope.
       parameters:
       - in: path
@@ -523,7 +524,7 @@ paths:
           type: integer
         required: true
       tags:
-      - api
+      - bookings
       security:
       - jwtAuth: []
       responses:
@@ -541,7 +542,7 @@ paths:
           description: Not found.
   /api/v1/bookings/{id}/delete/:
     delete:
-      operationId: api_v1_bookings_delete_destroy
+      operationId: bookings_delete_destroy
       description: Delete a booking. Returns 204 or ok_response envelope depending
         on implementation.
       parameters:
@@ -551,7 +552,7 @@ paths:
           type: integer
         required: true
       tags:
-      - api
+      - bookings
       security:
       - jwtAuth: []
       responses:
@@ -569,7 +570,7 @@ paths:
           description: Not found.
   /api/v1/bookings/{id}/suspend/:
     post:
-      operationId: api_v1_bookings_suspend_create
+      operationId: bookings_suspend_create
       description: Suspend a booking. Returns ok_response envelope.
       parameters:
       - in: path
@@ -578,7 +579,7 @@ paths:
           type: integer
         required: true
       tags:
-      - api
+      - bookings
       security:
       - jwtAuth: []
       responses:
@@ -598,7 +599,7 @@ paths:
           description: Not found.
   /api/v1/bookings/create/:
     post:
-      operationId: api_v1_bookings_create_create
+      operationId: bookings_create_create
       description: Preflight validation for booking creation. Validates room, start/end
         datetimes, and checks for booking conflicts.
       parameters:
@@ -608,7 +609,7 @@ paths:
           type: string
         description: Optional idempotency key to prevent duplicate booking creation.
       tags:
-      - api
+      - bookings
       requestBody:
         content:
           application/json:
@@ -647,7 +648,7 @@ paths:
           description: Authentication required.
   /api/v1/category/:
     get:
-      operationId: api_v1_category_list
+      operationId: category_list
       description: Admin/staff can create/update/delete; others read active=True.
       parameters:
       - name: limit
@@ -669,7 +670,7 @@ paths:
         schema:
           type: string
       tags:
-      - api
+      - category
       security:
       - jwtAuth: []
       responses:
@@ -691,10 +692,10 @@ paths:
                 - data
           description: ''
     post:
-      operationId: api_v1_category_create
+      operationId: category_create
       description: Admin/staff can create/update/delete; others read active=True.
       tags:
-      - api
+      - category
       requestBody:
         content:
           application/json:
@@ -729,7 +730,7 @@ paths:
           description: ''
   /api/v1/category/{id}/:
     get:
-      operationId: api_v1_category_retrieve
+      operationId: category_retrieve
       description: Admin/staff can create/update/delete; others read active=True.
       parameters:
       - in: path
@@ -739,7 +740,7 @@ paths:
         description: A unique integer value identifying this room categorie.
         required: true
       tags:
-      - api
+      - category
       security:
       - jwtAuth: []
       responses:
@@ -761,7 +762,7 @@ paths:
                 - data
           description: ''
     put:
-      operationId: api_v1_category_update
+      operationId: category_update
       description: Admin/staff can create/update/delete; others read active=True.
       parameters:
       - in: path
@@ -771,7 +772,7 @@ paths:
         description: A unique integer value identifying this room categorie.
         required: true
       tags:
-      - api
+      - category
       requestBody:
         content:
           application/json:
@@ -805,7 +806,7 @@ paths:
                 - data
           description: ''
     patch:
-      operationId: api_v1_category_partial_update
+      operationId: category_partial_update
       description: Admin/staff can create/update/delete; others read active=True.
       parameters:
       - in: path
@@ -815,7 +816,7 @@ paths:
         description: A unique integer value identifying this room categorie.
         required: true
       tags:
-      - api
+      - category
       requestBody:
         content:
           application/json:
@@ -848,7 +849,7 @@ paths:
                 - data
           description: ''
     delete:
-      operationId: api_v1_category_destroy
+      operationId: category_destroy
       description: Admin/staff can create/update/delete; others read active=True.
       parameters:
       - in: path
@@ -858,7 +859,7 @@ paths:
         description: A unique integer value identifying this room categorie.
         required: true
       tags:
-      - api
+      - category
       security:
       - jwtAuth: []
       responses:
@@ -866,10 +867,10 @@ paths:
           description: No response body
   /api/v1/cities/:
     get:
-      operationId: api_v1_cities_retrieve
+      operationId: cities_retrieve
       description: List cities. Returns ok_response envelope.
       tags:
-      - api
+      - cities
       security:
       - jwtAuth: []
       - {}
@@ -882,12 +883,12 @@ paths:
           description: ''
   /api/v1/contact/:
     post:
-      operationId: api_v1_contact_create
+      operationId: contact_create
       description: |-
         Public Contact Us endpoint.
         Used by the Contact Us form on the marketing site.
       tags:
-      - api
+      - contact
       requestBody:
         content:
           application/json:
@@ -923,10 +924,10 @@ paths:
           description: ''
   /api/v1/health/:
     get:
-      operationId: api_v1_health_retrieve
+      operationId: health_retrieve
       description: Health check. Returns ok_response envelope.
       tags:
-      - api
+      - health
       responses:
         '200':
           content:
@@ -936,10 +937,10 @@ paths:
           description: ''
   /api/v1/home/:
     get:
-      operationId: api_v1_home_retrieve
+      operationId: home_retrieve
       description: Homepage summary. Returns ok_response envelope.
       tags:
-      - api
+      - home
       security:
       - jwtAuth: []
       - {}
@@ -952,11 +953,11 @@ paths:
           description: ''
   /api/v1/inbox/:
     get:
-      operationId: api_v1_inbox_retrieve
+      operationId: inbox_retrieve
       description: List inbox items (merged notifications + message threads) wrapped
         in ok_response. Not paginated.
       tags:
-      - api
+      - inbox
       security:
       - jwtAuth: []
       responses:
@@ -968,10 +969,10 @@ paths:
           description: ''
   /api/v1/messages/stats/:
     get:
-      operationId: api_v1_messages_stats_retrieve
+      operationId: messages_stats_retrieve
       description: Message stats (e.g. unread counts). Returns ok_response envelope.
       tags:
-      - api
+      - messages
       security:
       - jwtAuth: []
       responses:
@@ -983,7 +984,7 @@ paths:
           description: ''
   /api/v1/messages/threads/:
     get:
-      operationId: api_v1_messages_threads_list
+      operationId: messages_threads_list
       description: |-
         GET /api/messages/threads/
 
@@ -1012,7 +1013,7 @@ paths:
         schema:
           type: string
       tags:
-      - api
+      - messages
       security:
       - jwtAuth: []
       responses:
@@ -1034,7 +1035,7 @@ paths:
                 - data
           description: ''
     post:
-      operationId: api_v1_messages_threads_create
+      operationId: messages_threads_create
       description: |-
         GET /api/messages/threads/
 
@@ -1044,7 +1045,7 @@ paths:
           - q      : search in message body or participant username
           - sort_by: latest (default) | oldest
       tags:
-      - api
+      - messages
       requestBody:
         content:
           application/json:
@@ -1079,7 +1080,7 @@ paths:
           description: ''
   /api/v1/messages/threads/{thread_id}/bin/:
     post:
-      operationId: api_v1_messages_threads_bin_create
+      operationId: messages_threads_bin_create
       description: Move a thread to bin (per-user).
       parameters:
       - in: path
@@ -1088,7 +1089,7 @@ paths:
           type: integer
         required: true
       tags:
-      - api
+      - messages
       security:
       - jwtAuth: []
       responses:
@@ -1106,7 +1107,7 @@ paths:
           description: Thread not found.
   /api/v1/messages/threads/{thread_id}/label/:
     post:
-      operationId: api_v1_messages_threads_label_create
+      operationId: messages_threads_label_create
       description: Set per-user label for a message thread.
       parameters:
       - in: path
@@ -1115,7 +1116,7 @@ paths:
           type: integer
         required: true
       tags:
-      - api
+      - messages
       requestBody:
         content:
           application/json:
@@ -1145,18 +1146,24 @@ paths:
           description: Thread not found.
   /api/v1/messages/threads/{thread_id}/messages/:
     get:
-      operationId: api_v1_messages_threads_messages_list
+      operationId: messages_threads_messages_list
       parameters:
+      - name: limit
+        required: false
+        in: query
+        description: Number of results to return per page.
+        schema:
+          type: integer
+      - name: offset
+        required: false
+        in: query
+        description: The initial index from which to return the results.
+        schema:
+          type: integer
       - name: ordering
         required: false
         in: query
         description: Which field to use when ordering the results.
-        schema:
-          type: string
-      - name: record
-        required: false
-        in: query
-        description: The pagination cursor value.
         schema:
           type: string
       - in: path
@@ -1165,7 +1172,7 @@ paths:
           type: integer
         required: true
       tags:
-      - api
+      - messages
       security:
       - jwtAuth: []
       responses:
@@ -1187,7 +1194,7 @@ paths:
                 - data
           description: ''
     post:
-      operationId: api_v1_messages_threads_messages_create
+      operationId: messages_threads_messages_create
       parameters:
       - in: path
         name: thread_id
@@ -1195,7 +1202,7 @@ paths:
           type: integer
         required: true
       tags:
-      - api
+      - messages
       requestBody:
         content:
           application/json:
@@ -1230,7 +1237,7 @@ paths:
           description: ''
   /api/v1/messages/threads/{thread_id}/read/:
     post:
-      operationId: api_v1_messages_threads_read_create
+      operationId: messages_threads_read_create
       description: Mark thread as read for the current user.
       parameters:
       - in: path
@@ -1239,7 +1246,7 @@ paths:
           type: integer
         required: true
       tags:
-      - api
+      - messages
       security:
       - jwtAuth: []
       responses:
@@ -1255,7 +1262,7 @@ paths:
           description: Thread not found.
   /api/v1/messages/threads/{thread_id}/restore/:
     post:
-      operationId: api_v1_messages_threads_restore_create
+      operationId: messages_threads_restore_create
       description: |-
         POST /api/messages/threads/<thread_id>/restore/
         Restore this thread from the current user's Bin back to the inbox.
@@ -1266,7 +1273,7 @@ paths:
           type: integer
         required: true
       tags:
-      - api
+      - messages
       security:
       - jwtAuth: []
       responses:
@@ -1282,22 +1289,16 @@ paths:
                     type: string
                     nullable: true
                   data:
-                    type: object
-                    additionalProperties: {}
+                    $ref: '#/components/schemas/ThreadRestoreResponse'
                 required:
                 - ok
                 - data
           description: ''
         '404':
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: {}
-          description: ''
+          description: Thread not found.
   /api/v1/messages/threads/{thread_id}/state/:
     patch:
-      operationId: api_v1_messages_threads_state_partial_update
+      operationId: messages_threads_state_partial_update
       description: |-
         PATCH /api/messages/threads/<thread_id>/state/
 
@@ -1311,7 +1312,7 @@ paths:
           type: integer
         required: true
       tags:
-      - api
+      - messages
       requestBody:
         content:
           application/json:
@@ -1338,29 +1339,18 @@ paths:
                     type: string
                     nullable: true
                   data:
-                    type: object
-                    additionalProperties: {}
+                    $ref: '#/components/schemas/ThreadStateResponse'
                 required:
                 - ok
                 - data
           description: ''
         '400':
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: {}
-          description: ''
+          description: Validation error.
         '404':
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: {}
-          description: ''
+          description: Thread not found.
   /api/v1/moderation/reports/:
     get:
-      operationId: api_v1_moderation_reports_list
+      operationId: moderation_reports_list
       description: GET /api/moderation/reports/?status=open|in_review|resolved|rejected
         — staff only.
       parameters:
@@ -1383,7 +1373,7 @@ paths:
         schema:
           type: string
       tags:
-      - api
+      - moderation
       security:
       - jwtAuth: []
       responses:
@@ -1406,7 +1396,7 @@ paths:
           description: ''
   /api/v1/moderation/reports/{id}/:
     put:
-      operationId: api_v1_moderation_reports_update
+      operationId: moderation_reports_update
       description: |-
         PATCH /api/moderation/reports/<id>/
         Body (any subset): {"status": "...", "resolution_notes": "...", "hide_room": true}
@@ -1417,7 +1407,7 @@ paths:
           type: integer
         required: true
       tags:
-      - api
+      - moderation
       requestBody:
         content:
           application/json:
@@ -1451,7 +1441,7 @@ paths:
                 - data
           description: ''
     patch:
-      operationId: api_v1_moderation_reports_partial_update
+      operationId: moderation_reports_partial_update
       description: |-
         PATCH /api/moderation/reports/<id>/
         Body (any subset): {"status": "...", "resolution_notes": "...", "hide_room": true}
@@ -1462,7 +1452,7 @@ paths:
           type: integer
         required: true
       tags:
-      - api
+      - moderation
       requestBody:
         content:
           application/json:
@@ -1496,7 +1486,7 @@ paths:
           description: ''
   /api/v1/moderation/rooms/{id}/status/:
     patch:
-      operationId: api_v1_moderation_rooms_status_partial_update
+      operationId: moderation_rooms_status_partial_update
       description: |-
         PATCH /api/moderation/rooms/<id>/status/
         Body: {"status": "active"|"hidden"} — staff only.
@@ -1507,7 +1497,7 @@ paths:
           type: integer
         required: true
       tags:
-      - api
+      - moderation
       requestBody:
         content:
           application/json:
@@ -1552,7 +1542,7 @@ paths:
           description: ''
   /api/v1/my-listings/:
     get:
-      operationId: api_v1_my_listings_list
+      operationId: my_listings_list
       description: |-
         Returns the current user's rooms grouped by logical listing_state.
         Front-end will call:
@@ -1569,7 +1559,7 @@ paths:
         schema:
           type: string
       tags:
-      - api
+      - my-listings
       security:
       - jwtAuth: []
       responses:
@@ -1594,11 +1584,11 @@ paths:
           description: ''
   /api/v1/notifications/:
     get:
-      operationId: api_v1_notifications_list
+      operationId: notifications_list
       description: List notifications for the current user. Returns a plain array
         (not paginated).
       tags:
-      - api
+      - notifications
       security:
       - jwtAuth: []
       responses:
@@ -1623,7 +1613,7 @@ paths:
           description: ''
   /api/v1/notifications/{id}/read/:
     post:
-      operationId: api_v1_notifications_read_create
+      operationId: notifications_read_create
       parameters:
       - in: path
         name: id
@@ -1631,7 +1621,7 @@ paths:
           type: integer
         required: true
       tags:
-      - api
+      - notifications
       security:
       - jwtAuth: []
       responses:
@@ -1662,9 +1652,9 @@ paths:
           description: ''
   /api/v1/notifications/read/all/:
     post:
-      operationId: api_v1_notifications_read_all_create
+      operationId: notifications_read_all_create
       tags:
-      - api
+      - notifications
       security:
       - jwtAuth: []
       responses:
@@ -1688,12 +1678,12 @@ paths:
           description: ''
   /api/v1/ops/stats/:
     get:
-      operationId: api_v1_ops_stats_retrieve
+      operationId: ops_stats_retrieve
       description: |-
         GET /api/ops/stats/ — admin-only operational snapshot.
         Amounts reported in **GBP** (Payment.amount is stored in GBP).
       tags:
-      - api
+      - ops
       security:
       - jwtAuth: []
       responses:
@@ -1717,7 +1707,7 @@ paths:
           description: ''
   /api/v1/payments/cancel/:
     get:
-      operationId: api_v1_payments_cancel_retrieve
+      operationId: payments_cancel_retrieve
       description: Landing endpoint after a cancelled Stripe Checkout redirect.
       parameters:
       - in: query
@@ -1726,7 +1716,7 @@ paths:
           type: string
         description: Internal Payment ID included in redirect URL.
       tags:
-      - api
+      - payments
       responses:
         '200':
           content:
@@ -1736,7 +1726,7 @@ paths:
           description: ''
   /api/v1/payments/checkout/rooms/{id}/:
     post:
-      operationId: api_v1_payments_checkout_rooms_create
+      operationId: payments_checkout_rooms_create
       description: Creates a Stripe Checkout Session for the specified room listing
         fee. Request body may include an optional payment_method_id. Returns the Stripe-hosted
         checkout_url and session_id.
@@ -1747,7 +1737,7 @@ paths:
           type: integer
         required: true
       tags:
-      - api
+      - payments
       requestBody:
         content:
           application/json:
@@ -1778,12 +1768,10 @@ paths:
           description: Room not found.
   /api/v1/payments/saved-cards/:
     get:
-      operationId: api_v1_payments_saved_cards_retrieve
-      description: |-
-        Returns up to 4 saved card payment methods for the current user
-        using their Stripe Customer ID.
+      operationId: payments_saved_cards_retrieve
+      description: Return up to 4 saved card payment methods for the current user.
       tags:
-      - api
+      - payments
       security:
       - jwtAuth: []
       responses:
@@ -1799,22 +1787,16 @@ paths:
                     type: string
                     nullable: true
                   data:
-                    type: object
-                    additionalProperties: {}
+                    $ref: '#/components/schemas/SavedCardsListResponse'
                 required:
                 - ok
                 - data
           description: ''
         '502':
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: {}
-          description: ''
+          description: Unable to fetch saved cards from Stripe.
   /api/v1/payments/saved-cards/{pm_id}/detach/:
     post:
-      operationId: api_v1_payments_saved_cards_detach_create
+      operationId: payments_saved_cards_detach_create
       parameters:
       - in: path
         name: pm_id
@@ -1822,7 +1804,7 @@ paths:
           type: string
         required: true
       tags:
-      - api
+      - payments
       security:
       - jwtAuth: []
       responses:
@@ -1838,29 +1820,18 @@ paths:
                     type: string
                     nullable: true
                   data:
-                    type: object
-                    additionalProperties: {}
+                    $ref: '#/components/schemas/DetailResponse'
                 required:
                 - ok
                 - data
           description: ''
         '400':
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: {}
-          description: ''
+          description: No Stripe customer found for this user.
         '502':
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: {}
-          description: ''
+          description: Unable to detach saved card.
   /api/v1/payments/saved-cards/{pm_id}/set-default/:
     post:
-      operationId: api_v1_payments_saved_cards_set_default_create
+      operationId: payments_saved_cards_set_default_create
       parameters:
       - in: path
         name: pm_id
@@ -1868,7 +1839,7 @@ paths:
           type: string
         required: true
       tags:
-      - api
+      - payments
       security:
       - jwtAuth: []
       responses:
@@ -1884,34 +1855,23 @@ paths:
                     type: string
                     nullable: true
                   data:
-                    type: object
-                    additionalProperties: {}
+                    $ref: '#/components/schemas/DetailResponse'
                 required:
                 - ok
                 - data
           description: ''
         '400':
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: {}
-          description: ''
+          description: No Stripe customer found for this user.
         '502':
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: {}
-          description: ''
+          description: Unable to set default card.
   /api/v1/payments/setup-intent/:
     post:
-      operationId: api_v1_payments_setup_intent_create
+      operationId: payments_setup_intent_create
       description: |-
         Creates a Stripe SetupIntent for the logged-in user so they can add/save a card
         using Stripe Elements (do NOT send raw card details to backend).
       tags:
-      - api
+      - payments
       security:
       - jwtAuth: []
       responses:
@@ -1927,22 +1887,16 @@ paths:
                     type: string
                     nullable: true
                   data:
-                    type: object
-                    additionalProperties: {}
+                    $ref: '#/components/schemas/SetupIntentResponse'
                 required:
                 - ok
                 - data
           description: ''
         '502':
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: {}
-          description: ''
+          description: Unable to create setup intent.
   /api/v1/payments/success/:
     get:
-      operationId: api_v1_payments_success_retrieve
+      operationId: payments_success_retrieve
       description: Landing endpoint after successful Stripe Checkout redirect. This
         endpoint acknowledges the redirect only; the Stripe webhook is responsible
         for final payment confirmation and room listing activation.
@@ -1958,7 +1912,7 @@ paths:
           type: string
         description: Stripe Checkout Session ID returned by Stripe redirect.
       tags:
-      - api
+      - payments
       responses:
         '200':
           content:
@@ -1968,7 +1922,7 @@ paths:
           description: ''
   /api/v1/payments/transactions/:
     get:
-      operationId: api_v1_payments_transactions_list
+      operationId: payments_transactions_list
       parameters:
       - name: limit
         required: false
@@ -1989,7 +1943,7 @@ paths:
         schema:
           type: string
       tags:
-      - api
+      - payments
       security:
       - jwtAuth: []
       responses:
@@ -2012,7 +1966,7 @@ paths:
           description: ''
   /api/v1/payments/transactions/{id}/:
     get:
-      operationId: api_v1_payments_transactions_retrieve
+      operationId: payments_transactions_retrieve
       parameters:
       - in: path
         name: id
@@ -2020,7 +1974,7 @@ paths:
           type: integer
         required: true
       tags:
-      - api
+      - payments
       security:
       - jwtAuth: []
       responses:
@@ -2043,7 +1997,7 @@ paths:
           description: ''
   /api/v1/payments/webhook/:
     post:
-      operationId: api_v1_payments_webhook_create
+      operationId: payments_webhook_create
       description: Stripe webhook endpoint. Verifies the Stripe-Signature header and
         processes Stripe event payloads. Currently handles checkout.session.completed
         and checkout.session.expired. Other event types are acknowledged and ignored.
@@ -2055,7 +2009,7 @@ paths:
         description: Stripe webhook signature header used to verify the request.
         required: true
       tags:
-      - api
+      - payments
       requestBody:
         content:
           application/json:
@@ -2082,13 +2036,13 @@ paths:
           description: ''
   /api/v1/reports/:
     post:
-      operationId: api_v1_reports_create
+      operationId: reports_create
       description: |-
         POST /api/reports/
         Body:
           {"target_type": "room"|"review"|"message"|"user", "object_id": 123, "reason": "abuse", "details": "…"}
       tags:
-      - api
+      - reports
       requestBody:
         content:
           application/json:
@@ -2123,7 +2077,7 @@ paths:
           description: ''
   /api/v1/reports/{id}/moderate/:
     post:
-      operationId: api_v1_reports_moderate_create
+      operationId: reports_moderate_create
       description: |-
         POST /api/v1/reports/<id>/moderate/
         body: {"action": "resolve"|"in_review"|"reject", "hide_room": true|false, "resolution_notes": "..." }
@@ -2134,7 +2088,7 @@ paths:
           type: integer
         required: true
       tags:
-      - api
+      - reports
       requestBody:
         content:
           application/json:
@@ -2186,7 +2140,7 @@ paths:
           description: ''
   /api/v1/reviews/:
     get:
-      operationId: api_v1_reviews_list
+      operationId: reviews_list
       parameters:
       - name: limit
         required: false
@@ -2207,7 +2161,7 @@ paths:
         schema:
           type: string
       tags:
-      - api
+      - reviews
       security:
       - jwtAuth: []
       responses:
@@ -2230,7 +2184,7 @@ paths:
           description: ''
   /api/v1/reviews/{id}/:
     get:
-      operationId: api_v1_reviews_retrieve
+      operationId: reviews_retrieve
       parameters:
       - in: path
         name: id
@@ -2238,7 +2192,7 @@ paths:
           type: integer
         required: true
       tags:
-      - api
+      - reviews
       security:
       - jwtAuth: []
       responses:
@@ -2261,9 +2215,9 @@ paths:
           description: ''
   /api/v1/reviews/create/:
     post:
-      operationId: api_v1_reviews_create_create
+      operationId: reviews_create_create
       tags:
-      - api
+      - reviews
       requestBody:
         content:
           application/json:
@@ -2298,9 +2252,9 @@ paths:
           description: ''
   /api/v1/room-categories/:
     get:
-      operationId: api_v1_room_categories_list
+      operationId: room_categories_list
       tags:
-      - api
+      - room-categories
       security:
       - jwtAuth: []
       responses:
@@ -2324,9 +2278,9 @@ paths:
                 - data
           description: ''
     post:
-      operationId: api_v1_room_categories_create
+      operationId: room_categories_create
       tags:
-      - api
+      - room-categories
       requestBody:
         content:
           application/json:
@@ -2368,7 +2322,7 @@ paths:
           description: ''
   /api/v1/room-categories/{id}/:
     get:
-      operationId: api_v1_room_categories_retrieve
+      operationId: room_categories_retrieve
       parameters:
       - in: path
         name: id
@@ -2376,7 +2330,7 @@ paths:
           type: integer
         required: true
       tags:
-      - api
+      - room-categories
       security:
       - jwtAuth: []
       responses:
@@ -2405,7 +2359,7 @@ paths:
                 additionalProperties: {}
           description: ''
     put:
-      operationId: api_v1_room_categories_update
+      operationId: room_categories_update
       parameters:
       - in: path
         name: id
@@ -2413,7 +2367,7 @@ paths:
           type: integer
         required: true
       tags:
-      - api
+      - room-categories
       requestBody:
         content:
           application/json:
@@ -2461,7 +2415,7 @@ paths:
                 additionalProperties: {}
           description: ''
     delete:
-      operationId: api_v1_room_categories_destroy
+      operationId: room_categories_destroy
       parameters:
       - in: path
         name: id
@@ -2469,7 +2423,7 @@ paths:
           type: integer
         required: true
       tags:
-      - api
+      - room-categories
       security:
       - jwtAuth: []
       responses:
@@ -2496,7 +2450,7 @@ paths:
         schema:
           type: integer
       tags:
-      - api
+      - rooms
       security:
       - jwtAuth: []
       - {}
@@ -2519,10 +2473,10 @@ paths:
                 - data
           description: ''
     post:
-      operationId: api_v1_rooms_create
+      operationId: rooms_create
       description: Create a room owned by the logged-in user.
       tags:
-      - api
+      - rooms
       requestBody:
         content:
           application/json:
@@ -2589,7 +2543,7 @@ paths:
         schema:
           type: string
       tags:
-      - api
+      - rooms-alt
       security:
       - jwtAuth: []
       - {}
@@ -2622,7 +2576,7 @@ paths:
           type: integer
         required: true
       tags:
-      - api
+      - rooms
       security:
       - jwtAuth: []
       responses:
@@ -2635,7 +2589,7 @@ paths:
         '404':
           description: Not found.
     put:
-      operationId: api_v1_rooms_update
+      operationId: rooms_update
       description: Replace room fields (owner-only).
       parameters:
       - in: path
@@ -2644,7 +2598,7 @@ paths:
           type: integer
         required: true
       tags:
-      - api
+      - rooms
       requestBody:
         content:
           application/json:
@@ -2686,7 +2640,7 @@ paths:
         '404':
           description: Not found.
     patch:
-      operationId: api_v1_rooms_partial_update
+      operationId: rooms_partial_update
       description: Partial update (owner-only). If action=preview, requires at least
         3 photos.
       parameters:
@@ -2696,7 +2650,7 @@ paths:
           type: integer
         required: true
       tags:
-      - api
+      - rooms
       requestBody:
         content:
           application/json:
@@ -2737,7 +2691,7 @@ paths:
         '404':
           description: Not found.
     delete:
-      operationId: api_v1_rooms_destroy
+      operationId: rooms_destroy
       description: Soft-delete a room (owner-only).
       parameters:
       - in: path
@@ -2746,7 +2700,7 @@ paths:
           type: integer
         required: true
       tags:
-      - api
+      - rooms
       security:
       - jwtAuth: []
       responses:
@@ -2760,7 +2714,7 @@ paths:
           description: Not found.
   /api/v1/rooms/{id}/availability/:
     get:
-      operationId: api_v1_rooms_availability_retrieve
+      operationId: rooms_availability_retrieve
       description: |-
         GET /api/rooms/<id>/availability/?from=&to=
         Returns: {"available": bool, "conflicts": [{"id": ..., "start": ..., "end": ...}, ...]}
@@ -2783,7 +2737,7 @@ paths:
           format: date-time
         required: true
       tags:
-      - api
+      - rooms
       security:
       - jwtAuth: []
       - {}
@@ -2822,7 +2776,7 @@ paths:
           description: ''
   /api/v1/rooms/{id}/availability/slots/:
     get:
-      operationId: api_v1_rooms_availability_slots_list
+      operationId: rooms_availability_slots_list
       parameters:
       - in: path
         name: id
@@ -2848,7 +2802,7 @@ paths:
         schema:
           type: string
       tags:
-      - api
+      - rooms
       security:
       - jwtAuth: []
       responses:
@@ -2870,7 +2824,7 @@ paths:
                 - data
           description: ''
     post:
-      operationId: api_v1_rooms_availability_slots_create
+      operationId: rooms_availability_slots_create
       parameters:
       - in: path
         name: id
@@ -2878,7 +2832,7 @@ paths:
           type: integer
         required: true
       tags:
-      - api
+      - rooms
       requestBody:
         content:
           application/json:
@@ -2913,7 +2867,7 @@ paths:
           description: ''
   /api/v1/rooms/{id}/availability/slots/{slot_id}/:
     delete:
-      operationId: api_v1_rooms_availability_slots_destroy
+      operationId: rooms_availability_slots_destroy
       parameters:
       - in: path
         name: id
@@ -2926,7 +2880,7 @@ paths:
           type: integer
         required: true
       tags:
-      - api
+      - rooms
       security:
       - jwtAuth: []
       responses:
@@ -2934,7 +2888,7 @@ paths:
           description: No response body
   /api/v1/rooms/{id}/availability/slots/public/:
     get:
-      operationId: api_v1_rooms_availability_slots_public_list
+      operationId: rooms_availability_slots_public_list
       parameters:
       - in: path
         name: id
@@ -2960,7 +2914,7 @@ paths:
         schema:
           type: string
       tags:
-      - api
+      - rooms
       security:
       - jwtAuth: []
       - {}
@@ -2984,7 +2938,7 @@ paths:
           description: ''
   /api/v1/rooms/{id}/photos/:
     get:
-      operationId: api_v1_rooms_photos_list
+      operationId: rooms_photos_list
       description: Return only approved images for a room (for grids on Step 4/5,
         room cards, etc.).
       parameters:
@@ -2994,7 +2948,7 @@ paths:
           type: integer
         required: true
       tags:
-      - api
+      - rooms
       security:
       - jwtAuth: []
       - {}
@@ -3021,7 +2975,7 @@ paths:
         '404':
           description: Room not found.
     post:
-      operationId: api_v1_rooms_photos_create
+      operationId: rooms_photos_create
       description: |-
         Upload a single image for this room.
 
@@ -3033,7 +2987,7 @@ paths:
           type: integer
         required: true
       tags:
-      - api
+      - rooms
       requestBody:
         content:
           multipart/form-data:
@@ -3077,7 +3031,7 @@ paths:
           description: Room not found.
   /api/v1/rooms/{id}/photos/{photo_id}/:
     delete:
-      operationId: api_v1_rooms_photos_destroy
+      operationId: rooms_photos_destroy
       description: DELETE /api/v1/rooms/<pk>/photos/<photo_id>/  (owner only)
       parameters:
       - in: path
@@ -3091,7 +3045,7 @@ paths:
           type: integer
         required: true
       tags:
-      - api
+      - rooms
       security:
       - jwtAuth: []
       responses:
@@ -3113,11 +3067,11 @@ paths:
           description: ''
   /api/v1/rooms/{id}/preview/:
     get:
-      operationId: api_v1_rooms_preview_retrieve
+      operationId: rooms_preview_retrieve
       description: |-
         Step 5/5 – Preview & Edit page
 
-        GET /api/rooms/<pk>/preview/
+        GET /api/v1/rooms/<pk>/preview/
 
         Returns:
           {
@@ -3133,7 +3087,7 @@ paths:
           type: integer
         required: true
       tags:
-      - api
+      - rooms
       security:
       - jwtAuth: []
       responses:
@@ -3170,7 +3124,7 @@ paths:
           description: ''
   /api/v1/rooms/{id}/save/:
     post:
-      operationId: api_v1_rooms_save_create
+      operationId: rooms_save_create
       parameters:
       - in: path
         name: id
@@ -3178,7 +3132,7 @@ paths:
           type: integer
         required: true
       tags:
-      - api
+      - rooms
       security:
       - jwtAuth: []
       responses:
@@ -3208,7 +3162,7 @@ paths:
                 additionalProperties: {}
           description: ''
     delete:
-      operationId: api_v1_rooms_save_destroy
+      operationId: rooms_save_destroy
       parameters:
       - in: path
         name: id
@@ -3216,7 +3170,7 @@ paths:
           type: integer
         required: true
       tags:
-      - api
+      - rooms
       security:
       - jwtAuth: []
       responses:
@@ -3231,7 +3185,7 @@ paths:
           description: ''
   /api/v1/rooms/{id}/save-toggle/:
     post:
-      operationId: api_v1_rooms_save_toggle_create
+      operationId: rooms_save_toggle_create
       parameters:
       - in: path
         name: id
@@ -3239,7 +3193,7 @@ paths:
           type: integer
         required: true
       tags:
-      - api
+      - rooms
       security:
       - jwtAuth: []
       responses:
@@ -3269,7 +3223,7 @@ paths:
                 additionalProperties: {}
           description: ''
     delete:
-      operationId: api_v1_rooms_save_toggle_destroy
+      operationId: rooms_save_toggle_destroy
       parameters:
       - in: path
         name: id
@@ -3277,7 +3231,7 @@ paths:
           type: integer
         required: true
       tags:
-      - api
+      - rooms
       security:
       - jwtAuth: []
       responses:
@@ -3301,7 +3255,7 @@ paths:
           description: ''
   /api/v1/rooms/{id}/soft-delete/:
     post:
-      operationId: api_v1_rooms_soft_delete_create
+      operationId: rooms_soft_delete_create
       description: POST /api/rooms/<id>/soft-delete/
       parameters:
       - in: path
@@ -3310,7 +3264,7 @@ paths:
           type: integer
         required: true
       tags:
-      - api
+      - rooms
       security:
       - jwtAuth: []
       responses:
@@ -3348,7 +3302,7 @@ paths:
           description: ''
   /api/v1/rooms/{id}/unpublish/:
     post:
-      operationId: api_v1_rooms_unpublish_create
+      operationId: rooms_unpublish_create
       parameters:
       - in: path
         name: id
@@ -3356,7 +3310,7 @@ paths:
           type: integer
         required: true
       tags:
-      - api
+      - rooms
       security:
       - jwtAuth: []
       responses:
@@ -3394,7 +3348,7 @@ paths:
           description: ''
   /api/v1/rooms/{room_id}/start-thread/:
     post:
-      operationId: api_v1_rooms_start_thread_create
+      operationId: rooms_start_thread_create
       parameters:
       - in: path
         name: room_id
@@ -3402,7 +3356,7 @@ paths:
           type: integer
         required: true
       tags:
-      - api
+      - rooms
       requestBody:
         content:
           application/json:
@@ -3451,7 +3405,7 @@ paths:
           description: ''
   /api/v1/rooms/mine/:
     get:
-      operationId: api_v1_rooms_mine_list
+      operationId: rooms_mine_list
       parameters:
       - name: limit
         required: false
@@ -3472,7 +3426,7 @@ paths:
         schema:
           type: string
       tags:
-      - api
+      - rooms
       security:
       - jwtAuth: []
       responses:
@@ -3495,9 +3449,9 @@ paths:
           description: ''
   /api/v1/rooms/nearby/:
     get:
-      operationId: api_v1_rooms_nearby_list
+      operationId: rooms_nearby_list
       description: |-
-        GET /api/rooms/nearby/?postcode=<UK_postcode>&radius_miles=<int>
+        GET /api/v1/rooms/nearby/?postcode=<UK_postcode>&radius_miles=<int>
         Miles only; attaches .distance_miles to each room.
       parameters:
       - name: limit
@@ -3519,7 +3473,7 @@ paths:
         schema:
           type: string
       tags:
-      - api
+      - rooms
       security:
       - jwtAuth: []
       - {}
@@ -3541,167 +3495,11 @@ paths:
                 - ok
                 - data
           description: ''
-  /api/v1/schema/:
-    get:
-      operationId: api_v1_schema_retrieve
-      description: |-
-        OpenApi3 schema for this API. Format can be selected via content negotiation.
-
-        - YAML: application/vnd.oai.openapi
-        - JSON: application/vnd.oai.openapi+json
-      parameters:
-      - in: query
-        name: format
-        schema:
-          type: string
-          enum:
-          - json
-          - yaml
-      - in: query
-        name: lang
-        schema:
-          type: string
-          enum:
-          - af
-          - ar
-          - ar-dz
-          - ast
-          - az
-          - be
-          - bg
-          - bn
-          - br
-          - bs
-          - ca
-          - ckb
-          - cs
-          - cy
-          - da
-          - de
-          - dsb
-          - el
-          - en
-          - en-au
-          - en-gb
-          - eo
-          - es
-          - es-ar
-          - es-co
-          - es-mx
-          - es-ni
-          - es-ve
-          - et
-          - eu
-          - fa
-          - fi
-          - fr
-          - fy
-          - ga
-          - gd
-          - gl
-          - he
-          - hi
-          - hr
-          - hsb
-          - hu
-          - hy
-          - ia
-          - id
-          - ig
-          - io
-          - is
-          - it
-          - ja
-          - ka
-          - kab
-          - kk
-          - km
-          - kn
-          - ko
-          - ky
-          - lb
-          - lt
-          - lv
-          - mk
-          - ml
-          - mn
-          - mr
-          - ms
-          - my
-          - nb
-          - ne
-          - nl
-          - nn
-          - os
-          - pa
-          - pl
-          - pt
-          - pt-br
-          - ro
-          - ru
-          - sk
-          - sl
-          - sq
-          - sr
-          - sr-latn
-          - sv
-          - sw
-          - ta
-          - te
-          - tg
-          - th
-          - tk
-          - tr
-          - tt
-          - udm
-          - ug
-          - uk
-          - ur
-          - uz
-          - vi
-          - zh-hans
-          - zh-hant
-      tags:
-      - api
-      security:
-      - jwtAuth: []
-      - {}
-      responses:
-        '200':
-          content:
-            application/vnd.oai.openapi:
-              schema:
-                type: object
-                additionalProperties: {}
-            application/yaml:
-              schema:
-                type: object
-                additionalProperties: {}
-            application/vnd.oai.openapi+json:
-              schema:
-                type: object
-                additionalProperties: {}
-            application/json:
-              schema:
-                type: object
-                properties:
-                  ok:
-                    type: boolean
-                  message:
-                    type: string
-                    nullable: true
-                  data:
-                    type: object
-                    additionalProperties: {}
-                required:
-                - ok
-                - data
-          description: ''
   /api/v1/search/find-address/:
     get:
-      operationId: api_v1_search_find_address_retrieve
+      operationId: search_find_address_retrieve
       description: |-
-        GET /api/search/find-address/?postcode=SW1A1AA
+        GET /api/v1/search/find-address/?postcode=SW1A1AA
 
         Validates a UK postcode and returns a mock list of addresses.
         Later this will call a real API like postcodes.io or getAddress.io.
@@ -3713,7 +3511,7 @@ paths:
           minLength: 1
         required: true
       tags:
-      - api
+      - search
       security:
       - jwtAuth: []
       - {}
@@ -3745,7 +3543,7 @@ paths:
           description: ''
   /api/v1/search/rooms/:
     get:
-      operationId: api_v1_search_rooms_list
+      operationId: search_rooms_list
       description: |-
         GET /api/search/rooms/
 
@@ -3781,7 +3579,7 @@ paths:
         schema:
           type: string
       tags:
-      - api
+      - search
       security:
       - jwtAuth: []
       - {}
@@ -3805,7 +3603,7 @@ paths:
           description: ''
   /api/v1/tenancies/{tenancy_id}/extensions/:
     post:
-      operationId: api_v1_tenancies_extensions_create
+      operationId: tenancies_extensions_create
       parameters:
       - in: path
         name: tenancy_id
@@ -3813,7 +3611,7 @@ paths:
           type: integer
         required: true
       tags:
-      - api
+      - tenancies
       requestBody:
         content:
           application/json:
@@ -3869,7 +3667,7 @@ paths:
           description: ''
   /api/v1/tenancies/{tenancy_id}/extensions/{extension_id}/respond/:
     patch:
-      operationId: api_v1_tenancies_extensions_respond_partial_update
+      operationId: tenancies_extensions_respond_partial_update
       parameters:
       - in: path
         name: extension_id
@@ -3882,7 +3680,7 @@ paths:
           type: integer
         required: true
       tags:
-      - api
+      - tenancies
       requestBody:
         content:
           application/json:
@@ -3937,7 +3735,7 @@ paths:
           description: ''
   /api/v1/tenancies/{tenancy_id}/respond/:
     post:
-      operationId: api_v1_tenancies_respond_create
+      operationId: tenancies_respond_create
       parameters:
       - in: path
         name: tenancy_id
@@ -3945,7 +3743,7 @@ paths:
           type: integer
         required: true
       tags:
-      - api
+      - tenancies
       requestBody:
         content:
           application/json:
@@ -3994,7 +3792,7 @@ paths:
           description: ''
   /api/v1/tenancies/{tenancy_id}/reviews/:
     post:
-      operationId: api_v1_tenancies_reviews_create
+      operationId: tenancies_reviews_create
       parameters:
       - in: path
         name: tenancy_id
@@ -4002,7 +3800,7 @@ paths:
           type: integer
         required: true
       tags:
-      - api
+      - tenancies
       requestBody:
         content:
           application/json:
@@ -4044,7 +3842,7 @@ paths:
           description: ''
   /api/v1/tenancies/{tenancy_id}/still-living/confirm/:
     patch:
-      operationId: api_v1_tenancies_still_living_confirm_partial_update
+      operationId: tenancies_still_living_confirm_partial_update
       parameters:
       - in: path
         name: tenancy_id
@@ -4052,7 +3850,7 @@ paths:
           type: integer
         required: true
       tags:
-      - api
+      - tenancies
       security:
       - jwtAuth: []
       responses:
@@ -4097,7 +3895,7 @@ paths:
           description: ''
   /api/v1/tenancies/mine/:
     get:
-      operationId: api_v1_tenancies_mine_list
+      operationId: tenancies_mine_list
       parameters:
       - name: limit
         required: false
@@ -4118,7 +3916,7 @@ paths:
         schema:
           type: string
       tags:
-      - api
+      - tenancies
       security:
       - jwtAuth: []
       responses:
@@ -4141,9 +3939,9 @@ paths:
           description: ''
   /api/v1/tenancies/propose/:
     post:
-      operationId: api_v1_tenancies_propose_create
+      operationId: tenancies_propose_create
       tags:
-      - api
+      - tenancies
       requestBody:
         content:
           application/json:
@@ -4185,7 +3983,7 @@ paths:
           description: ''
   /api/v1/users/{user_id}/review-summary/:
     get:
-      operationId: api_v1_users_review_summary_retrieve
+      operationId: users_review_summary_retrieve
       parameters:
       - in: path
         name: user_id
@@ -4193,7 +3991,7 @@ paths:
           type: integer
         required: true
       tags:
-      - api
+      - users
       security:
       - jwtAuth: []
       - {}
@@ -4217,7 +4015,7 @@ paths:
           description: ''
   /api/v1/users/{user_id}/reviews/:
     get:
-      operationId: api_v1_users_reviews_list
+      operationId: users_reviews_list
       parameters:
       - name: limit
         required: false
@@ -4243,7 +4041,7 @@ paths:
           type: integer
         required: true
       tags:
-      - api
+      - users
       security:
       - jwtAuth: []
       - {}
@@ -4267,9 +4065,9 @@ paths:
           description: ''
   /api/v1/users/me/:
     get:
-      operationId: api_v1_users_me_retrieve
+      operationId: users_me_retrieve
       tags:
-      - api
+      - users
       security:
       - jwtAuth: []
       responses:
@@ -4291,9 +4089,9 @@ paths:
                 - data
           description: ''
     put:
-      operationId: api_v1_users_me_update
+      operationId: users_me_update
       tags:
-      - api
+      - users
       requestBody:
         content:
           application/json:
@@ -4327,9 +4125,9 @@ paths:
                 - data
           description: ''
     patch:
-      operationId: api_v1_users_me_partial_update
+      operationId: users_me_partial_update
       tags:
-      - api
+      - users
       requestBody:
         content:
           application/json:
@@ -4363,9 +4161,9 @@ paths:
           description: ''
   /api/v1/users/me/change-email/:
     post:
-      operationId: api_v1_users_me_change_email_create
+      operationId: users_me_change_email_create
       tags:
-      - api
+      - users
       requestBody:
         content:
           application/json:
@@ -4408,9 +4206,9 @@ paths:
           description: ''
   /api/v1/users/me/change-password/:
     post:
-      operationId: api_v1_users_me_change_password_create
+      operationId: users_me_change_password_create
       tags:
-      - api
+      - users
       requestBody:
         content:
           application/json:
@@ -4453,9 +4251,9 @@ paths:
           description: ''
   /api/v1/users/me/create-password/:
     post:
-      operationId: api_v1_users_me_create_password_create
+      operationId: users_me_create_password_create
       tags:
-      - api
+      - users
       requestBody:
         content:
           application/json:
@@ -4498,9 +4296,9 @@ paths:
           description: ''
   /api/v1/users/me/deactivate/:
     post:
-      operationId: api_v1_users_me_deactivate_create
+      operationId: users_me_deactivate_create
       tags:
-      - api
+      - users
       security:
       - jwtAuth: []
       responses:
@@ -4516,17 +4314,16 @@ paths:
                     type: string
                     nullable: true
                   data:
-                    type: object
-                    additionalProperties: {}
+                    $ref: '#/components/schemas/OpsStatsResponse'
                 required:
                 - ok
                 - data
           description: ''
   /api/v1/users/me/delete-account/:
     post:
-      operationId: api_v1_users_me_delete_account_create
+      operationId: users_me_delete_account_create
       tags:
-      - api
+      - users
       requestBody:
         content:
           application/json:
@@ -4554,17 +4351,16 @@ paths:
                     type: string
                     nullable: true
                   data:
-                    type: object
-                    additionalProperties: {}
+                    $ref: '#/components/schemas/OpsStatsResponse'
                 required:
                 - ok
                 - data
           description: ''
   /api/v1/users/me/delete-account/cancel/:
     post:
-      operationId: api_v1_users_me_delete_account_cancel_create
+      operationId: users_me_delete_account_cancel_create
       tags:
-      - api
+      - users
       requestBody:
         content:
           application/json:
@@ -4600,13 +4396,13 @@ paths:
           description: ''
   /api/v1/users/me/delete/confirm/:
     post:
-      operationId: api_v1_users_me_delete_confirm_create
+      operationId: users_me_delete_confirm_create
       description: |-
         POST /api/users/me/delete/confirm/
         Body: {"confirm": true, "idempotency_key": "...optional..."}
         Performs GDPR erasure and deactivates the account.
       tags:
-      - api
+      - users
       requestBody:
         content:
           application/json:
@@ -4649,12 +4445,12 @@ paths:
           description: ''
   /api/v1/users/me/delete/preview/:
     get:
-      operationId: api_v1_users_me_delete_preview_retrieve
+      operationId: users_me_delete_preview_retrieve
       description: |-
         GET /api/users/me/delete/preview/
         Shows counts of records that will be anonymised/retained.
       tags:
-      - api
+      - users
       security:
       - jwtAuth: []
       responses:
@@ -4670,21 +4466,20 @@ paths:
                     type: string
                     nullable: true
                   data:
-                    type: object
-                    additionalProperties: {}
+                    $ref: '#/components/schemas/NotificationMarkAllReadResponse'
                 required:
                 - ok
                 - data
           description: ''
   /api/v1/users/me/export/:
     post:
-      operationId: api_v1_users_me_export_create
+      operationId: users_me_export_create
       description: |-
         POST /api/users/me/export/
         Body: {"confirm": true}
         Builds a ZIP of the user’s data and returns a time-limited link.
       tags:
-      - api
+      - users
       requestBody:
         content:
           application/json:
@@ -4720,12 +4515,12 @@ paths:
           description: ''
   /api/v1/users/me/export/latest/:
     get:
-      operationId: api_v1_users_me_export_latest_retrieve
+      operationId: users_me_export_latest_retrieve
       description: |-
         GET /api/users/me/export/latest/
         Return the latest non-expired export link.
       tags:
-      - api
+      - users
       security:
       - jwtAuth: []
       responses:
@@ -4741,24 +4536,18 @@ paths:
                     type: string
                     nullable: true
                   data:
-                    type: object
-                    additionalProperties: {}
+                    $ref: '#/components/schemas/NotificationMarkReadResponse'
                 required:
                 - ok
                 - data
           description: ''
         '404':
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: {}
-          description: ''
+          description: Not found.
   /api/v1/users/me/notification-preferences/:
     get:
-      operationId: api_v1_users_me_notification_preferences_retrieve
+      operationId: users_me_notification_preferences_retrieve
       tags:
-      - api
+      - users
       security:
       - jwtAuth: []
       responses:
@@ -4780,9 +4569,9 @@ paths:
                 - data
           description: ''
     patch:
-      operationId: api_v1_users_me_notification_preferences_partial_update
+      operationId: users_me_notification_preferences_partial_update
       tags:
-      - api
+      - users
       requestBody:
         content:
           application/json:
@@ -4816,10 +4605,10 @@ paths:
           description: ''
   /api/v1/users/me/onboarding/complete/:
     post:
-      operationId: api_v1_users_me_onboarding_complete_create
+      operationId: users_me_onboarding_complete_create
       description: Marks onboarding as completed for the logged-in user.
       tags:
-      - api
+      - users
       requestBody:
         content:
           application/json:
@@ -4855,9 +4644,9 @@ paths:
           description: ''
   /api/v1/users/me/privacy-preferences/:
     get:
-      operationId: api_v1_users_me_privacy_preferences_retrieve
+      operationId: users_me_privacy_preferences_retrieve
       tags:
-      - api
+      - users
       security:
       - jwtAuth: []
       responses:
@@ -4879,9 +4668,9 @@ paths:
                 - data
           description: ''
     patch:
-      operationId: api_v1_users_me_privacy_preferences_partial_update
+      operationId: users_me_privacy_preferences_partial_update
       tags:
-      - api
+      - users
       requestBody:
         content:
           application/json:
@@ -4915,9 +4704,9 @@ paths:
           description: ''
   /api/v1/users/me/profile/:
     get:
-      operationId: api_v1_users_me_profile_retrieve
+      operationId: users_me_profile_retrieve
       tags:
-      - api
+      - users
       security:
       - jwtAuth: []
       responses:
@@ -4939,9 +4728,9 @@ paths:
                 - data
           description: ''
     put:
-      operationId: api_v1_users_me_profile_update
+      operationId: users_me_profile_update
       tags:
-      - api
+      - users
       requestBody:
         content:
           application/json:
@@ -4974,9 +4763,9 @@ paths:
                 - data
           description: ''
     patch:
-      operationId: api_v1_users_me_profile_partial_update
+      operationId: users_me_profile_partial_update
       tags:
-      - api
+      - users
       requestBody:
         content:
           application/json:
@@ -5010,9 +4799,9 @@ paths:
           description: ''
   /api/v1/users/me/profile-page/:
     get:
-      operationId: api_v1_users_me_profile_page_retrieve
+      operationId: users_me_profile_page_retrieve
       tags:
-      - api
+      - users
       security:
       - jwtAuth: []
       responses:
@@ -5035,9 +4824,10 @@ paths:
           description: ''
   /api/v1/users/me/profile/avatar/:
     post:
-      operationId: api_v1_users_me_profile_avatar_create
+      operationId: users_me_profile_avatar_create
+      description: Upload/update the current user's avatar.
       tags:
-      - api
+      - users
       requestBody:
         content:
           multipart/form-data:
@@ -5048,14 +4838,29 @@ paths:
       - jwtAuth: []
       responses:
         '200':
-          description: Avatar updated successfully.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/AvatarUploadResponse'
+                required:
+                - ok
+                - data
+          description: ''
         '400':
           description: Invalid file or validation error.
         '401':
           description: Authentication required.
   /api/v1/users/me/saved/rooms/:
     get:
-      operationId: api_v1_users_me_saved_rooms_list
+      operationId: users_me_saved_rooms_list
       parameters:
       - name: limit
         required: false
@@ -5076,7 +4881,7 @@ paths:
         schema:
           type: string
       tags:
-      - api
+      - users
       security:
       - jwtAuth: []
       responses:
@@ -5107,7 +4912,7 @@ paths:
           type: string
         required: true
       tags:
-      - api
+      - webhooks
       requestBody:
         content:
           application/json:
@@ -5145,7 +4950,7 @@ paths:
     post:
       operationId: api_v1_webhooks_incoming_create
       tags:
-      - api
+      - webhooks
       requestBody:
         content:
           application/json:
@@ -5232,6 +5037,15 @@ components:
         avatar:
           type: string
           format: uri
+      required:
+      - avatar
+    AvatarUploadResponse:
+      type: object
+      properties:
+        avatar:
+          type: string
+          format: uri
+          nullable: true
       required:
       - avatar
     Booking:
@@ -5517,6 +5331,13 @@ components:
       required:
       - confirm_password
       - new_password
+    DetailResponse:
+      type: object
+      properties:
+        detail:
+          type: string
+      required:
+      - detail
     EmailOTPResend:
       type: object
       description: Used by /api/auth/resend-otp/
@@ -5914,6 +5735,20 @@ components:
       - thread
       - title
       - type
+    NotificationMarkAllReadResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+      required:
+      - ok
+    NotificationMarkReadResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+      required:
+      - ok
     NotificationPreferences:
       type: object
       properties:
@@ -5934,6 +5769,72 @@ components:
           type: boolean
       required:
       - confirm
+    OpsStatsResponse:
+      type: object
+      properties:
+        total_rooms:
+          type: integer
+        active_rooms:
+          type: integer
+        hidden_rooms:
+          type: integer
+        deleted_rooms:
+          type: integer
+        total_users:
+          type: integer
+          nullable: true
+        bookings_7d:
+          type: integer
+        bookings_30d:
+          type: integer
+        upcoming_viewings:
+          type: integer
+        payments_30d_count:
+          type: integer
+        payments_30d_sum_gbp:
+          type: number
+          format: double
+        messages_7d:
+          type: integer
+        threads_total:
+          type: integer
+        reports_open:
+          type: integer
+        reports_in_review:
+          type: integer
+        top_categories:
+          type: array
+          items:
+            $ref: '#/components/schemas/OpsTopCategory'
+      required:
+      - active_rooms
+      - bookings_30d
+      - bookings_7d
+      - deleted_rooms
+      - hidden_rooms
+      - messages_7d
+      - payments_30d_count
+      - payments_30d_sum_gbp
+      - reports_in_review
+      - reports_open
+      - threads_total
+      - top_categories
+      - total_rooms
+      - total_users
+      - upcoming_viewings
+    OpsTopCategory:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        room_count:
+          type: integer
+      required:
+      - id
+      - name
+      - room_count
     PaginatedAvailabilitySlotList:
       type: object
       required:
@@ -5983,18 +5884,22 @@ components:
     PaginatedMessageList:
       type: object
       required:
+      - count
       - results
       properties:
+        count:
+          type: integer
+          example: 123
         next:
           type: string
           nullable: true
           format: uri
-          example: http://api.example.org/accounts/?record=cD00ODY%3D"
+          example: http://api.example.org/accounts/?offset=400&limit=100
         previous:
           type: string
           nullable: true
           format: uri
-          example: http://api.example.org/accounts/?record=cj0xJnA9NDg3
+          example: http://api.example.org/accounts/?offset=200&limit=100
         results:
           type: array
           items:
@@ -8239,6 +8144,44 @@ components:
       required:
       - photos
       - room
+    SavedCard:
+      type: object
+      properties:
+        id:
+          type: string
+        brand:
+          type: string
+          nullable: true
+        last4:
+          type: string
+          nullable: true
+        exp_month:
+          type: integer
+          nullable: true
+        exp_year:
+          type: integer
+          nullable: true
+      required:
+      - id
+    SavedCardsListResponse:
+      type: object
+      properties:
+        cards:
+          type: array
+          items:
+            $ref: '#/components/schemas/SavedCard'
+      required:
+      - cards
+    SetupIntentResponse:
+      type: object
+      properties:
+        clientSecret:
+          type: string
+        publishableKey:
+          type: string
+      required:
+      - clientSecret
+      - publishableKey
     StripeCancelData:
       type: object
       properties:
@@ -8586,6 +8529,16 @@ components:
       required:
       - data
       - ok
+    ThreadRestoreResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+        in_bin:
+          type: boolean
+      required:
+      - id
+      - in_bin
     ThreadSetLabelData:
       type: object
       properties:
@@ -8630,6 +8583,19 @@ components:
       required:
       - data
       - ok
+    ThreadStateResponse:
+      type: object
+      properties:
+        thread:
+          type: integer
+        label:
+          type: string
+          nullable: true
+        in_bin:
+          type: boolean
+      required:
+      - in_bin
+      - thread
     TokenRefreshData:
       type: object
       properties:
@@ -8891,3 +8857,8 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
+servers:
+- url: http://localhost:8000
+  description: Current environment
+- url: https://rentout-staging-v2.onrender.com
+  description: Staging
