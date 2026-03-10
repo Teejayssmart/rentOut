@@ -1679,9 +1679,7 @@ paths:
   /api/v1/ops/stats/:
     get:
       operationId: ops_stats_retrieve
-      description: |-
-        GET /api/ops/stats/ — admin-only operational snapshot.
-        Amounts reported in **GBP** (Payment.amount is stored in GBP).
+      description: Operational statistics for the platform.
       tags:
       - ops
       security:
@@ -1699,8 +1697,7 @@ paths:
                     type: string
                     nullable: true
                   data:
-                    type: object
-                    additionalProperties: {}
+                    $ref: '#/components/schemas/OpsStatsResponse'
                 required:
                 - ok
                 - data

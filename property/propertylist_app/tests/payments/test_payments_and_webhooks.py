@@ -87,8 +87,10 @@ def test_create_checkout_session_for_room(monkeypatch):
     url = reverse("v1:payments-checkout-room", kwargs={"pk": room.pk})
     r = client.post(url, {}, format="json")
     assert r.status_code == 200, r.data
-    assert r.data.get("session_id") == "cs_test_456"
-    assert r.data.get("checkout_url") is not None
+    assert r.data.get("ok") is True
+    assert isinstance(r.data.get("data"), dict)
+    assert r.data["data"].get("session_id") == "cs_test_456"
+    assert r.data["data"].get("checkout_url") == "https://stripe.test/cs_test_456"
 
 
     p = Payment.objects.get(room=room)

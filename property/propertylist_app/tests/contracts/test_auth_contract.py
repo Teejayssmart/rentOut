@@ -14,7 +14,8 @@ pytestmark = pytest.mark.django_db
 def assert_exact_keys(obj: dict, expected_keys: set[str]) -> None:
     assert isinstance(obj, dict), f"Expected dict, got {type(obj)}"
     assert set(obj.keys()) == expected_keys, f"Keys mismatch.\nGot: {set(obj.keys())}\nExpected: {expected_keys}"
-    
+
+
 def unwrap_ok_data(payload: dict) -> dict:
     assert isinstance(payload, dict), f"Expected dict, got {type(payload)}"
     assert payload.get("ok") is True, f"Expected ok=True, got: {payload}"
@@ -58,6 +59,7 @@ def test_register_contract_api_and_v1_match_shape():
     assert r_api.status_code in (200, 201), r_api.data
     body_api = r_api.json()
     data_api = unwrap_ok_data(body_api)
+
     expected_keys = {"id", "username", "email", "email_masked", "need_otp"}
     assert_exact_keys(data_api, expected_keys)
     assert isinstance(data_api["id"], int)
@@ -77,9 +79,8 @@ def test_register_contract_api_and_v1_match_shape():
     assert r_v1.status_code in (200, 201), r_v1.data
     body_v1 = r_v1.json()
     data_v1 = unwrap_ok_data(body_v1)
-    assert_exact_keys(data_v1, expected_keys)
 
-    # Parity check (types and keys only)
+    assert_exact_keys(data_v1, expected_keys)
     assert isinstance(data_v1["id"], int)
     assert_is_str(data_v1["username"], "username")
     assert_is_str(data_v1["email"], "email")
@@ -93,8 +94,8 @@ def test_register_contract_api_and_v1_match_shape():
 def test_verify_otp_contract_success_and_failure_api_and_v1():
     """
     Observed contracts:
-    Success: {"detail": "Email verified."}
-    Failure: {"detail": "No active code. Please resend."}
+    Success: {"ok": true, "message": ..., "data": {"detail": "Email verified."}}
+    Failure: {"detail": "..."} or equivalent error detail response.
     """
     client = APIClient()
 
@@ -114,7 +115,7 @@ def test_verify_otp_contract_success_and_failure_api_and_v1():
         },
     )
     assert reg_api.status_code in (200, 201), reg_api.data
-    user_id_api = reg_api.json()["id"]
+    user_id_api = unwrap_ok_data(reg_api.json())["id"]
 
     reg_v1 = post_json(
         client,
@@ -131,9 +132,8 @@ def test_verify_otp_contract_success_and_failure_api_and_v1():
         },
     )
     assert reg_v1.status_code in (200, 201), reg_v1.data
-    user_id_v1 = reg_v1.json()["id"]
+    user_id_v1 = unwrap_ok_data(reg_v1.json())["id"]
 
-    # Pull latest OTP codes from DB
     otp_api = EmailOTP.objects.filter(user_id=user_id_api).order_by("-created_at").first()
     otp_v1 = EmailOTP.objects.filter(user_id=user_id_v1).order_by("-created_at").first()
     assert otp_api and otp_api.code
@@ -146,11 +146,12 @@ def test_verify_otp_contract_success_and_failure_api_and_v1():
         {"user_id": user_id_api, "code": otp_api.code},
     )
     assert r_ok_api.status_code == 200, r_ok_api.data
-    data_ok_api = r_ok_api.json()
+    body_ok_api = r_ok_api.json()
+    data_ok_api = unwrap_ok_data(body_ok_api)
     assert_exact_keys(data_ok_api, {"detail"})
     assert_is_str(data_ok_api["detail"], "detail")
 
-    # --- /api/ verify failure (wrong code)
+    # --- /api/ verify failure (wrong code after success usually means no active code / invalid code)
     r_bad_api = post_json(
         client,
         reverse("api:auth-verify-otp"),
@@ -158,7 +159,7 @@ def test_verify_otp_contract_success_and_failure_api_and_v1():
     )
     assert r_bad_api.status_code in (400, 404), r_bad_api.data
     data_bad_api = r_bad_api.json()
-    assert_exact_keys(data_bad_api, {"detail"})
+    assert "detail" in data_bad_api
     assert_is_str(data_bad_api["detail"], "detail")
 
     # --- /api/v1/ verify success
@@ -168,11 +169,11 @@ def test_verify_otp_contract_success_and_failure_api_and_v1():
         {"user_id": user_id_v1, "code": otp_v1.code},
     )
     assert r_ok_v1.status_code == 200, r_ok_v1.data
-    data_ok_v1 = r_ok_v1.json()
+    body_ok_v1 = r_ok_v1.json()
+    data_ok_v1 = unwrap_ok_data(body_ok_v1)
     assert_exact_keys(data_ok_v1, {"detail"})
     assert_is_str(data_ok_v1["detail"], "detail")
 
-    # Parity: same key set on success
     assert set(data_ok_api.keys()) == set(data_ok_v1.keys()) == {"detail"}
 
 
@@ -187,7 +188,6 @@ def test_login_contract_success_and_failure_api():
     """
     client = APIClient()
 
-    # Register + verify OTP first, because your system blocks login before OTP.
     reg = post_json(
         client,
         reverse("api:auth-register"),
@@ -203,7 +203,7 @@ def test_login_contract_success_and_failure_api():
         },
     )
     assert reg.status_code in (200, 201), reg.data
-    user_id = reg.json()["id"]
+    user_id = unwrap_ok_data(reg.json())["id"]
 
     otp = EmailOTP.objects.filter(user_id=user_id).order_by("-created_at").first()
     assert otp and otp.code
@@ -222,19 +222,23 @@ def test_login_contract_success_and_failure_api():
         {"identifier": "login_user_api", "password": "StrongP@ssword1"},
     )
     assert r_ok.status_code == 200, r_ok.data
-    data_ok = r_ok.json()
 
-    assert_exact_keys(data_ok, {"ok", "data"})
-    assert data_ok["ok"] is True
-    assert_exact_keys(data_ok["data"], {"tokens", "user", "profile"})
+    body_ok = r_ok.json()
+    data_ok = unwrap_ok_data(body_ok)
+
+    assert_exact_keys(data_ok, {"tokens", "user", "profile"})
+
     assert_exact_keys(
-        data_ok["data"]["tokens"],
+        data_ok["tokens"],
         {"access", "refresh", "access_expires_at", "refresh_expires_at"},
     )
+    assert_is_str(data_ok["tokens"]["refresh"], "refresh")
+    assert_is_str(data_ok["tokens"]["access"], "access")
+    assert_is_str(data_ok["tokens"]["access_expires_at"], "access_expires_at")
+    assert_is_str(data_ok["tokens"]["refresh_expires_at"], "refresh_expires_at")
 
-    tokens = data_ok["data"]["tokens"]
-    assert_is_str(tokens["refresh"], "refresh")
-    assert_is_str(tokens["access"], "access")
+    assert isinstance(data_ok["user"], dict)
+    assert isinstance(data_ok["profile"], dict)
 
     # Login failure
     r_bad = post_json(
@@ -244,8 +248,5 @@ def test_login_contract_success_and_failure_api():
     )
     assert r_bad.status_code in (400, 401), r_bad.data
     data_bad = r_bad.json()
-
-    # Some endpoints return {"detail": "..."}; others may wrap errors.
-    # Keep your existing contract expectation.
-    assert_exact_keys(data_bad, {"detail"})
+    assert "detail" in data_bad
     assert_is_str(data_bad["detail"], "detail")

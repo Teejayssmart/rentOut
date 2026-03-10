@@ -56,7 +56,7 @@ def test_room_photos_get_returns_only_approved(monkeypatch):
     c = APIClient()
     r = c.get(url)
     assert r.status_code == 200
-    data = r.json()
-    assert isinstance(data, list)
-    assert len(data) == 1
-    assert data[0]["id"] == approved.id
+    body = r.json()
+    assert body.get("ok") is True
+    assert isinstance(body.get("data"), list)
+    data = body["data"]

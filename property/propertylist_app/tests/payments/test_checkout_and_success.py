@@ -67,8 +67,10 @@ def test_checkout_creates_session_for_owner_room(mocker, owner, room):
     )
     assert resp.status_code == 200, resp.content
     body = resp.json()
-    assert body.get("session_id") == "cs_test_123"
-    assert body.get("checkout_url") is not None
+    assert body.get("ok") is True
+    assert isinstance(body.get("data"), dict)
+    assert body["data"].get("session_id") == "cs_test_123"
+    assert body["data"].get("checkout_url") is not None
     assert Payment.objects.filter(room=room, user=owner).exists()
 
 

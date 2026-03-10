@@ -34,10 +34,16 @@ def test_export_creates_artifact(tmp_path, monkeypatch):
     assert r.status_code == 201, r.content
 
     data = r.json()
-    assert "download_url" in data and data["download_url"], data
+    payload = data.get("data", {})
+
+    assert data.get("ok") is True, data
+    assert "download_url" in payload and payload["download_url"], data
+    assert payload.get("status") in {"processing", "ready", None, ""}, data
+
+    download_url = payload["download_url"]
 
     # Map the URL path back to a filesystem path under MEDIA_ROOT
-    parsed = urlparse(data["download_url"])
+    parsed = urlparse(download_url)
     media_prefix = (settings.MEDIA_URL or "/media/").rstrip("/")
     # remove leading '/media/' (or custom MEDIA_URL) from the URL path
     rel_path = re.sub(rf"^{re.escape(media_prefix)}/?", "", parsed.path)

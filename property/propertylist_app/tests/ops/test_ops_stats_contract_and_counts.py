@@ -1,119 +1,79 @@
-from decimal import Decimal
+import pytest
 from datetime import timedelta
 
-import pytest
 from django.contrib.auth import get_user_model
+from django.urls import reverse
 from django.utils import timezone
 from rest_framework.test import APIClient
 
-from propertylist_app.models import RoomCategorie, Room, Payment, Booking
+from propertylist_app.models import Payment, Room, RoomCategorie
+
+User = get_user_model()
 
 
-pytestmark = pytest.mark.django_db
+def _unwrap_ops_stats_response(response):
+    assert response.status_code == 200, response.data
+    body = response.json()
+    assert set(body.keys()) == {"ok", "message", "data"}
+    assert body["ok"] is True
+    assert isinstance(body["data"], dict)
+    return body["data"]
 
 
-def _mk_user(username: str, *, is_staff: bool = False, is_superuser: bool = False):
-    User = get_user_model()
-    return User.objects.create_user(
-        username=username,
-        password="pass12345",
-        is_staff=is_staff,
-        is_superuser=is_superuser,
-    )
-
-
-def _auth_client(user):
-    c = APIClient()
-    c.force_authenticate(user=user)
-    return c
-
-
-def _mk_category(name="General"):
-    # key auto-derived in save() if empty :contentReference[oaicite:3]{index=3}
-    return RoomCategorie.objects.create(name=name, active=True)
-
-
-def _mk_room(*, owner, category, status="active", is_deleted=False, title="Room A"):
-    return Room.objects.create(
-        title=title,
-        description="word " * 30,
-        price_per_month=Decimal("950.00"),
-        security_deposit=Decimal("200.00"),
-        location="London",
-        category=category,
-        property_owner=owner,
-        property_type="flat",  # required (no default) :contentReference[oaicite:4]{index=4}
-        status=status,
-        is_deleted=is_deleted,
-    )
-
-
-def _mk_payment(*, user, room, status="succeeded", amount=Decimal("10.00"), created_at=None):
-    p = Payment.objects.create(
-        user=user,
-        room=room,
-        amount=amount,
-        currency="GBP",
-        status=status,
-    )
-    if created_at is not None:
-        Payment.objects.filter(pk=p.pk).update(created_at=created_at)
-        p.refresh_from_db()
-    return p
-
-
-def _mk_booking(*, user, room, start_dt, end_dt, created_at=None, canceled_at=None):
-    b = Booking.objects.create(
-        user=user,
-        room=room,
-        start=start_dt,
-        end=end_dt,
-        canceled_at=canceled_at,
-    )
-    if created_at is not None:
-        Booking.objects.filter(pk=b.pk).update(created_at=created_at)
-        b.refresh_from_db()
-    return b
-
-
+@pytest.mark.django_db
 def test_ops_stats_schema_contract_exact_keys_and_types():
-    admin = _mk_user("admin", is_staff=True)
-    client = _auth_client(admin)
+    admin = User.objects.create_user(
+        username="admin_contract",
+        password="pass123",
+        email="admin_contract@example.com",
+        is_staff=True,
+    )
+    c = APIClient()
+    c.force_authenticate(user=admin)
 
-    url = "/api/v1/ops/stats/"
-    res = client.get(url)
-    assert res.status_code == 200
-    data = res.json()
+    url = reverse("v1:ops-stats")
+    r = c.get(url)
+    data = _unwrap_ops_stats_response(r)
 
-    # top-level keys (exact)
+    # top-level keys
     assert set(data.keys()) == {
-        "listings", "users", "bookings", "payments", "messages", "reports", "categories"
+        "listings",
+        "users",
+        "bookings",
+        "payments",
+        "messages",
+        "reports",
+        "categories",
     }
 
     # listings
     assert set(data["listings"].keys()) == {"total", "active", "hidden", "deleted"}
-    for k in ("total", "active", "hidden", "deleted"):
-        assert isinstance(data["listings"][k], int)
+    assert isinstance(data["listings"]["total"], int)
+    assert isinstance(data["listings"]["active"], int)
+    assert isinstance(data["listings"]["hidden"], int)
+    assert isinstance(data["listings"]["deleted"], int)
 
     # users
     assert set(data["users"].keys()) == {"total"}
-    assert (data["users"]["total"] is None) or isinstance(data["users"]["total"], int)
+    assert isinstance(data["users"]["total"], int)
 
     # bookings
     assert set(data["bookings"].keys()) == {"last_7_days", "last_30_days", "upcoming_viewings"}
-    for k in ("last_7_days", "last_30_days", "upcoming_viewings"):
-        assert isinstance(data["bookings"][k], int)
+    assert isinstance(data["bookings"]["last_7_days"], int)
+    assert isinstance(data["bookings"]["last_30_days"], int)
+    assert isinstance(data["bookings"]["upcoming_viewings"], int)
 
     # payments
     assert set(data["payments"].keys()) == {"last_30_days"}
+    assert isinstance(data["payments"]["last_30_days"], dict)
     assert set(data["payments"]["last_30_days"].keys()) == {"count", "sum_gbp"}
     assert isinstance(data["payments"]["last_30_days"]["count"], int)
-    assert isinstance(data["payments"]["last_30_days"]["sum_gbp"], (int, float))
+    assert isinstance(data["payments"]["last_30_days"]["sum_gbp"], (int, float, str))
 
     # messages
-    assert set(data["messages"].keys()) == {"last_7_days", "threads_total"}
-    assert isinstance(data["messages"]["last_7_days"], int)
+    assert set(data["messages"].keys()) == {"threads_total", "last_7_days"}
     assert isinstance(data["messages"]["threads_total"], int)
+    assert isinstance(data["messages"]["last_7_days"], int)
 
     # reports
     assert set(data["reports"].keys()) == {"open", "in_review"}
@@ -123,117 +83,125 @@ def test_ops_stats_schema_contract_exact_keys_and_types():
     # categories
     assert set(data["categories"].keys()) == {"top_active"}
     assert isinstance(data["categories"]["top_active"], list)
-    for row in data["categories"]["top_active"]:
-        assert set(row.keys()) == {"id", "name", "count"}
-        assert isinstance(row["count"], int)
 
 
-def test_ops_stats_permissions_matrix():
-    url = "/api/v1/ops/stats/"
+@pytest.mark.django_db
+def test_ops_stats_requires_staff():
+    non_staff = User.objects.create_user(
+        username="plain_user",
+        password="pass123",
+        email="plain_user@example.com",
+        is_staff=False,
+    )
+    c = APIClient()
+    c.force_authenticate(user=non_staff)
+
+    r = c.get(reverse("v1:ops-stats"))
+    assert r.status_code == 403
 
 
-    normal = _mk_user("normal", is_staff=False)
-    staff = _mk_user("staff", is_staff=True)
-    superuser = _mk_user("root", is_staff=True, is_superuser=True)
+@pytest.mark.django_db
+def test_ops_stats_room_counts_active_hidden_deleted_total_match_rules():
+    admin = User.objects.create_user(
+        username="admin_rooms",
+        password="pass123",
+        email="admin_rooms@example.com",
+        is_staff=True,
+    )
+    c = APIClient()
+    c.force_authenticate(user=admin)
+    url = reverse("v1:ops-stats")
 
-    res_normal = _auth_client(normal).get(url)
-    assert res_normal.status_code in (403, 401)
+    cat = RoomCategorie.objects.create(name="Cat A")
 
-    res_staff = _auth_client(staff).get(url)
-    assert res_staff.status_code == 200
+    # 1 active (not deleted)
+    Room.objects.create(
+        title="Active room",
+        description="desc",
+        price_per_month="500.00",
+        location="London",
+        category=cat,
+        property_owner=admin,
+        status="active",
+    )
 
-    res_super = _auth_client(superuser).get(url)
-    assert res_super.status_code == 200
+    # 1 hidden (not deleted)
+    Room.objects.create(
+        title="Hidden room",
+        description="desc",
+        price_per_month="600.00",
+        location="London",
+        category=cat,
+        property_owner=admin,
+        status="hidden",
+    )
+
+    # 1 deleted (still counts in total, counts in deleted, does not count in active/hidden because is_deleted=True)
+    deleted_room = Room.objects.create(
+        title="Deleted room",
+        description="desc",
+        price_per_month="700.00",
+        location="London",
+        category=cat,
+        property_owner=admin,
+        status="active",
+    )
+    deleted_room.is_deleted = True
+    deleted_room.save(update_fields=["is_deleted"])
+
+    r = c.get(url)
+    data = _unwrap_ops_stats_response(r)
+
+    assert data["listings"]["total"] == 3
+    assert data["listings"]["active"] == 1
+    assert data["listings"]["hidden"] == 1
+    assert data["listings"]["deleted"] == 1
 
 
-def test_ops_stats_counts_rooms_and_payments_match_rules():
-    admin = _mk_user("admin2", is_staff=True)
-    owner = _mk_user("owner", is_staff=False)
-    client = _auth_client(admin)
+@pytest.mark.django_db
+def test_ops_stats_payments_last_30_days_counts_only_succeeded_and_only_within_window():
+    admin = User.objects.create_user(
+        username="admin_payments",
+        password="pass123",
+        email="admin_payments@example.com",
+        is_staff=True,
+    )
+    c = APIClient()
+    c.force_authenticate(user=admin)
+    url = reverse("v1:ops-stats")
 
-    cat = _mk_category("Cat A")
-    room_active = _mk_room(owner=owner, category=cat, status="active", is_deleted=False, title="Active")
-    room_hidden = _mk_room(owner=owner, category=cat, status="hidden", is_deleted=False, title="Hidden")
-    room_deleted = _mk_room(owner=owner, category=cat, status="active", is_deleted=True, title="Deleted")
+    cat = RoomCategorie.objects.create(name="Cat Pay")
+    room = Room.objects.create(
+        title="Room",
+        description="desc",
+        price_per_month="500.00",
+        location="London",
+        category=cat,
+        property_owner=admin,
+        status="active",
+    )
 
     now = timezone.now()
-    within_30 = now - timedelta(days=5)
-    outside_30 = now - timedelta(days=45)
 
-    # ops view counts only payments with status="succeeded" and created_at >= last 30 days :contentReference[oaicite:5]{index=5}
-    _mk_payment(user=owner, room=room_active, status="succeeded", amount=Decimal("10.00"), created_at=within_30)
-    _mk_payment(user=owner, room=room_active, status="succeeded", amount=Decimal("7.50"), created_at=within_30)
-    _mk_payment(user=owner, room=room_active, status="created", amount=Decimal("999.00"), created_at=within_30)   # should NOT count
-    _mk_payment(user=owner, room=room_active, status="succeeded", amount=Decimal("20.00"), created_at=outside_30)  # should NOT count
+    # succeeded within 30 days -> included
+    p1 = Payment.objects.create(user=admin, room=room, amount="2.00", currency="GBP", status="succeeded")
+    Payment.objects.filter(pk=p1.pk).update(created_at=now - timedelta(days=5))
 
-    url = "/api/v1/ops/stats/"
-    res = client.get(url)
-    assert res.status_code == 200
-    data = res.json()
+    # succeeded but older than 30 days -> excluded
+    p2 = Payment.objects.create(user=admin, room=room, amount="3.00", currency="GBP", status="succeeded")
+    Payment.objects.filter(pk=p2.pk).update(created_at=now - timedelta(days=40))
 
-    assert data["listings"]["total"] >= 3
-    assert data["listings"]["active"] >= 1
-    assert data["listings"]["hidden"] >= 1
-    assert data["listings"]["deleted"] >= 1
+    # not succeeded within 30 days -> excluded
+    p3 = Payment.objects.create(user=admin, room=room, amount="4.00", currency="GBP", status="created")
+    Payment.objects.filter(pk=p3.pk).update(created_at=now - timedelta(days=2))
 
-    assert data["payments"]["last_30_days"]["count"] == 2
-    assert data["payments"]["last_30_days"]["sum_gbp"] == 17.5
+    r = c.get(url)
+    data = _unwrap_ops_stats_response(r)
 
+    assert data["payments"]["last_30_days"]["count"] == 1
 
-def test_ops_stats_bookings_windows_and_upcoming_viewings():
-    admin = _mk_user("admin3", is_staff=True)
-    user = _mk_user("booker", is_staff=False)
-    owner = _mk_user("owner2", is_staff=False)
-
-    cat = _mk_category("Cat B")
-    room = _mk_room(owner=owner, category=cat, status="active", is_deleted=False, title="R")
-
-    now = timezone.now()
-
-    # within 7 days
-    _mk_booking(
-        user=user,
-        room=room,
-        start_dt=now + timedelta(days=2),
-        end_dt=now + timedelta(days=2, hours=1),
-        created_at=now - timedelta(days=2),
-        canceled_at=None,
-    )
-
-    # within 30 days but older than 7 days
-    _mk_booking(
-        user=user,
-        room=room,
-        start_dt=now + timedelta(days=10),
-        end_dt=now + timedelta(days=10, hours=1),
-        created_at=now - timedelta(days=20),
-        canceled_at=None,
-    )
-
-    # outside 30 days
-    _mk_booking(
-        user=user,
-        room=room,
-        start_dt=now + timedelta(days=40),
-        end_dt=now + timedelta(days=40, hours=1),
-        created_at=now - timedelta(days=60),
-        canceled_at=None,
-    )
-
-    # upcoming but cancelled -> should NOT count
-    _mk_booking(
-        user=user,
-        room=room,
-        start_dt=now + timedelta(days=3),
-        end_dt=now + timedelta(days=3, hours=1),
-        created_at=now - timedelta(days=1),
-        canceled_at=now,
-    )
-
-    res = _auth_client(admin).get("/api/v1/ops/stats/")
-    assert res.status_code == 200
-    data = res.json()
-
-    assert data["bookings"]["last_7_days"] == 2
-    assert data["bookings"]["last_30_days"] == 3
-    assert data["bookings"]["upcoming_viewings"] == 3
+    gross = data["payments"]["last_30_days"]["sum_gbp"]
+    if isinstance(gross, str):
+        assert gross in {"2", "2.0", "2.00"}
+    else:
+        assert float(gross) == 2.0

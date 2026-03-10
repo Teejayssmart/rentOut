@@ -76,34 +76,49 @@ def test_privacy_preferences_contract_get_api_vs_v1_match_shape_and_defaults():
     user = make_user("privacy_pref_user")
     c = authed(user)
 
-    # If your project uses different paths, this will tell you immediately.
     assert _endpoint_exists(c, PREFS_API), f"{PREFS_API} is 404. Update PREFS_API/PREFS_V1."
     assert _endpoint_exists(c, PREFS_V1), f"{PREFS_V1} is 404. Update PREFS_API/PREFS_V1."
 
     r_api = c.get(PREFS_API, follow=True)
     r_v1 = c.get(PREFS_V1, follow=True)
 
-    assert r_api.status_code == r_v1.status_code, (r_api.status_code, r_v1.status_code, r_api.data, r_v1.data)
+    assert r_api.status_code == r_v1.status_code, (
+        r_api.status_code, r_v1.status_code, r_api.data, r_v1.data
+    )
     assert r_api.status_code in (200, 400, 401, 403), r_api.data
 
     if r_api.status_code != 200:
         return
 
-    data_api = r_api.json()
-    data_v1 = r_v1.json()
+    body_api = r_api.json()
+    body_v1 = r_v1.json()
 
-    assert isinstance(data_api, dict), f"Expected dict, got {type(data_api)}"
-    assert isinstance(data_v1, dict), f"Expected dict, got {type(data_v1)}"
+    assert isinstance(body_api, dict), f"Expected dict, got {type(body_api)}"
+    assert isinstance(body_v1, dict), f"Expected dict, got {type(body_v1)}"
 
-    # Contract: exact top-level keys match between /api and /api/v1
+    # Envelope contract should match
+    assert set(body_api.keys()) == set(body_v1.keys()), (
+        f"Top-level keys differ.\n/api: {sorted(body_api.keys())}\n/v1: {sorted(body_v1.keys())}"
+    )
+
+    assert body_api.get("ok") is True, body_api
+    assert body_v1.get("ok") is True, body_v1
+
+    data_api = body_api.get("data", {})
+    data_v1 = body_v1.get("data", {})
+
+    assert isinstance(data_api, dict), f"Expected dict in data, got {type(data_api)}"
+    assert isinstance(data_v1, dict), f"Expected dict in data, got {type(data_v1)}"
+
+    # Actual preference keys should match inside the envelope
     assert set(data_api.keys()) == set(data_v1.keys()), (
         f"Preference keys differ.\n/api: {sorted(data_api.keys())}\n/v1: {sorted(data_v1.keys())}"
     )
 
-    # Basic sanity: values should be JSON-serialisable primitives (bool/int/str/None)
     for k, v in data_api.items():
-        assert isinstance(v, (bool, int, str, type(None), float)), f"Unexpected type for {k}: {type(v)}"
-
+        assert isinstance(v, (bool, int, str, type(None), float)), (
+            f"Unexpected type for {k}: {type(v)}"
+        )
 
 def test_privacy_preferences_patch_behaviour_api_vs_v1_is_consistent():
     user = make_user("privacy_patch_user")
@@ -117,10 +132,12 @@ def test_privacy_preferences_patch_behaviour_api_vs_v1_is_consistent():
     if r0.status_code != 200:
         pytest.skip("Preferences GET did not return 200; cannot test PATCH behaviour safely.")
 
-    prefs = r0.json()
+    body = r0.json()
+    assert isinstance(body, dict)
+
+    prefs = body.get("data", {})
     assert isinstance(prefs, dict)
 
-    # Choose a boolean field to toggle (if any)
     bool_keys = [k for k, v in prefs.items() if isinstance(v, bool)]
     if not bool_keys:
         pytest.skip("No boolean fields found in privacy preferences to test PATCH toggle.")
@@ -137,8 +154,18 @@ def test_privacy_preferences_patch_behaviour_api_vs_v1_is_consistent():
     assert r_api.status_code in (200, 400, 401, 403), r_api.data
 
     if r_api.status_code == 200:
-        d_api = r_api.json()
-        d_v1 = r_v1.json()
+        body_api = r_api.json()
+        body_v1 = r_v1.json()
+
+        assert isinstance(body_api, dict) and isinstance(body_v1, dict)
+        assert set(body_api.keys()) == set(body_v1.keys())
+
+        assert body_api.get("ok") is True, body_api
+        assert body_v1.get("ok") is True, body_v1
+
+        d_api = body_api.get("data", {})
+        d_v1 = body_v1.get("data", {})
+
         assert isinstance(d_api, dict) and isinstance(d_v1, dict)
         assert set(d_api.keys()) == set(d_v1.keys())
         assert d_api.get(target) == d_v1.get(target) == new_val

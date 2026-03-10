@@ -9,6 +9,15 @@ from rest_framework.test import APIClient
 from propertylist_app.models import Room, RoomCategorie, Payment
 
 
+
+def unwrap_ok_data(payload: dict) -> dict:
+    assert isinstance(payload, dict), f"Expected dict, got {type(payload)}"
+    assert payload.get("ok") is True, f"Expected ok=True, got: {payload}"
+    assert "data" in payload, f"Expected 'data' in payload, got: {payload}"
+    assert isinstance(payload["data"], dict), f"Expected payload['data'] to be dict, got: {type(payload['data'])}"
+    return payload["data"]
+
+
 @pytest.mark.django_db
 def test_ops_stats_schema_contract_exact_keys_and_types():
     admin = User.objects.create_user(
@@ -23,7 +32,8 @@ def test_ops_stats_schema_contract_exact_keys_and_types():
     url = reverse("v1:ops-stats")
     r = c.get(url)
     assert r.status_code == 200, r.data
-    data = r.json()
+    body = r.json()
+    data = unwrap_ok_data(body)
 
     # top-level keys
     assert set(data.keys()) == {
@@ -168,7 +178,8 @@ def test_ops_stats_room_counts_active_hidden_deleted_total_match_rules():
 
     r = c.get(url)
     assert r.status_code == 200, r.data
-    data = r.json()
+    body = r.json()
+    data = unwrap_ok_data(body)
 
     assert data["listings"]["total"] == 3
     assert data["listings"]["active"] == 1
@@ -215,7 +226,8 @@ def test_ops_stats_payments_last_30_days_counts_only_succeeded_and_only_within_w
 
     r = c.get(url)
     assert r.status_code == 200, r.data
-    data = r.json()
+    body = r.json()
+    data = unwrap_ok_data(body)
 
     assert data["payments"]["last_30_days"]["count"] == 1
     assert data["payments"]["last_30_days"]["sum_gbp"] in (2.0, 2)  # view rounds to 2dp

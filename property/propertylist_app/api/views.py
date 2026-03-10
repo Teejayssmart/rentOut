@@ -3,7 +3,6 @@ import random
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from django.apps import apps
-from django.db.models import Count
 from drf_spectacular.types import OpenApiTypes
 import traceback
 from django.urls import reverse
@@ -59,6 +58,8 @@ from django.db.models import (
     Sum,
     Value,
     When,
+    Prefetch,
+    
 )
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -125,7 +126,7 @@ from propertylist_app.validators import (
 )
 
 # API plumbing
-from propertylist_app.api.pagination import RoomCPagination, StandardLimitOffsetPagination
+from propertylist_app.api.pagination import StandardLimitOffsetPagination
 from propertylist_app.api.permissions import IsAdminOrReadOnly, IsOwnerOrReadOnly
 from propertylist_app.api.serializers import (
     AvailabilitySlotSerializer,
@@ -167,6 +168,7 @@ from propertylist_app.api.serializers import (
     RoomPhotoUploadRequestSerializer,
     RoomImageSerializer,
     AvatarUploadRequestSerializer,
+    AvatarUploadResponseSerializer,
     StripeCheckoutRedirectResponseSerializer,
     LoginResponseSerializer,
     BookingPreflightRequestSerializer,
@@ -186,6 +188,15 @@ from propertylist_app.api.serializers import (
     StripeWebhookEventRequestSerializer,
     StripeWebhookAckResponseSerializer,
     StripeWebhookErrorResponseSerializer,
+    SavedCardsListResponseSerializer,
+    DetailResponseSerializer,
+    SetupIntentResponseSerializer,
+    NotificationMarkReadResponseSerializer,
+    NotificationMarkAllReadResponseSerializer,
+    ThreadRestoreResponseSerializer,
+    ThreadStateResponseSerializer,
+    OpsStatsResponseSerializer,
+    
        
     )
 
@@ -1177,7 +1188,7 @@ class RoomAV(APIView):
     def post(self, request, *args, **kwargs):
 
         """
-        POST /api/rooms/
+        POST /api/v1/rooms/
 
         Used by the 'List a Room – Step 1' screen.
 
@@ -1380,7 +1391,7 @@ class RoomPreviewView(APIView):
     """
     Step 5/5 – Preview & Edit page
 
-    GET /api/rooms/<pk>/preview/
+    GET /api/v1/rooms/<pk>/preview/
 
     Returns:
       {
@@ -2589,7 +2600,17 @@ class SearchRoomsView(generics.ListAPIView):
 
        
 
-        qs = Room.objects.alive()
+        qs = (
+            Room.objects.alive()
+            .select_related("category", "property_owner", "property_owner__profile")
+            .prefetch_related(
+                Prefetch(
+                    "roomimage_set",
+                    queryset=RoomImage.objects.filter(status="approved").order_by("id"),
+                    to_attr="prefetched_approved_images",
+                )
+            )
+        )
 
         today = timezone.now().date()
         qs = qs.filter(status="active").filter(
@@ -2657,7 +2678,16 @@ class SearchRoomsView(generics.ListAPIView):
         if max_rating_val is not None:
             qs = qs.filter(avg_rating__lte=max_rating_val)
 
+        
+        user = getattr(self.request, "user", None)
+        if user and user.is_authenticated:
+            qs = qs.annotate(
+                _is_saved=Exists(
+                    SavedRoom.objects.filter(user=user, room_id=OuterRef("pk"))
+                )
+            )
 
+        
 
 
 
@@ -2851,7 +2881,7 @@ class SearchRoomsView(generics.ListAPIView):
         self._ordered_ids = None
         self._distance_by_id = None
 
-        # ----- distance / radius handling ----- 
+        # ----- distance / radius handling -----
         if postcode:
             try:
                 radius_miles = validate_radius_miles(raw_radius, max_miles=500)
@@ -2863,7 +2893,7 @@ class SearchRoomsView(generics.ListAPIView):
             base_qs = qs.exclude(latitude__isnull=True).exclude(longitude__isnull=True)
 
             distances = []
-            for r in base_qs.only("id", "latitude", "longitude"):
+            for r in base_qs.select_related(None).only("id", "latitude", "longitude"):
                 d = haversine_miles(lat, lon, r.latitude, r.longitude)
                 if d <= radius_miles:
                     distances.append((r.id, d))
@@ -3135,7 +3165,7 @@ class InboxListView(APIView):
 
 class FindAddressView(APIView):
     """
-    GET /api/search/find-address/?postcode=SW1A1AA
+    GET /api/v1/search/find-address/?postcode=SW1A1AA
 
     Validates a UK postcode and returns a mock list of addresses.
     Later this will call a real API like postcodes.io or getAddress.io.
@@ -3172,7 +3202,7 @@ class FindAddressView(APIView):
 
 class NearbyRoomsView(generics.ListAPIView):
     """
-    GET /api/rooms/nearby/?postcode=<UK_postcode>&radius_miles=<int>
+    GET /api/v1/rooms/nearby/?postcode=<UK_postcode>&radius_miles=<int>
     Miles only; attaches .distance_miles to each room.
     """
     serializer_class = RoomSerializer
@@ -3545,6 +3575,21 @@ class MessageThreadListCreateView(generics.ListCreateAPIView):
             
             
     
+    @extend_schema(
+        request=MessageThreadSerializer,
+        responses={
+            201: inline_serializer(
+                name="MessageThreadCreateOkResponse",
+                fields={
+                    "ok": serializers.BooleanField(),
+                    "data": MessageThreadSerializer(),
+                },
+            ),
+            400: OpenApiResponse(description="Validation error."),
+            401: OpenApiResponse(description="Authentication required."),
+        },
+        description="Create a new message thread between exactly two participants (you and one other user).",
+    )
     def create(self, request, *args, **kwargs):
         resp = super().create(request, *args, **kwargs)
         return _wrap_response_success(resp)
@@ -3636,7 +3681,11 @@ class MessageThreadStateView(APIView):
 
     @extend_schema(
         request=MessageThreadStateUpdateSerializer,
-        responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT, 404: OpenApiTypes.OBJECT},
+        responses={
+            200: ThreadStateResponseSerializer,
+            400: OpenApiResponse(description="Validation error."),
+            404: OpenApiResponse(description="Thread not found."),
+        }
     )
     def patch(self, request, thread_id):
         # User must be a participant in the thread
@@ -3773,7 +3822,7 @@ class MessageListCreateView(generics.ListCreateAPIView):
 
     serializer_class = MessageSerializer
     permission_classes = [IsAuthenticated]
-    pagination_class = RoomCPagination
+    pagination_class = StandardLimitOffsetPagination
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = "message_user"
 
@@ -4045,7 +4094,7 @@ class ThreadRestoreFromBinView(APIView):
 
     @extend_schema(
         request=None,
-        responses={200: OpenApiTypes.OBJECT, 404: OpenApiTypes.OBJECT},
+        responses={200: ThreadRestoreResponseSerializer, 404: OpenApiResponse(description="Thread not found.")},
     )
     def post(self, request, thread_id):
         thread = get_object_or_404(
@@ -4640,10 +4689,11 @@ class UserAvatarUploadView(APIView):
     @extend_schema(
     request={"multipart/form-data": AvatarUploadRequestSerializer},
     responses={
-        200: OpenApiResponse(description="Avatar updated successfully."),
+        200: AvatarUploadResponseSerializer,
         400: OpenApiResponse(description="Invalid file or validation error."),
         401: OpenApiResponse(description="Authentication required."),
-    },
+        },
+        description="Upload/update the current user's avatar.",
     )
 
     def post(self, request):
@@ -4948,7 +4998,7 @@ class DeactivateAccountView(APIView):
 
     @extend_schema(
         request=None,
-        responses={200: OpenApiTypes.OBJECT},
+        responses={200: OpsStatsResponseSerializer},
     )
     def post(self, request):
         request.user.is_active = False
@@ -4961,7 +5011,7 @@ class DeleteAccountRequestView(APIView):
 
     @extend_schema(
         request=AccountDeleteRequestSerializer,
-        responses={200: OpenApiTypes.OBJECT},
+        responses={200: OpsStatsResponseSerializer},
     )
     def post(self, request):
         from propertylist_app.models import UserProfile
@@ -5383,9 +5433,10 @@ class SavedCardsListView(APIView):
     @extend_schema(
         request=None,
         responses={
-            200: OpenApiTypes.OBJECT,
-            502: OpenApiTypes.OBJECT,
+            200: SavedCardsListResponseSerializer,
+            502: OpenApiResponse(description="Unable to fetch saved cards from Stripe."),
         },
+        description="Return up to 4 saved card payment methods for the current user.",
     )
     def get(self, request):
         user = request.user
@@ -5436,10 +5487,10 @@ class DetachSavedCardView(APIView):
     @extend_schema(
         request=None,
         responses={
-            200: OpenApiTypes.OBJECT,
-            400: OpenApiTypes.OBJECT,
-            502: OpenApiTypes.OBJECT,
-        },
+            200: DetailResponseSerializer,
+            400: OpenApiResponse(description="No Stripe customer found for this user."),
+            502: OpenApiResponse(description="Unable to detach saved card."),
+        }
     )
     def post(self, request, pm_id):
         profile = getattr(request.user, "profile", None)
@@ -5557,9 +5608,9 @@ class CreateSetupIntentView(APIView):
     @extend_schema(
         request=None,
         responses={
-            200: OpenApiTypes.OBJECT,
-            502: OpenApiTypes.OBJECT,
-        },
+            200: SetupIntentResponseSerializer,
+            502: OpenApiResponse(description="Unable to create setup intent."),
+    },
     )
     def post(self, request):
         user = request.user
@@ -5625,10 +5676,10 @@ class SetDefaultSavedCardView(APIView):
     @extend_schema(
         request=None,
         responses={
-            200: OpenApiTypes.OBJECT,
-            400: OpenApiTypes.OBJECT,
-            502: OpenApiTypes.OBJECT,
-        },
+            200: DetailResponseSerializer,
+            400: OpenApiResponse(description="No Stripe customer found for this user."),
+            502: OpenApiResponse(description="Unable to set default card."),
+        }
     )
     def post(self, request, pm_id):
         profile = getattr(request.user, "profile", None)
@@ -5989,8 +6040,8 @@ class OpsStatsView(APIView):
     permission_classes = [IsAdminUser]
 
     @extend_schema(
-        request=None,
-        responses={200: OpenApiTypes.OBJECT},
+        responses={200: OpsStatsResponseSerializer},
+        description="Operational statistics for the platform."
     )
     def get(self, request):
         now = timezone.now()
@@ -6132,7 +6183,7 @@ class DataExportLatestView(APIView):
 
     @extend_schema(
         request=None,
-        responses={200: OpenApiTypes.OBJECT, 404: OpenApiTypes.OBJECT},
+        responses={200: NotificationMarkReadResponseSerializer, 404: OpenApiResponse(description="Not found.")},
     )
     def get(self, request):
         export = (
@@ -6153,7 +6204,7 @@ class AccountDeletePreviewView(APIView):
     permission_classes = [IsAuthenticated]
     @extend_schema(
         request=None,
-        responses={200: OpenApiTypes.OBJECT},
+        responses={200: NotificationMarkAllReadResponseSerializer},
     )
     def get(self, request):
         return Response(preview_erasure(request.user))

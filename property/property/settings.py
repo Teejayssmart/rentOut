@@ -280,23 +280,30 @@ REST_FRAMEWORK = {
 # property/settings.py
 
 SPECTACULAR_SETTINGS = {
-    # ...your other settings...
-
+    "TITLE": "RentOut API",
+    "VERSION": "v1",
+    "DESCRIPTION": "Backend API for RentOut property platform.",
+    "SERVE_INCLUDE_SCHEMA": False,
+    "SCHEMA_PATH_PREFIX": r"/api/v1",
+    "SERVERS": [
+        {
+            "url": SITE_URL.rstrip("/") if SITE_URL else "http://localhost:8000",
+            "description": "Current environment",
+        },
+        {
+            "url": "https://rentout-staging-v2.onrender.com",
+            "description": "Staging",
+        },
+    ],
     "ENUM_NAME_OVERRIDES": {
         "RoomStatusEnum": "propertylist_app.api.schema_enums.ROOM_STATUS_CHOICES",
         "BookingStatusEnum": "propertylist_app.api.schema_enums.BOOKING_STATUS_CHOICES",
-
-        # IMPORTANT: use a stable name for Review.role
         "ReviewRoleEnum": "propertylist_app.api.schema_enums.REVIEW_ROLE_CHOICES",
-
-        # user/profile role
         "UserRoleEnum": "propertylist_app.api.schema_enums.USER_ROLE_CHOICES",
-
         "SmokingEnum": "propertylist_app.api.schema_enums.SMOKING_CHOICES",
         "YesNoNoPreferenceEnum": "propertylist_app.api.schema_enums.YES_NO_NO_PREFERENCE_CHOICES",
         "StripeIntentStatusEnum": "propertylist_app.api.schema_enums.STRIPE_INTENT_STATUS_CHOICES",
     },
-
     "POSTPROCESSING_HOOKS": [
         "propertylist_app.api.schema_hooks.wrap_success_responses",
     ],

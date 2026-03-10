@@ -1088,10 +1088,15 @@ class RoomSerializer(serializers.ModelSerializer):
 
     @extend_schema_field(OpenApiTypes.BOOL)
     def get_is_saved(self, obj) -> bool:
+        annotated = getattr(obj, "_is_saved", None)
+        if annotated is not None:
+            return bool(annotated)
+
         request = self.context.get("request")
-        user = request.user if request and hasattr(request, "user") else None
+        user = getattr(request, "user", None) if request is not None else None
         if not user or not user.is_authenticated:
             return False
+
         return SavedRoom.objects.filter(user=user, room=obj).exists()
 
     @extend_schema_field(OpenApiTypes.NUMBER)
@@ -1107,9 +1112,18 @@ class RoomSerializer(serializers.ModelSerializer):
     @extend_schema_field(OpenApiTypes.BOOL)
     def get_allow_search_indexing_effective(self, obj) -> bool:
         val = getattr(obj, "allow_search_indexing_effective", None)
-        if val is None:
-            val = getattr(obj, "allow_search_indexing", True)
-        return bool(val)
+        if val is not None:
+            return bool(val)
+
+        override = getattr(obj, "allow_search_indexing_override", None)
+        if override is not None:
+            return bool(override)
+
+        owner = getattr(obj, "property_owner", None)
+        profile = getattr(owner, "profile", None) if owner else None
+        default = getattr(profile, "allow_search_indexing_default", True)
+
+        return bool(default)
 
     @extend_schema_field(OpenApiTypes.STR)
     def get_owner_name(self, obj) -> str:
@@ -1138,11 +1152,17 @@ class RoomSerializer(serializers.ModelSerializer):
 
     @extend_schema_field(OpenApiTypes.URI)
     def get_main_photo(self, obj) -> str | None:
-        first_image = (
-            obj.roomimage_set.filter(status="approved")
-            .order_by("id")
-            .first()
-        )
+        approved_images = getattr(obj, "prefetched_approved_images", None)
+
+        if approved_images is not None:
+            first_image = approved_images[0] if approved_images else None
+        else:
+            first_image = (
+                obj.roomimage_set.filter(status="approved")
+                .order_by("id")
+                .first()
+            )
+
         if first_image and first_image.image:
             url = first_image.image.url
         elif getattr(obj, "image", None):
@@ -1155,13 +1175,23 @@ class RoomSerializer(serializers.ModelSerializer):
             return request.build_absolute_uri(url)
         return url
 
+        request = self.context.get("request")
+        if request is not None:
+            return request.build_absolute_uri(url)
+        return url
+
     @extend_schema_field(OpenApiTypes.INT)
-    def get_photo_count(self, obj) -> int:
+    def get_photo_count(self, obj):
         val = getattr(obj, "photo_count", None)
-        if isinstance(val, int):
+        if val is not None:
             return val
 
-        approved = obj.roomimage_set.filter(status="approved").count()
+        approved_images = getattr(obj, "prefetched_approved_images", None)
+        if approved_images is not None:
+            approved = len(approved_images)
+        else:
+            approved = obj.roomimage_set.filter(status="approved").count()
+
         legacy = 1 if getattr(obj, "image", None) else 0
         return approved + legacy
 
@@ -2036,8 +2066,72 @@ class RoomImageSerializer(serializers.ModelSerializer):
         return obj
 
 
-class AvatarUploadRequestSerializer(serializers.Serializer):
-    avatar = serializers.ImageField(required=True)
+class AvatarUploadResponseSerializer(serializers.Serializer):
+    avatar = serializers.URLField(allow_null=True)
+
+
+class SavedCardSerializer(serializers.Serializer):
+    id = serializers.CharField()
+    brand = serializers.CharField(allow_null=True, required=False)
+    last4 = serializers.CharField(allow_null=True, required=False)
+    exp_month = serializers.IntegerField(allow_null=True, required=False)
+    exp_year = serializers.IntegerField(allow_null=True, required=False)
+
+
+class SavedCardsListResponseSerializer(serializers.Serializer):
+    cards = SavedCardSerializer(many=True)
+
+
+class DetailResponseSerializer(serializers.Serializer):
+    detail = serializers.CharField()
+
+
+class SetupIntentResponseSerializer(serializers.Serializer):
+    clientSecret = serializers.CharField()
+    publishableKey = serializers.CharField()
+
+
+class NotificationMarkReadResponseSerializer(serializers.Serializer):
+    ok = serializers.BooleanField()
+
+
+class NotificationMarkAllReadResponseSerializer(serializers.Serializer):
+    ok = serializers.BooleanField()
+
+
+class ThreadRestoreResponseSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    in_bin = serializers.BooleanField()
+
+
+class ThreadStateResponseSerializer(serializers.Serializer):
+    thread = serializers.IntegerField()
+    label = serializers.CharField(allow_null=True, required=False)
+    in_bin = serializers.BooleanField()
+
+
+class OpsTopCategorySerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    name = serializers.CharField()
+    room_count = serializers.IntegerField()
+
+
+class OpsStatsResponseSerializer(serializers.Serializer):
+    total_rooms = serializers.IntegerField()
+    active_rooms = serializers.IntegerField()
+    hidden_rooms = serializers.IntegerField()
+    deleted_rooms = serializers.IntegerField()
+    total_users = serializers.IntegerField(allow_null=True)
+    bookings_7d = serializers.IntegerField()
+    bookings_30d = serializers.IntegerField()
+    upcoming_viewings = serializers.IntegerField()
+    payments_30d_count = serializers.IntegerField()
+    payments_30d_sum_gbp = serializers.FloatField()
+    messages_7d = serializers.IntegerField()
+    threads_total = serializers.IntegerField()
+    reports_open = serializers.IntegerField()
+    reports_in_review = serializers.IntegerField()
+    top_categories = OpsTopCategorySerializer(many=True)
 
 
 class StripeCheckoutSessionCreateRequestSerializer(serializers.Serializer):

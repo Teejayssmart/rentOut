@@ -66,7 +66,7 @@ def test_notifications_are_user_only_and_isolated_per_user():
     u1 = User.objects.create_user(username="alice", password="pass123", email="a@example.com")
     u2 = User.objects.create_user(username="bob", password="pass123", email="b@example.com")
 
-    # Create a notification for u1 only (the system does this via signals normally)
+    # Create a notification for u1 only
     from propertylist_app.models import Notification
     Notification.objects.create(user=u1, title="Hello", body="Only for Alice")
 
@@ -76,12 +76,16 @@ def test_notifications_are_user_only_and_isolated_per_user():
     c.force_authenticate(user=u2)
     r_u2 = c.get(reverse("v1:notifications-list"))
     assert r_u2.status_code == 200
-    assert r_u2.json() == []
+    body_u2 = r_u2.json()
+    assert body_u2.get("ok") is True
+    assert body_u2.get("data") == []
 
     # u1 sees their own notification
     c.force_authenticate(user=u1)
     r_u1 = c.get(reverse("v1:notifications-list"))
     assert r_u1.status_code == 200
-    items = r_u1.json()
+    body_u1 = r_u1.json()
+    assert body_u1.get("ok") is True
+    items = body_u1.get("data", [])
     assert len(items) == 1
     assert items[0]["title"] == "Hello"

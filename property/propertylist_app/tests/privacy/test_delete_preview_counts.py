@@ -56,8 +56,10 @@ def test_delete_preview_counts():
     assert r.status_code == 200
     data = r.json()
 
-    # New structure: look under "anonymise" for user-generated objects
-    anon = data.get("anonymise", {})
+    # API uses the standard {ok, data, message} envelope
+    payload = data.get("data", {})
+
+    anon = payload.get("anonymise", {})
     assert "rooms" in anon and "reviews" in anon and "messages" in anon, data
 
     # We created exactly 1 room and 1 review; messages may be 0 (tolerant check)
@@ -66,5 +68,5 @@ def test_delete_preview_counts():
     assert anon["messages"] >= 0
 
     # Optional: ensure other sections exist (tolerant—just presence)
-    assert "delete" in data
-    assert "retain_non_pii" in data
+    assert "delete" in payload
+    assert "retain_non_pii" in payload
