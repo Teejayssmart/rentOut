@@ -1,0 +1,11 @@
+# Backend code
+/backend/  @RentCrib-team/backend
+
+# Web frontend
+/web/      @RentCrib-team/web
+
+# Mobile frontend
+/mobile/   @RentCrib-team/mobile
+
+# Project documentation
+/docs/     @RentCrib-team/pm
