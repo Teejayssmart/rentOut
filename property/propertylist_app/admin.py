@@ -302,8 +302,102 @@ class ReviewAdmin(admin.ModelAdmin):
 
 @admin.register(UserProfile)
 class UserProfileAdmin(admin.ModelAdmin):
-    list_display = ("user", "phone")
-    search_fields = ("user__username", "phone")
+    list_display = (
+        "user",
+        "role",
+        "admin_role",
+        "phone",
+        "email_verified",
+        "phone_verified",
+        "advertiser_verified",
+        "onboarding_completed",
+    )
+
+    list_filter = (
+        "role",
+        "admin_role",
+        "email_verified",
+        "phone_verified",
+        "advertiser_verified",
+        "onboarding_completed",
+    )
+
+    search_fields = (
+        "user__username",
+        "user__email",
+        "phone",
+        "postcode",
+        "occupation",
+    )
+
+    fieldsets = (
+        ("Identity", {
+            "fields": (
+                "user",
+                "avatar",
+                "phone",
+            )
+        }),
+        ("Roles", {
+            "fields": (
+                "role",
+                "role_detail",
+                "admin_role",
+            )
+        }),
+        ("Verification", {
+            "fields": (
+                "email_verified",
+                "email_verified_at",
+                "phone_verified",
+                "phone_verified_at",
+                "advertiser_verified",
+            )
+        }),
+        ("Profile", {
+            "fields": (
+                "occupation",
+                "gender",
+                "postcode",
+                "date_of_birth",
+                "about_you",
+                "address_manual",
+                "preferred_language",
+            )
+        }),
+        ("Ratings", {
+            "classes": ("collapse",),
+            "fields": (
+                "avg_landlord_rating",
+                "number_landlord_ratings",
+                "avg_tenant_rating",
+                "number_tenant_ratings",
+            )
+        }),
+        ("Notifications & preferences", {
+            "classes": ("collapse",),
+            "fields": (
+                "read_receipts_enabled",
+                "marketing_consent",
+                "allow_search_indexing_default",
+                "notify_rentout_updates",
+                "notify_reminders",
+                "notify_messages",
+                "notify_confirmations",
+                "onboarding_completed",
+            )
+        }),
+        ("Account lifecycle", {
+            "classes": ("collapse",),
+            "fields": (
+                "pending_deletion_requested_at",
+                "pending_deletion_scheduled_for",
+                "terms_accepted_at",
+                "terms_version",
+                "stripe_customer_id",
+            )
+        }),
+    )
 
 
 @admin.register(Booking)

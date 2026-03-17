@@ -560,13 +560,41 @@ class UserProfile(models.Model):
     avatar = models.ImageField(upload_to="avatars/", null=True, blank=True)
     stripe_customer_id = models.CharField(max_length=100, blank=True, default="")
     read_receipts_enabled = models.BooleanField(default=True)
+
     avg_landlord_rating = models.FloatField(default=0.0)
     number_landlord_ratings = models.PositiveIntegerField(default=0)
     avg_tenant_rating = models.FloatField(default=0.0)
     number_tenant_ratings = models.PositiveIntegerField(default=0)
-    ROLE_CHOICES = (("landlord", "Landlord"), ("seeker", "Seeker"))
-    role = models.CharField(max_length=20, choices=ROLE_CHOICES, default="seeker", db_index=True)
-    
+
+    # App/user role
+    ROLE_CHOICES = (
+        ("landlord", "Landlord"),
+        ("seeker", "Seeker"),
+    )
+    role = models.CharField(
+        max_length=20,
+        choices=ROLE_CHOICES,
+        default="seeker",
+        db_index=True,
+    )
+
+    # Admin dashboard role
+    ADMIN_ROLE_CHOICES = (
+        ("", "No admin role"),
+        ("super_admin", "Super Admin"),
+        ("ops_admin", "Operations Admin"),
+        ("moderator", "Moderation Admin"),
+        ("finance_admin", "Finance Admin"),
+        ("support_admin", "Support Admin"),
+    )
+    admin_role = models.CharField(
+        max_length=30,
+        choices=ADMIN_ROLE_CHOICES,
+        blank=True,
+        default="",
+        db_index=True,
+    )
+
     pending_deletion_requested_at = models.DateTimeField(null=True, blank=True)
     pending_deletion_scheduled_for = models.DateTimeField(null=True, blank=True)
 
@@ -587,7 +615,6 @@ class UserProfile(models.Model):
         ("non_binary", "Non-binary"),
         ("prefer_not_to_say", "Prefer not to say"),
     )
-
     occupation = models.CharField(max_length=100, blank=True, default="")
     gender = models.CharField(max_length=32, choices=GENDER_CHOICES, blank=True, default="")
     postcode = models.CharField(max_length=12, blank=True, default="")
@@ -599,27 +626,23 @@ class UserProfile(models.Model):
     phone_verified = models.BooleanField(default=False, db_index=True)
     phone_verified_at = models.DateTimeField(null=True, blank=True)
     advertiser_verified = models.BooleanField(default=False, db_index=True)
+
     terms_accepted_at = models.DateTimeField(null=True, blank=True)
     terms_version = models.CharField(max_length=20, blank=True, default="")
     marketing_consent = models.BooleanField(default=False)
-    # search engine indexing (default for all my listings)
-    allow_search_indexing_default = models.BooleanField(default=True)
-    
-    
-    # models.py (inside UserProfile model)
 
-    # NEW: preferred language for UI (kept simple)
+    # Search engine indexing default for all my listings
+    allow_search_indexing_default = models.BooleanField(default=True)
+
     PREFERRED_LANGUAGE_CHOICES = [
         ("en-GB", "English (UK)"),
         ("en-US", "English (US)"),
     ]
-
     preferred_language = models.CharField(
         max_length=10,
         choices=PREFERRED_LANGUAGE_CHOICES,
         default="en-GB",
     )
-
 
     notify_rentout_updates = models.BooleanField(default=True)
     notify_reminders = models.BooleanField(default=True)
@@ -630,7 +653,6 @@ class UserProfile(models.Model):
 
     def __str__(self):
         return f"{self.user.username} profile"
-
 
 # --------
 # AuditLog
