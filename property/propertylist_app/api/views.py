@@ -11,6 +11,24 @@ from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 from drf_spectacular.utils import extend_schema, extend_schema_view
 from datetime import datetime, timezone as dt_timezone
 
+import jwt
+from jwt import PyJWKClient
+from google.oauth2 import id_token
+from google.auth.transport import requests as google_requests
+
+from django.contrib.auth import get_user_model
+from rest_framework.response import Response
+
+from django.utils.decorators import method_decorator
+from django.views.decorators.csrf import csrf_exempt
+
+
+
+from urllib.parse import quote
+from urllib.request import Request, urlopen
+from urllib.error import HTTPError, URLError
+
+
 from rest_framework.exceptions import ValidationError
 from rest_framework_simplejwt.tokens import AccessToken
 
@@ -1714,6 +1732,7 @@ class RegistrationView(generics.CreateAPIView):
 
 
 # ---------- Social sign-up stubs (Google / Apple) ----------  
+@method_decorator(csrf_exempt, name='dispatch')
 class GoogleRegisterView(APIView):
     permission_classes = [AllowAny]
     throttle_classes = [RegisterAnonThrottle]
@@ -1723,61 +1742,220 @@ class GoogleRegisterView(APIView):
         request=inline_serializer(
             name="GoogleRegisterRequest",
             fields={
-                "email": serializers.EmailField(),
+                "token": serializers.CharField(),
             },
         ),
         responses={
             200: inline_serializer(
                 name="GoogleRegisterResponse",
                 fields={
-                    "refresh": serializers.CharField(),
-                    "access": serializers.CharField(),
+                    "ok": serializers.BooleanField(),
+                    "message": serializers.CharField(),
+                    "data": inline_serializer(
+                        name="GoogleRegisterData",
+                        fields={
+                            "refresh": serializers.CharField(),
+                            "access": serializers.CharField(),
+                        },
+                    ),
                 },
             ),
-            400: OpenApiResponse(description="Missing email."),
-            501: OpenApiResponse(description="Google sign-up not implemented."),
+            400: OpenApiResponse(description="Missing or invalid Google token."),
         },
         auth=[],
-        description="Mock Google register/login. Returns refresh and access tokens.",
+        description="Register or log in with a Google ID token. Returns JWT refresh and access tokens.",
         )
 
     def post(self, request, *args, **kwargs):
-        # PROD: keep stub
-        if not getattr(settings, "ENABLE_SOCIAL_AUTH_STUB", False):
+        token = request.data.get("token")
+
+        if not token:
             return Response(
-                {"detail": "Google sign-up not implemented yet."},
-                status=status.HTTP_501_NOT_IMPLEMENTED,
+                {"ok": False, "message": "Missing token", "data": None},
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # DEV/TEST mock: accept email, create user if needed, return JWT tokens
-        email = (request.data.get("email") or "").strip().lower()
+        try:
+            idinfo = id_token.verify_oauth2_token(
+                token,
+                google_requests.Request(),
+                settings.GOOGLE_WEB_CLIENT_ID,
+            )
+
+        except Exception:
+            return Response(
+                {"ok": False, "message": "Invalid Google token", "data": None},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        email = idinfo.get("email")
         if not email:
-            return Response({"email": ["This field is required."]}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"ok": False, "message": "Email not provided", "data": None},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        User = get_user_model()
+
+        user, created = User.objects.get_or_create(
+            email=email,
+            defaults={
+                "username": email.split("@")[0],
+            },
+        )
+
+        # Mark as verified (important)
+        if hasattr(user, "is_email_verified"):
+            user.is_email_verified = True
+            user.save()
+
+        refresh = RefreshToken.for_user(user)
+
+        return Response(
+            {
+                "ok": True,
+                "message": "Login successful",
+                "data": {
+                    "refresh": str(refresh),
+                    "access": str(refresh.access_token),
+                },
+            },
+            status=status.HTTP_200_OK,
+        )                                                  #
+                       
+                       
+                       
+APPLE_ISSUER = "https://appleid.apple.com"
+APPLE_JWKS_URL = "https://appleid.apple.com/auth/keys"
+
+
+def _verify_apple_identity_token(raw_token: str) -> dict:
+    """
+    Verify an Apple identity token (JWT) using Apple's JWKS.
+
+    Validates:
+    - signature using Apple's public key set
+    - issuer == https://appleid.apple.com
+    - audience == settings.APPLE_AUDIENCE
+    - expiration
+    """
+    audience = getattr(settings, "APPLE_AUDIENCE", "").strip()
+    if not audience:
+        raise ValueError("APPLE_AUDIENCE is not configured.")
+
+    if not raw_token:
+        raise ValueError("Missing Apple identity token.")
+
+    jwk_client = PyJWKClient(APPLE_JWKS_URL)
+    signing_key = jwk_client.get_signing_key_from_jwt(raw_token)
+
+    payload = jwt.decode(
+        raw_token,
+        signing_key.key,
+        algorithms=["RS256"],
+        audience=audience,
+        issuer=APPLE_ISSUER,
+    )
+
+    email = (payload.get("email") or "").strip().lower()
+    if not email:
+        raise ValueError("Apple token does not include an email address.")
+
+    # Apple may return string values in some environments
+    email_verified = payload.get("email_verified", False)
+    if isinstance(email_verified, str):
+        email_verified = email_verified.lower() == "true"
+
+    if not email_verified:
+        raise ValueError("Apple account email is not verified.")
+
+    return payload                       
+                       
+                       
+                       
+                                                                    
+@method_decorator(csrf_exempt, name="dispatch")
+class AppleRegisterView(APIView):
+    permission_classes = [AllowAny]
+    throttle_classes = [RegisterAnonThrottle]
+    versioning_class = None
+
+    @extend_schema(
+        request=inline_serializer(
+            name="AppleRegisterRequest",
+            fields={
+                "identity_token": serializers.CharField(),
+            },
+        ),
+        responses={
+            200: inline_serializer(
+                name="AppleRegisterResponse",
+                fields={
+                    "ok": serializers.BooleanField(),
+                    "message": serializers.CharField(),
+                    "data": inline_serializer(
+                        name="AppleRegisterData",
+                        fields={
+                            "refresh": serializers.CharField(),
+                            "access": serializers.CharField(),
+                        },
+                    ),
+                },
+            ),
+            400: OpenApiResponse(description="Missing or invalid Apple identity token."),
+        },
+        auth=[],
+        description="Register or log in with an Apple identity token. Returns JWT refresh and access tokens.",
+    )
+    def post(self, request, *args, **kwargs):
+        identity_token = (request.data.get("identity_token") or "").strip()
+
+        if not identity_token:
+            return Response(
+                {"ok": False, "message": "Missing identity_token", "data": None},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            payload = _verify_apple_identity_token(identity_token)
+        except ValueError as exc:
+            return Response(
+                {"ok": False, "message": str(exc), "data": None},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except Exception:
+            return Response(
+                {"ok": False, "message": "Invalid Apple identity token", "data": None},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        email = payload.get("email", "").strip().lower()
 
         User = get_user_model()
         user, created = User.objects.get_or_create(
             email=email,
-            defaults={"username": email.split("@")[0]},
+            defaults={
+                "username": email.split("@")[0],
+            },
         )
 
-        # ensure profile exists and mark email verified (so LoginView rules don’t block)
-        profile, _ = UserProfile.objects.get_or_create(user=user)
-        if not profile.email_verified:
-            profile.email_verified = True
-            profile.save(update_fields=["email_verified"])
-
-        # social users should not have a password by default
-        if created or user.has_usable_password():
-            user.set_unusable_password()
-            user.save(update_fields=["password"])
+        if hasattr(user, "is_email_verified"):
+            user.is_email_verified = True
+            user.save()
 
         refresh = RefreshToken.for_user(user)
-        return Response({"refresh": str(refresh), "access": str(refresh.access_token)}, status=status.HTTP_200_OK)                                                     #
-                                                                
-                                                                
-class AppleRegisterView(GoogleRegisterView):
-    pass
-            
+
+        return Response(
+            {
+                "ok": True,
+                "message": "Login successful",
+                "data": {
+                    "refresh": str(refresh),
+                    "access": str(refresh.access_token),
+                },
+            },
+            status=status.HTTP_200_OK,
+        )   
 
 
 # --------------------
@@ -3163,41 +3341,161 @@ class InboxListView(APIView):
 
 
 
-class FindAddressView(APIView):
-    """
-    GET /api/v1/search/find-address/?postcode=SW1A1AA
 
-    Validates a UK postcode and returns a mock list of addresses.
-    Later this will call a real API like postcodes.io or getAddress.io.
+
+
+
+def _fetch_ideal_postcodes_suggestions(postcode: str):
     """
+    Server-side postcode lookup via Ideal Postcodes API.
+    Returns a simplified list:
+    [
+        {"id": "...", "label": "..."},
+        ...
+    ]
+    """
+    api_key = getattr(settings, "IDEAL_POSTCODES_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError("IDEAL_POSTCODES_API_KEY is not configured.")
+
+    encoded_postcode = quote(postcode)
+    url = f"https://api.ideal-postcodes.co.uk/v1/postcodes/{encoded_postcode}?api_key={quote(api_key)}"
+
+    req = Request(
+        url,
+        headers={
+            "Accept": "application/json",
+            "User-Agent": "RentOut/1.0 address-lookup",
+        },
+        method="GET",
+    )
+
+    with urlopen(req, timeout=10) as resp:
+        body = resp.read().decode("utf-8")
+        payload = json.loads(body)
+
+    results = payload.get("result", [])
+    addresses = []
+
+    for idx, item in enumerate(results):
+        if isinstance(item, str):
+            addresses.append(
+                {
+                    "id": f"{postcode}-{idx}",
+                    "label": item,
+                }
+            )
+        elif isinstance(item, dict):
+            label = item.get("label") or item.get("line_1") or item.get("postcode")
+            if label:
+                addresses.append(
+                    {
+                        "id": str(item.get("id") or item.get("udprn") or f"{postcode}-{idx}"),
+                        "label": label,
+                    }
+                )
+
+    return addresses
+
+
+class FindAddressView(APIView):
     permission_classes = [permissions.AllowAny]
+    versioning_class = None
 
     @extend_schema(
-        request=None,
-        parameters=[FindAddressSerializer],
-        responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT},
+        parameters=[
+            OpenApiParameter(
+                name="postcode",
+                type=str,
+                location=OpenApiParameter.QUERY,
+                required=True,
+                description="UK postcode to look up addresses for.",
+            )
+        ],
+        responses={
+            200: inline_serializer(
+                name="FindAddressResponse",
+                fields={
+                    "addresses": serializers.ListField(
+                        child=inline_serializer(
+                            name="FindAddressItem",
+                            fields={
+                                "id": serializers.CharField(),
+                                "label": serializers.CharField(),
+                            },
+                        )
+                    )
+                },
+            ),
+            400: OpenApiResponse(description="Invalid or missing postcode."),
+            502: OpenApiResponse(description="Address provider error."),
+            503: OpenApiResponse(description="Address lookup not configured."),
+        },
+        auth=[],
+        description="Return real address suggestions for a UK postcode via getAddress.",
     )
-    def get(self, request, *args, **kwargs):
-        serializer = FindAddressSerializer(data=request.query_params)
-        serializer.is_valid(raise_exception=True)
+    def get(self, request):
+        postcode = (request.query_params.get("postcode") or "").strip().upper()
 
-        postcode = serializer.validated_data["postcode"]
+        if not postcode:
+            return Response(
+                {"detail": "Query param 'postcode' is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-        # TODO: integrate real address provider
-        mock_addresses = [
-            f"10 Downing Street, London, {postcode}",
-            f"11 Downing Street, London, {postcode}",
-            f"12 Downing Street, London, {postcode}",
-        ]
+        try:
+            addresses = _fetch_ideal_postcodes_suggestions(postcode)
+        except RuntimeError:
+            return Response(
+                {"detail": "Address lookup is not configured."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        except HTTPError as exc:
+            if exc.code == 400:
+                return Response(
+                    {"detail": "Invalid postcode."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if exc.code == 404:
+                return Response(
+                    {"addresses": []},
+                    status=status.HTTP_200_OK,
+                )
+            if exc.code == 401:
+                return Response(
+                    {"detail": "Address provider authentication failed."},
+                    status=status.HTTP_502_BAD_GATEWAY,
+                )
+            if exc.code == 402:
+                return Response(
+                    {"detail": "Address lookup credits exhausted."},
+                    status=status.HTTP_502_BAD_GATEWAY,
+                )
+            if exc.code == 429:
+                return Response(
+                    {"detail": "Address lookup rate limited."},
+                    status=status.HTTP_429_TOO_MANY_REQUESTS,
+                )
+
+            return Response(
+                {"detail": "Address provider error."},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+        except URLError:
+            return Response(
+                {"detail": "Address provider unavailable."},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+        except Exception:
+            return Response(
+                {"detail": "Address lookup failed."},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
 
         return Response(
-            {
-                "postcode": postcode,
-                "addresses": [{"id": str(i), "label": a} for i, a in enumerate(mock_addresses)],
-            },
+            {"addresses": addresses},
             status=status.HTTP_200_OK,
         )
-
 
 
 class NearbyRoomsView(generics.ListAPIView):
@@ -6489,7 +6787,10 @@ class EmailOTPResendView(APIView):
             recipient_list=[user.email],
             fail_silently=True,
         )
-        return Response(status=status.HTTP_204_NO_CONTENT)
+        return Response(
+            {"detail": "Verification code resent."},
+            status=status.HTTP_200_OK,
+        )
 
 
 class PhoneOTPStartView(APIView):

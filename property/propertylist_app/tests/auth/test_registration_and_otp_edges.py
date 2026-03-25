@@ -178,6 +178,13 @@ def test_verify_otp_no_active_code_400(api):
         "DEFAULT_THROTTLE_RATES": {"otp-resend": "1/minute"},
     }
 )
+@pytest.mark.django_db
+@override_settings(
+    REST_FRAMEWORK={
+        "DEFAULT_THROTTLE_CLASSES": ["rest_framework.throttling.ScopedRateThrottle"],
+        "DEFAULT_THROTTLE_RATES": {"otp-resend": "1/minute"},
+    }
+)
 def test_resend_otp_throttled_second_call_429(api):
     res = api.post(
         register_url(),
@@ -189,16 +196,22 @@ def test_resend_otp_throttled_second_call_429(api):
     u = get_user_model().objects.get(username="edgeuser_throttle")
 
     r1 = api.post(resend_otp_url(), {"user_id": u.id}, format="json")
-    assert r1.status_code == 204, getattr(r1, "data", r1.content)
+    assert r1.status_code == 200, getattr(r1, "data", r1.content)
+    assert r1.data["detail"] == "Verification code resent."
 
     r2 = api.post(resend_otp_url(), {"user_id": u.id}, format="json")
     assert r2.status_code == 429, getattr(r2, "data", r2.content)
+    assert "detail" in r2.data
 
 
 @pytest.mark.django_db
-def test_resend_otp_unknown_user_id_returns_404(api):
+def test_resend_otp_unknown_user_id_returns_400(api):
     r = api.post(resend_otp_url(), {"user_id": 999999}, format="json")
-    assert r.status_code in (400, 404, 204), getattr(r, "data", r.content)
-
+    assert r.status_code == 400, getattr(r, "data", r.content)
+    assert r.data["ok"] is False
+    assert r.data["code"] == "validation_error"
+    assert r.data["status"] == 400
+    assert r.data["detail"] == "User not found."
+    assert "field_errors" in r.data
 
 

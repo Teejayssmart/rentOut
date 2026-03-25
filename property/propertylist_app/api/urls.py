@@ -9,6 +9,7 @@ from drf_spectacular.utils import extend_schema
 from rest_framework.routers import DefaultRouter
 
 from django.views.decorators.cache import cache_page
+from django.views.decorators.csrf import csrf_exempt
 
 from propertylist_app.api import views
 
@@ -51,8 +52,8 @@ from propertylist_app.api.views import (
     RegistrationView, LoginView, LogoutView,
     PasswordResetRequestView, PasswordResetConfirmView,
     MeView, UserProfileView,
-    UserAvatarUploadView, ChangeEmailView, ChangePasswordView, DeactivateAccountView, MyRoomsView,GoogleRegisterView,AppleRegisterView,MyProfilePageView,
-    CreatePasswordView,TokenRefreshView,
+    UserAvatarUploadView, ChangeEmailView, ChangePasswordView, DeactivateAccountView, MyRoomsView,MyProfilePageView,
+    CreatePasswordView,TokenRefreshView,GoogleRegisterView, AppleRegisterView,
     
 
     # Soft delete
@@ -111,7 +112,7 @@ urlpatterns = [
     path("room-categories/",           RoomCategorieAV.as_view(),         name="roomcategory-list"),
     path("room-categories/<int:pk>/",  RoomCategorieDetailAV.as_view(),   name="roomcategory-detail"),
 
-    
+   
    
     #path("user-reviews/",                  UserReview.as_view(),       name="user-reviews"),
     path("users/<int:user_id>/review-summary/", UserReviewSummaryView.as_view(), name="user-review-summary"),
@@ -237,10 +238,9 @@ urlpatterns = [
     path("auth/token/refresh/", TokenRefreshView.as_view(), name="auth-token-refresh"),
 
 
-    # Social sign-up stubs (for Figma buttons)           # NEW
-    path("auth/register/google/",        GoogleRegisterView.as_view(),       name="auth-register-google"),  # NEW
-    path("auth/register/apple/",         AppleRegisterView.as_view(),        name="auth-register-apple"),   # NEW
-
+  
+    path("auth/register/google/",        csrf_exempt(GoogleRegisterView.as_view()),       name="auth-register-google"),
+    path("auth/register/apple/",         csrf_exempt(AppleRegisterView.as_view()),        name="auth-register-apple"),
 
     # --- Payments (Stripe) ---
     path("payments/checkout/rooms/<int:pk>/", CreateListingCheckoutSessionView.as_view(), name="payments-checkout-room"),

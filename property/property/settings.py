@@ -101,7 +101,9 @@ SITE_URL = os.getenv("SITE_URL", "").strip()
 
 # Frontend base URL used for links in emails
 FRONTEND_BASE_URL = os.getenv("FRONTEND_BASE_URL", "https://rentout.co.uk")
-
+IDEAL_POSTCODES_API_KEY = os.getenv("IDEAL_POSTCODES_API_KEY", "").strip()
+GOOGLE_WEB_CLIENT_ID = os.getenv("GOOGLE_WEB_CLIENT_ID", "").strip()
+APPLE_AUDIENCE = os.getenv("APPLE_AUDIENCE", "").strip()
 # -----------------------------
 # Application definition
 # -----------------------------

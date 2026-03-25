@@ -195,47 +195,36 @@ paths:
   /api/v1/auth/register/apple/:
     post:
       operationId: auth_register_apple_create
-      description: Mock Google register/login. Returns refresh and access tokens.
+      description: Register or log in with an Apple identity token. Returns JWT refresh
+        and access tokens.
       tags:
       - auth
       requestBody:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GoogleRegisterRequest'
+              $ref: '#/components/schemas/AppleRegisterRequest'
           application/x-www-form-urlencoded:
             schema:
-              $ref: '#/components/schemas/GoogleRegisterRequest'
+              $ref: '#/components/schemas/AppleRegisterRequest'
           multipart/form-data:
             schema:
-              $ref: '#/components/schemas/GoogleRegisterRequest'
+              $ref: '#/components/schemas/AppleRegisterRequest'
         required: true
       responses:
         '200':
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  ok:
-                    type: boolean
-                  message:
-                    type: string
-                    nullable: true
-                  data:
-                    $ref: '#/components/schemas/GoogleRegisterResponse'
-                required:
-                - ok
-                - data
+                $ref: '#/components/schemas/AppleRegisterResponse'
           description: ''
         '400':
-          description: Missing email.
-        '501':
-          description: Google sign-up not implemented.
+          description: Missing or invalid Apple identity token.
   /api/v1/auth/register/google/:
     post:
       operationId: auth_register_google_create
-      description: Mock Google register/login. Returns refresh and access tokens.
+      description: Register or log in with a Google ID token. Returns JWT refresh
+        and access tokens.
       tags:
       - auth
       requestBody:
@@ -255,23 +244,10 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  ok:
-                    type: boolean
-                  message:
-                    type: string
-                    nullable: true
-                  data:
-                    $ref: '#/components/schemas/GoogleRegisterResponse'
-                required:
-                - ok
-                - data
+                $ref: '#/components/schemas/GoogleRegisterResponse'
           description: ''
         '400':
-          description: Missing email.
-        '501':
-          description: Google sign-up not implemented.
+          description: Missing or invalid Google token.
   /api/v1/auth/resend-otp/:
     post:
       operationId: auth_resend_otp_create
@@ -3495,23 +3471,16 @@ paths:
   /api/v1/search/find-address/:
     get:
       operationId: search_find_address_retrieve
-      description: |-
-        GET /api/v1/search/find-address/?postcode=SW1A1AA
-
-        Validates a UK postcode and returns a mock list of addresses.
-        Later this will call a real API like postcodes.io or getAddress.io.
+      description: Return real address suggestions for a UK postcode via getAddress.
       parameters:
       - in: query
         name: postcode
         schema:
           type: string
-          minLength: 1
+        description: UK postcode to look up addresses for.
         required: true
       tags:
       - search
-      security:
-      - jwtAuth: []
-      - {}
       responses:
         '200':
           content:
@@ -3525,19 +3494,17 @@ paths:
                     type: string
                     nullable: true
                   data:
-                    type: object
-                    additionalProperties: {}
+                    $ref: '#/components/schemas/FindAddressResponse'
                 required:
                 - ok
                 - data
           description: ''
         '400':
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: {}
-          description: ''
+          description: Invalid or missing postcode.
+        '502':
+          description: Address provider error.
+        '503':
+          description: Address lookup not configured.
   /api/v1/search/rooms/:
     get:
       operationId: search_rooms_list
@@ -5000,6 +4967,36 @@ components:
           writeOnly: true
       required:
       - confirm
+    AppleRegisterData:
+      type: object
+      properties:
+        refresh:
+          type: string
+        access:
+          type: string
+      required:
+      - access
+      - refresh
+    AppleRegisterRequest:
+      type: object
+      properties:
+        identity_token:
+          type: string
+      required:
+      - identity_token
+    AppleRegisterResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        message:
+          type: string
+        data:
+          $ref: '#/components/schemas/AppleRegisterData'
+      required:
+      - data
+      - message
+      - ok
     AvailabilitySlot:
       type: object
       properties:
@@ -5389,6 +5386,25 @@ components:
       required:
       - data
       - ok
+    FindAddressItem:
+      type: object
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+      required:
+      - id
+      - label
+    FindAddressResponse:
+      type: object
+      properties:
+        addresses:
+          type: array
+          items:
+            $ref: '#/components/schemas/FindAddressItem'
+      required:
+      - addresses
     GDPRDeleteConfirm:
       type: object
       properties:
@@ -5406,15 +5422,7 @@ components:
           type: boolean
       required:
       - confirm
-    GoogleRegisterRequest:
-      type: object
-      properties:
-        email:
-          type: string
-          format: email
-      required:
-      - email
-    GoogleRegisterResponse:
+    GoogleRegisterData:
       type: object
       properties:
         refresh:
@@ -5424,6 +5432,26 @@ components:
       required:
       - access
       - refresh
+    GoogleRegisterRequest:
+      type: object
+      properties:
+        token:
+          type: string
+      required:
+      - token
+    GoogleRegisterResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        message:
+          type: string
+        data:
+          $ref: '#/components/schemas/GoogleRegisterData'
+      required:
+      - data
+      - message
+      - ok
     HealthCheckData:
       type: object
       properties:
