@@ -7,7 +7,13 @@ from rest_framework import status
 
 from user_app.api.serializers import RegistrationSerializer
 from user_app import models
-
+from drf_spectacular.utils import extend_schema, OpenApiResponse
+from propertylist_app.api.schema_serializers import StandardErrorResponseSerializer
+from propertylist_app.api.schema_helpers import (
+    standard_response_serializer,
+    standard_list_response_serializer,
+    standard_paginated_response_serializer,
+)
 
 from rest_framework import filters  # if not already imported
 from propertylist_app.api.pagination import RoomPagination, RoomCPagination, RoomLOPagination

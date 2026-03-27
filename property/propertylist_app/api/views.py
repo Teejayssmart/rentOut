@@ -11,6 +11,7 @@ from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 from drf_spectacular.utils import extend_schema, extend_schema_view
 from datetime import datetime, timezone as dt_timezone
 
+from rest_framework import serializers
 import jwt
 from jwt import PyJWKClient
 from google.oauth2 import id_token
@@ -22,7 +23,20 @@ from rest_framework.response import Response
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
 
+from drf_spectacular.utils import extend_schema, OpenApiResponse
 
+from drf_spectacular.utils import extend_schema, OpenApiResponse
+
+from propertylist_app.api.schema_serializers import (
+    StandardErrorResponseSerializer,
+    EmptyDataSerializer,
+)
+from propertylist_app.api.schema_serializers import StandardErrorResponseSerializer
+from propertylist_app.api.schema_helpers import (
+    standard_response_serializer,
+    standard_list_response_serializer,
+    standard_paginated_response_serializer,
+)
 
 from urllib.parse import quote
 from urllib.request import Request, urlopen
@@ -214,6 +228,7 @@ from propertylist_app.api.serializers import (
     ThreadRestoreResponseSerializer,
     ThreadStateResponseSerializer,
     OpsStatsResponseSerializer,
+    MessageCreateSerializer,
     
        
     )
@@ -472,8 +487,10 @@ class UserReviewSummaryView(APIView):
     permission_classes = [permissions.AllowAny]
 
     @extend_schema(
-        request=None,
-        responses={200: UserReviewSummarySerializer},
+    responses={
+        200: standard_response_serializer("ExactResponseNameHere", ExactOutputSerializerHere),
+        404: OpenApiResponse(response=StandardErrorResponseSerializer),
+        }
     )
     def get(self, request, user_id):
         revealed = Review.objects.filter(
@@ -605,20 +622,38 @@ class ReviewListView(generics.ListAPIView):
                     "meta": inline_serializer(
                         name="ReviewListMeta",
                         fields={
-                            "count": serializers.IntegerField(required=False, allow_null=True),
-                            "next": serializers.CharField(required=False, allow_null=True),
-                            "previous": serializers.CharField(required=False, allow_null=True),
+                            "count": serializers.IntegerField(),
+                            "next": serializers.CharField(allow_null=True),
+                            "previous": serializers.CharField(allow_null=True),
                         },
                     ),
                 },
             )
         },
         parameters=[
-            OpenApiParameter(name="limit", type=int, location=OpenApiParameter.QUERY, required=False),
-            OpenApiParameter(name="offset", type=int, location=OpenApiParameter.QUERY, required=False),
-            OpenApiParameter(name="ordering", type=str, location=OpenApiParameter.QUERY, required=False),
+            OpenApiParameter(
+                name="limit",
+                type=int,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Maximum number of reviews to return.",
+            ),
+            OpenApiParameter(
+                name="offset",
+                type=int,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Number of reviews to skip before starting the result set.",
+            ),
+            OpenApiParameter(
+                name="ordering",
+                type=str,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Ordering field.",
+            ),
         ],
-        description="List reviews (wrapped in ok_response). Supports limit/offset pagination.",
+        description="List reviews for the authenticated user. Returns an ok_response envelope with pagination metadata.",
     )
     def list(self, request, *args, **kwargs):
         resp = super().list(request, *args, **kwargs)
@@ -962,15 +997,28 @@ class BookingReviewListView(APIView):
     @extend_schema(
         responses={
             200: inline_serializer(
-                name="BookingReviewListOkResponse",
+                name="BookingReviewListResponse",
                 fields={
-                    "ok": serializers.BooleanField(),
-                    "data": BookingReviewCreateSerializer(many=True),  # or BookingReview serializer you actually return
+                    "my_review": UserReviewListSerializer(allow_null=True),
+                    "other_review": UserReviewListSerializer(allow_null=True),
+                    "other_review_reveal_at": serializers.DateTimeField(allow_null=True),
+                },
+            ),
+            403: inline_serializer(
+                name="BookingReviewListForbiddenResponse",
+                fields={
+                    "detail": serializers.CharField(),
+                },
+            ),
+            404: inline_serializer(
+                name="BookingReviewListNotFoundResponse",
+                fields={
+                    "detail": serializers.CharField(),
                 },
             ),
         },
-        description="List booking reviews. Returns ok_response envelope.",
-    )
+        description="Return the authenticated user's review and the counterparty review for a booking, if visible.",
+        )
     def get(self, request, *args, **kwargs):
         user = request.user
         booking_id = kwargs.get("booking_id")
@@ -1101,8 +1149,10 @@ class RoomCategorieDetailAV(APIView):
     throttle_classes = [AnonRateThrottle]
 
     @extend_schema(
-        request=None,
-        responses={200: RoomCategorieSerializer, 404: OpenApiTypes.OBJECT},
+    responses={
+        200: standard_response_serializer("ExactResponseNameHere", ExactOutputSerializerHere),
+        404: OpenApiResponse(response=StandardErrorResponseSerializer),
+        }
     )
     def get(self, request, pk):
         category = get_object_or_404(RoomCategorie, pk=pk)
@@ -1134,7 +1184,44 @@ class RoomCategorieDetailAV(APIView):
 
 
 @extend_schema_view(
-    get=extend_schema(operation_id="api_v1_rooms_alt_list")
+    get=extend_schema(
+        operation_id="api_v1_rooms_alt_list",
+        responses={
+            200: inline_serializer(
+                name="RoomListGVResponse",
+                fields={
+                    "count": serializers.IntegerField(),
+                    "next": serializers.CharField(allow_null=True),
+                    "previous": serializers.CharField(allow_null=True),
+                    "results": RoomSerializer(many=True),
+                },
+            ),
+        },
+        parameters=[
+            OpenApiParameter(
+                name="limit",
+                type=int,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Maximum number of rooms to return.",
+            ),
+            OpenApiParameter(
+                name="offset",
+                type=int,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Number of rooms to skip before starting the result set.",
+            ),
+            OpenApiParameter(
+                name="ordering",
+                type=str,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Ordering field. Supported values include avg_rating and category__name.",
+            ),
+        ],
+        description="List rooms with limit/offset pagination.",
+    )
 )
 class RoomListGV(CachedAnonymousGETMixin, generics.ListAPIView):
     queryset = Room.objects.alive()
@@ -1283,7 +1370,10 @@ class RoomDetailAV(APIView):
                     "data": RoomSerializer(),
                 },
             ),
-            404: OpenApiResponse(description="Not found."),
+            404: OpenApiResponse(
+                response=StandardErrorResponseSerializer,
+                description="Not found.",
+            ),
         },
         description="Retrieve a room by id. Returns ok_response envelope.",
     )
@@ -1423,8 +1513,10 @@ class RoomPreviewView(APIView):
     permission_classes = [IsAuthenticated]
 
     @extend_schema(
-        request=None,
-        responses={200: RoomPreviewSerializer, 403: OpenApiTypes.OBJECT, 404: OpenApiTypes.OBJECT},
+    responses={
+        200: standard_response_serializer("ExactResponseNameHere", ExactOutputSerializerHere),
+        404: OpenApiResponse(response=StandardErrorResponseSerializer),
+        }
     )
     def get(self, request, pk):
         room = get_object_or_404(Room.objects.filter(is_deleted=False), pk=pk)
@@ -2596,17 +2688,17 @@ class HomePageView(APIView):
     permission_classes = [AllowAny]
 
     @extend_schema(
-    request=None,
-    responses={
-        200: inline_serializer(
-            name="HomePageOkResponse",
-            fields={
-                "ok": serializers.BooleanField(),
-                "data": HomeSummarySerializer(),
-            },
-        )
-    },
-    description="Homepage summary. Returns ok_response envelope.",
+        request=None,
+        responses={
+            200: inline_serializer(
+                name="HomePageOkResponse",
+                fields={
+                    "ok": serializers.BooleanField(),
+                    "data": HomeSummarySerializer(),
+                },
+            )
+        },
+        description="Return homepage summary data including featured rooms, latest rooms, popular cities, stats, and app links.",
     )
     def get(self, request):
         today = timezone.now().date()
@@ -2681,17 +2773,26 @@ class CityListView(APIView):
     permission_classes = [AllowAny]
 
     @extend_schema(
-    request=None,
-    responses={
-        200: inline_serializer(
-            name="CityListOkResponse",
-            fields={
-                "ok": serializers.BooleanField(),
-                "data": CitySummarySerializer(many=True),
-            },
-        )
-    },
-    description="List cities. Returns ok_response envelope.",
+        request=None,
+        parameters=[
+            OpenApiParameter(
+                name="q",
+                type=str,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Filter cities by case-insensitive substring.",
+            ),
+        ],
+        responses={
+            200: inline_serializer(
+                name="CityListOkResponse",
+                fields={
+                    "ok": serializers.BooleanField(),
+                    "data": CitySummarySerializer(many=True),
+                },
+            )
+        },
+        description="List cities. Returns ok_response envelope. Supports optional filtering with the 'q' query parameter.",
     )
     def get(self, request):
         q = (request.query_params.get("q") or "").strip()
@@ -2828,6 +2929,38 @@ class SearchRoomsView(generics.ListAPIView):
             except Exception:
                 raise ValidationError({"max_price": "Must be an integer."})
 
+
+
+                # ----- bedroom count filters -----
+        rooms_min_raw = params.get("rooms_min")
+        rooms_max_raw = params.get("rooms_max")
+
+        rooms_min_val = None
+        rooms_max_val = None
+
+        if rooms_min_raw is not None and str(rooms_min_raw).strip() != "":
+            try:
+                rooms_min_val = int(rooms_min_raw)
+            except ValueError:
+                raise ValidationError({"rooms_min": "Must be an integer."})
+
+        if rooms_max_raw is not None and str(rooms_max_raw).strip() != "":
+            try:
+                rooms_max_val = int(rooms_max_raw)
+            except ValueError:
+                raise ValidationError({"rooms_max": "Must be an integer."})
+
+        if rooms_min_val is not None and rooms_max_val is not None and rooms_min_val > rooms_max_val:
+            raise ValidationError({"rooms_min": "rooms_min cannot be greater than rooms_max."})
+
+        if rooms_min_val is not None:
+            qs = qs.filter(number_of_bedrooms__gte=rooms_min_val)
+
+        if rooms_max_val is not None:
+            qs = qs.filter(number_of_bedrooms__lte=rooms_max_val)
+        
+        
+        
 
         # ----- rating filters -----
         min_rating = params.get("min_rating")
@@ -3131,7 +3264,352 @@ class SearchRoomsView(generics.ListAPIView):
 
         return qs
     
-    
+    @extend_schema(
+        parameters=[
+                OpenApiParameter(
+                    name="q",
+                    type=str,
+                    location=OpenApiParameter.QUERY,
+                    required=False,
+                    description="Free-text search across title, description, and location.",
+                ),
+                OpenApiParameter(
+                    name="min_price",
+                    type=int,
+                    location=OpenApiParameter.QUERY,
+                    required=False,
+                    description="Minimum monthly price.",
+                ),
+                OpenApiParameter(
+                    name="max_price",
+                    type=int,
+                    location=OpenApiParameter.QUERY,
+                    required=False,
+                    description="Maximum monthly price.",
+                ),
+                OpenApiParameter(
+                    name="postcode",
+                    type=str,
+                    location=OpenApiParameter.QUERY,
+                    required=False,
+                    description="UK postcode centre for radius search.",
+                ),
+                OpenApiParameter(
+                    name="radius_miles",
+                    type=int,
+                    location=OpenApiParameter.QUERY,
+                    required=False,
+                    description="Search radius in miles around postcode.",
+                ),
+                OpenApiParameter(
+                    name="ordering",
+                    type=str,
+                    location=OpenApiParameter.QUERY,
+                    required=False,
+                    description="Sort order. Supported values include default, newest, last_updated, price_asc, price_desc, distance.",
+                ),
+                OpenApiParameter(
+                    name="property_types",
+                    type=str,
+                    location=OpenApiParameter.QUERY,
+                    required=False,
+                    many=True,
+                    description="Property types filter.",
+                ),
+                OpenApiParameter(
+                    name="rooms_min",
+                    type=int,
+                    location=OpenApiParameter.QUERY,
+                    required=False,
+                    description="Minimum number of bedrooms.",
+                ),
+                OpenApiParameter(
+                    name="rooms_max",
+                    type=int,
+                    location=OpenApiParameter.QUERY,
+                    required=False,
+                    description="Maximum number of bedrooms.",
+                ),
+                OpenApiParameter(
+                    name="move_in_date",
+                    type=OpenApiTypes.DATE,
+                    location=OpenApiParameter.QUERY,
+                    required=False,
+                    description="Earliest acceptable move-in date in YYYY-MM-DD format.",
+                ),
+                OpenApiParameter(
+                    name="min_rating",
+                    type=float,
+                    location=OpenApiParameter.QUERY,
+                    required=False,
+                    description="Minimum average rating from 1 to 5.",
+                ),
+                OpenApiParameter(
+                    name="max_rating",
+                    type=float,
+                    location=OpenApiParameter.QUERY,
+                    required=False,
+                    description="Maximum average rating from 1 to 5.",
+                ),
+                OpenApiParameter(
+                    name="street",
+                    type=str,
+                    location=OpenApiParameter.QUERY,
+                    required=False,
+                    description="Street filter.",
+                ),
+                OpenApiParameter(
+                    name="city",
+                    type=str,
+                    location=OpenApiParameter.QUERY,
+                    required=False,
+                    description="City filter.",
+                ),
+                OpenApiParameter(
+                    name="furnished",
+                    type=bool,
+                    location=OpenApiParameter.QUERY,
+                    required=False,
+                    description="Filter by furnished true/false.",
+                ),
+                OpenApiParameter(
+                    name="bills_included",
+                    type=bool,
+                    location=OpenApiParameter.QUERY,
+                    required=False,
+                    description="Filter by bills included true/false.",
+                ),
+                OpenApiParameter(
+                    name="parking_available",
+                    type=bool,
+                    location=OpenApiParameter.QUERY,
+                    required=False,
+                    description="Filter by parking available true/false.",
+                ),
+                OpenApiParameter(
+                    name="bathroom_type",
+                    type=str,
+                    location=OpenApiParameter.QUERY,
+                    required=False,
+                    description="Bathroom type filter.",
+                ),
+                OpenApiParameter(
+                    name="shared_living_space",
+                    type=str,
+                    location=OpenApiParameter.QUERY,
+                    required=False,
+                    description="Shared living space filter.",
+                ),
+                OpenApiParameter(
+                    name="smoking_allowed_in_property",
+                    type=str,
+                    location=OpenApiParameter.QUERY,
+                    required=False,
+                    description="Smoking allowed filter.",
+                ),
+                OpenApiParameter(
+                    name="suitable_for",
+                    type=str,
+                    location=OpenApiParameter.QUERY,
+                    required=False,
+                    description="Suitable for filter.",
+                ),
+                OpenApiParameter(
+                    name="max_occupants",
+                    type=int,
+                    location=OpenApiParameter.QUERY,
+                    required=False,
+                    description="Maximum occupants filter.",
+                ),
+                OpenApiParameter(
+                    name="household_bedrooms_min",
+                    type=int,
+                    location=OpenApiParameter.QUERY,
+                    required=False,
+                    description="Minimum household bedrooms filter.",
+                ),
+                OpenApiParameter(
+                    name="household_bedrooms_max",
+                    type=int,
+                    location=OpenApiParameter.QUERY,
+                    required=False,
+                    description="Maximum household bedrooms filter.",
+                ),
+                OpenApiParameter(
+                    name="household_type",
+                    type=str,
+                    location=OpenApiParameter.QUERY,
+                    required=False,
+                    description="Household type filter.",
+                ),
+                OpenApiParameter(
+                    name="household_environment",
+                    type=str,
+                    location=OpenApiParameter.QUERY,
+                    required=False,
+                    description="Household environment filter.",
+                ),
+                OpenApiParameter(
+                    name="pets_allowed",
+                    type=str,
+                    location=OpenApiParameter.QUERY,
+                    required=False,
+                    description="Pets allowed filter.",
+                ),
+                OpenApiParameter(
+                    name="inclusive_household",
+                    type=str,
+                    location=OpenApiParameter.QUERY,
+                    required=False,
+                    description="Inclusive household filter.",
+                ),
+                OpenApiParameter(
+                    name="accessible_entry",
+                    type=str,
+                    location=OpenApiParameter.QUERY,
+                    required=False,
+                    description="Accessible entry filter.",
+                ),
+                OpenApiParameter(
+                    name="free_to_contact",
+                    type=bool,
+                    location=OpenApiParameter.QUERY,
+                    required=False,
+                    description="Filter by free to contact true/false.",
+                ),
+                OpenApiParameter(
+                    name="photos_only",
+                    type=bool,
+                    location=OpenApiParameter.QUERY,
+                    required=False,
+                    description="Only return rooms with photos.",
+                ),
+                OpenApiParameter(
+                    name="verified_advertisers_only",
+                    type=bool,
+                    location=OpenApiParameter.QUERY,
+                    required=False,
+                    description="Only return verified advertisers.",
+                ),
+                OpenApiParameter(
+                    name="advert_by_household",
+                    type=str,
+                    location=OpenApiParameter.QUERY,
+                    required=False,
+                    description="Advert by household filter.",
+                ),
+                OpenApiParameter(
+                    name="posted_within_days",
+                    type=int,
+                    location=OpenApiParameter.QUERY,
+                    required=False,
+                    description="Only return rooms posted within the given number of days.",
+                ),
+                OpenApiParameter(
+                    name="include_shared",
+                    type=bool,
+                    location=OpenApiParameter.QUERY,
+                    required=False,
+                    description="Only include shared rooms.",
+                ),
+                OpenApiParameter(
+                    name="min_age",
+                    type=int,
+                    location=OpenApiParameter.QUERY,
+                    required=False,
+                    description="Minimum suitable age.",
+                ),
+                OpenApiParameter(
+                    name="max_age",
+                    type=int,
+                    location=OpenApiParameter.QUERY,
+                    required=False,
+                    description="Maximum suitable age.",
+                ),
+                OpenApiParameter(
+                    name="min_stay_months",
+                    type=int,
+                    location=OpenApiParameter.QUERY,
+                    required=False,
+                    description="Minimum stay in months.",
+                ),
+                OpenApiParameter(
+                    name="max_stay_months",
+                    type=int,
+                    location=OpenApiParameter.QUERY,
+                    required=False,
+                    description="Maximum stay in months.",
+                ),
+                OpenApiParameter(
+                    name="room_for",
+                    type=str,
+                    location=OpenApiParameter.QUERY,
+                    required=False,
+                    description="Room for filter.",
+                ),
+                OpenApiParameter(
+                    name="room_size",
+                    type=str,
+                    location=OpenApiParameter.QUERY,
+                    required=False,
+                    description="Room size filter.",
+                ),
+                OpenApiParameter(
+                    name="limit",
+                    type=int,
+                    location=OpenApiParameter.QUERY,
+                    required=False,
+                    description="Maximum number of rooms to return.",
+                ),
+                OpenApiParameter(
+                    name="offset",
+                    type=int,
+                    location=OpenApiParameter.QUERY,
+                    required=False,
+                    description="Number of rooms to skip before starting the result set.",
+                ),
+            ],
+            responses={
+                200: inline_serializer(
+                    name="SearchRoomsResponse",
+                    fields={
+                        "ok": serializers.BooleanField(),
+                        "data": inline_serializer(
+                            name="SearchRoomsPaginatedData",
+                            fields={
+                                "count": serializers.IntegerField(),
+                                "next": serializers.CharField(allow_null=True),
+                                "previous": serializers.CharField(allow_null=True),
+                                "results": RoomSerializer(many=True),
+                            },
+                        ),
+                    },
+                ),
+                400: inline_serializer(
+                name="SearchRoomsBadRequestResponse",
+                fields={
+                    "detail": serializers.CharField(required=False),
+                    "postcode": serializers.CharField(required=False),
+                    "min_price": serializers.CharField(required=False),
+                    "max_price": serializers.CharField(required=False),
+                    "rooms_min": serializers.CharField(required=False),
+                    "rooms_max": serializers.CharField(required=False),
+                    "move_in_date": serializers.CharField(required=False),
+                    "min_rating": serializers.CharField(required=False),
+                    "max_rating": serializers.CharField(required=False),
+                    "max_occupants": serializers.CharField(required=False),
+                    "household_bedrooms_min": serializers.CharField(required=False),
+                    "household_bedrooms_max": serializers.CharField(required=False),
+                    "posted_within_days": serializers.CharField(required=False),
+                    "min_age": serializers.CharField(required=False),
+                    "max_age": serializers.CharField(required=False),
+                    "min_stay_months": serializers.CharField(required=False),
+                    "max_stay_months": serializers.CharField(required=False),
+                },
+            ),
+            },
+            description="Search rooms with filters, sorting, postcode radius search, and limit/offset pagination.",
+            ) 
     def list(self, request, *args, **kwargs):
         """
         Preserve distance ordering (when postcode/radius search is used)
@@ -3250,16 +3728,17 @@ class InboxListView(APIView):
 
 
     @extend_schema(
-    responses={
-        200: inline_serializer(
-            name="InboxListOkResponse",
-            fields={
-                "ok": serializers.BooleanField(),
-                "data": InboxItemSerializer(many=True),
-            },
-        )
-    },
-    description="List inbox items (merged notifications + message threads) wrapped in ok_response. Not paginated.",
+        responses={
+            200: inline_serializer(
+                name="InboxListOkResponse",
+                fields={
+                    "ok": serializers.BooleanField(),
+                    "message": serializers.CharField(allow_null=True, required=False),
+                    "data": InboxItemSerializer(many=True),
+                },
+            )
+        },
+        description="List inbox items (merged notifications and message threads) wrapped in ok_response. Not paginated.",
     )
     def get(self, request):
         user = request.user
@@ -3337,7 +3816,11 @@ class InboxListView(APIView):
         merged.sort(key=lambda x: (x["created_at"] is None, x["created_at"]), reverse=True)
 
         ser = InboxItemSerializer(merged[:250], many=True)
-        return ok_response(ser.data, status_code=status.HTTP_200_OK)
+        return ok_response(
+            ser.data,
+            message="Inbox retrieved successfully",
+            status_code=status.HTTP_200_OK
+        )
 
 
 
@@ -3534,7 +4017,69 @@ class NearbyRoomsView(generics.ListAPIView):
         self._distance_by_id = {rid: d for rid, d in distances}
 
         return Room.objects.alive().filter(id__in=self._ordered_ids or [])
-
+    
+    
+    
+    
+    @extend_schema(
+            parameters=[
+                OpenApiParameter(
+                    name="postcode",
+                    type=str,
+                    location=OpenApiParameter.QUERY,
+                    required=True,
+                    description="UK postcode used as the search centre.",
+                ),
+                OpenApiParameter(
+                    name="radius_miles",
+                    type=int,
+                    location=OpenApiParameter.QUERY,
+                    required=False,
+                    description="Search radius in miles. Defaults to 10.",
+                ),
+                OpenApiParameter(
+                    name="limit",
+                    type=int,
+                    location=OpenApiParameter.QUERY,
+                    required=False,
+                    description="Maximum number of rooms to return.",
+                ),
+                OpenApiParameter(
+                    name="offset",
+                    type=int,
+                    location=OpenApiParameter.QUERY,
+                    required=False,
+                    description="Number of rooms to skip before starting the result set.",
+                ),
+            ],
+            responses={
+                200: inline_serializer(
+                    name="NearbyRoomsResponse",
+                    fields={
+                        "ok": serializers.BooleanField(),
+                        "message": serializers.CharField(required=False, allow_null=True),
+                        "data": inline_serializer(
+                            name="NearbyRoomsPaginatedData",
+                            fields={
+                                "count": serializers.IntegerField(),
+                                "next": serializers.CharField(allow_null=True),
+                                "previous": serializers.CharField(allow_null=True),
+                                "results": RoomSerializer(many=True),
+                            },
+                        ),
+                    },
+                ),
+                400: inline_serializer(
+                    name="NearbyRoomsBadRequestResponse",
+                    fields={
+                        "postcode": serializers.CharField(required=False),
+                        "radius_miles": serializers.CharField(required=False),
+                        "detail": serializers.CharField(required=False),
+                    },
+                ),
+            },
+            description="List nearby rooms for a UK postcode using mile-based radius search, with limit/offset pagination.",
+        )
     def list(self, request, *args, **kwargs):
         queryset = self.get_queryset()
         room_by_id = {obj.id: obj for obj in queryset}
@@ -3826,32 +4371,73 @@ class MessageThreadListCreateView(generics.ListCreateAPIView):
     
     
     @extend_schema(
-    responses={
-        200: inline_serializer(
-            name="PaginatedMessageThreadListOkResponse",
-            fields={
-                "ok": serializers.BooleanField(),
-                "data": MessageThreadSerializer(many=True),
-                "meta": inline_serializer(
-                    name="MessageThreadListMeta",
-                    fields={
-                        "count": serializers.IntegerField(required=False, allow_null=True),
-                        "next": serializers.CharField(required=False, allow_null=True),
-                        "previous": serializers.CharField(required=False, allow_null=True),
-                    },
-                ),
-            },
-        )
-    },
-    parameters=[
-        OpenApiParameter(name="limit", type=int, location=OpenApiParameter.QUERY, required=False),
-        OpenApiParameter(name="offset", type=int, location=OpenApiParameter.QUERY, required=False),
-        OpenApiParameter(name="folder", type=str, location=OpenApiParameter.QUERY, required=False),
-        OpenApiParameter(name="label", type=str, location=OpenApiParameter.QUERY, required=False),
-        OpenApiParameter(name="q", type=str, location=OpenApiParameter.QUERY, required=False),
-        OpenApiParameter(name="sort_by", type=str, location=OpenApiParameter.QUERY, required=False),
-    ],
-    description="List message threads (wrapped in ok_response). Supports folder/label/search/sort and pagination.",
+        responses={
+            200: inline_serializer(
+                name="PaginatedMessageThreadListOkResponse",
+                fields={
+                    "ok": serializers.BooleanField(),
+                    "message": serializers.CharField(required=False, allow_null=True),
+                    "data": MessageThreadSerializer(many=True),
+                    "meta": inline_serializer(
+                        name="MessageThreadListMeta",
+                        fields={
+                            "count": serializers.IntegerField(),
+                            "next": serializers.CharField(required=False, allow_null=True),
+                            "previous": serializers.CharField(required=False, allow_null=True),
+                        },
+                    ),
+                    "count": serializers.IntegerField(required=False, allow_null=True),
+                    "next": serializers.CharField(required=False, allow_null=True),
+                    "previous": serializers.CharField(required=False, allow_null=True),
+                    "results": MessageThreadSerializer(many=True, required=False),
+                },
+            )
+        },
+        parameters=[
+            OpenApiParameter(
+                name="limit",
+                type=int,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Maximum number of threads to return.",
+            ),
+            OpenApiParameter(
+                name="offset",
+                type=int,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Number of threads to skip before starting the result set.",
+            ),
+            OpenApiParameter(
+                name="folder",
+                type=str,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Folder filter: inbox, sent, bin, new, or waiting_reply.",
+            ),
+            OpenApiParameter(
+                name="label",
+                type=str,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Per-user label filter.",
+            ),
+            OpenApiParameter(
+                name="q",
+                type=str,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Search in message body or participant username.",
+            ),
+            OpenApiParameter(
+                name="sort_by",
+                type=str,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Sort threads by latest, oldest, name, or alphabetical.",
+            ),
+        ],
+        description="List message threads wrapped in ok_response. Supports folder, label, search, sort, and limit/offset pagination.",
     )
     def list(self, request, *args, **kwargs):
         """
@@ -3880,13 +4466,20 @@ class MessageThreadListCreateView(generics.ListCreateAPIView):
                 name="MessageThreadCreateOkResponse",
                 fields={
                     "ok": serializers.BooleanField(),
+                    "message": serializers.CharField(required=False, allow_null=True),
                     "data": MessageThreadSerializer(),
                 },
             ),
-            400: OpenApiResponse(description="Validation error."),
+            400: inline_serializer(
+                name="MessageThreadCreateBadRequestResponse",
+                fields={
+                    "detail": serializers.CharField(required=False),
+                    "participants": serializers.CharField(required=False),
+                },
+            ),
             401: OpenApiResponse(description="Authentication required."),
         },
-        description="Create a new message thread between exactly two participants (you and one other user).",
+        description="Create a new message thread between exactly two participants: you and one other user.",
     )
     def create(self, request, *args, **kwargs):
         resp = super().create(request, *args, **kwargs)
@@ -3916,7 +4509,6 @@ class MessageThreadListCreateView(generics.ListCreateAPIView):
 
 # INSERT in propertylist_app/api/serializers.py
 
-from rest_framework import serializers
 
 class ThreadMoveToBinRequestSerializer(serializers.Serializer):
     # Body is optional for this endpoint, but spectacular needs a serializer
@@ -4036,24 +4628,24 @@ class MessageStatsView(APIView):
     permission_classes = [IsAuthenticated]
 
     @extend_schema(
-    request=None,
-    responses={
-        200: inline_serializer(
-            name="MessageStatsOkResponse",
-            fields={
-                "ok": serializers.BooleanField(),
-                "data": inline_serializer(
-                    name="MessageStatsData",
-                    fields={
-                        # keep these generic to avoid guessing your exact keys
-                        "unread_threads": serializers.IntegerField(required=False),
-                        "unread_messages": serializers.IntegerField(required=False),
-                    },
-                ),
-            },
-        )
-    },
-    description="Message stats (e.g. unread counts). Returns ok_response envelope.",
+        request=None,
+        responses={
+            200: inline_serializer(
+                name="MessageStatsResponse",
+                fields={
+                    "total_threads": serializers.IntegerField(),
+                    "total_unread": serializers.IntegerField(),
+                    "good_fit": inline_serializer(
+                        name="MessageStatsGoodFit",
+                        fields={
+                            "threads": serializers.IntegerField(),
+                            "unread": serializers.IntegerField(),
+                        },
+                    ),
+                },
+            )
+        },
+        description="Return message statistics for the authenticated user, including total threads, total unread messages, and good-fit thread counts.",
     )
     def get(self, request):
         user = request.user
@@ -4167,30 +4759,59 @@ class MessageListCreateView(generics.ListCreateAPIView):
      
      
     @extend_schema(
-    responses={
-        200: inline_serializer(
-            name="PaginatedThreadMessageListOkResponse",
-            fields={
-                "ok": serializers.BooleanField(),
-                "data": MessageSerializer(many=True),
-                "meta": inline_serializer(
-                    name="ThreadMessageListMeta",
-                    fields={
-                        "count": serializers.IntegerField(required=False, allow_null=True),
-                        "next": serializers.CharField(required=False, allow_null=True),
-                        "previous": serializers.CharField(required=False, allow_null=True),
-                    },
-                ),
-            },
-        )
-    },
-    parameters=[
-        OpenApiParameter(name="limit", type=int, location=OpenApiParameter.QUERY, required=False),
-        OpenApiParameter(name="offset", type=int, location=OpenApiParameter.QUERY, required=False),
-        OpenApiParameter(name="ordering", type=str, location=OpenApiParameter.QUERY, required=False),
-        OpenApiParameter(name="q", type=str, location=OpenApiParameter.QUERY, required=False),
-    ],
-    description="List messages in a thread (wrapped in ok_response). Supports pagination and search.",
+        responses={
+            200: inline_serializer(
+                name="PaginatedThreadMessageListOkResponse",
+                fields={
+                    "ok": serializers.BooleanField(),
+                    "message": serializers.CharField(required=False, allow_null=True),
+                    "data": MessageSerializer(many=True),
+                    "meta": inline_serializer(
+                        name="ThreadMessageListMeta",
+                        fields={
+                            "count": serializers.IntegerField(),
+                            "next": serializers.CharField(required=False, allow_null=True),
+                            "previous": serializers.CharField(required=False, allow_null=True),
+                        },
+                    ),
+                    "count": serializers.IntegerField(required=False, allow_null=True),
+                    "next": serializers.CharField(required=False, allow_null=True),
+                    "previous": serializers.CharField(required=False, allow_null=True),
+                    "results": MessageSerializer(many=True, required=False),
+                },
+            )
+        },
+        parameters=[
+            OpenApiParameter(
+                name="limit",
+                type=int,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Maximum number of messages to return.",
+            ),
+            OpenApiParameter(
+                name="offset",
+                type=int,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Number of messages to skip before starting the result set.",
+            ),
+            OpenApiParameter(
+                name="ordering",
+                type=str,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Sort messages by created, -created, updated, -updated, id, or -id.",
+            ),
+            OpenApiParameter(
+                name="q",
+                type=str,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Search in message body.",
+            ),
+        ],
+        description="List messages in a thread wrapped in ok_response. Supports pagination, ordering, and search.",
     )
     def list(self, request, *args, **kwargs):
         resp = super().list(request, *args, **kwargs)
@@ -4206,7 +4827,24 @@ class MessageListCreateView(generics.ListCreateAPIView):
         return ok_response(resp.data, status_code=resp.status_code)
     
        
-
+    @extend_schema(
+        request=MessageCreateSerializer,
+        responses={
+            201: inline_serializer(
+                name="ThreadMessageCreateOkResponse",
+                fields={
+                    "ok": serializers.BooleanField(),
+                    "message": serializers.CharField(required=False, allow_null=True),
+                    "data": MessageSerializer(),
+                },
+            ),
+            400: OpenApiResponse(description="Validation error."),
+            401: OpenApiResponse(description="Authentication required."),
+            404: OpenApiResponse(description="Thread not found or not accessible."),
+            429: OpenApiResponse(description="Rate limit exceeded."),
+        },
+        description="Create a new message in a thread the authenticated user participates in.",
+    )
     def create(self, request, *args, **kwargs):
         resp = super().create(request, *args, **kwargs)
         return ok_response(resp.data, status_code=resp.status_code)
@@ -4490,29 +5128,6 @@ class BookingListCreateView(generics.ListCreateAPIView):
     def create(self, request, *args, **kwargs):
         return super().create(request, *args, **kwargs)
     
-  
-    @extend_schema(
-        responses={
-            200: inline_serializer(
-                name="BookingListResponse",
-                fields={
-                    "ok": serializers.BooleanField(),
-                    "data": inline_serializer(
-                        name="BookingListData",
-                        fields={
-                            "count": serializers.IntegerField(),
-                            "next": serializers.CharField(allow_null=True),
-                            "previous": serializers.CharField(allow_null=True),
-                            "results": BookingSerializer(many=True),
-                        },
-                    ),
-                },
-            )
-        },
-        description="List bookings for the authenticated user.",
-    )
-    def get(self, request, *args, **kwargs):
-        return super().get(request, *args, **kwargs)
 
      
     def get_queryset(self): 
@@ -4625,26 +5240,61 @@ class BookingListCreateView(generics.ListCreateAPIView):
                 name="PaginatedBookingListResponse",
                 fields={
                     "ok": serializers.BooleanField(),
+                    "message": serializers.CharField(required=False, allow_null=True),
                     "data": BookingSerializer(many=True),
                     "meta": inline_serializer(
                         name="BookingListMeta",
                         fields={
-                            "count": serializers.IntegerField(required=False, allow_null=True),
+                            "count": serializers.IntegerField(),
                             "next": serializers.CharField(required=False, allow_null=True),
                             "previous": serializers.CharField(required=False, allow_null=True),
                         },
                     ),
+                    "count": serializers.IntegerField(required=False, allow_null=True),
+                    "next": serializers.CharField(required=False, allow_null=True),
+                    "previous": serializers.CharField(required=False, allow_null=True),
+                    "results": BookingSerializer(many=True, required=False),
                 },
             )
         },
         parameters=[
-            OpenApiParameter(name="limit", type=int, location=OpenApiParameter.QUERY, required=False),
-            OpenApiParameter(name="offset", type=int, location=OpenApiParameter.QUERY, required=False),
-            OpenApiParameter(name="room", type=int, location=OpenApiParameter.QUERY, required=False),
-            OpenApiParameter(name="scope", type=str, location=OpenApiParameter.QUERY, required=False),
-            OpenApiParameter(name="ordering", type=str, location=OpenApiParameter.QUERY, required=False),
+            OpenApiParameter(
+                name="limit",
+                type=int,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Maximum number of bookings to return.",
+            ),
+            OpenApiParameter(
+                name="offset",
+                type=int,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Number of bookings to skip before starting the result set.",
+            ),
+            OpenApiParameter(
+                name="room",
+                type=int,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Filter bookings by room id.",
+            ),
+            OpenApiParameter(
+                name="scope",
+                type=str,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Optional scope. Use 'viewers' for landlord room viewers mode.",
+            ),
+            OpenApiParameter(
+                name="ordering",
+                type=str,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Sort by start, end, created_at, id, or their descending variants.",
+            ),
         ],
-        description="List bookings. Supports limit/offset pagination, filtering by room and scope, and ordering.",
+        description="List bookings wrapped in ok_response. Supports limit/offset pagination, room filtering, scope filtering, and ordering.",
     )
     def list(self, request, *args, **kwargs):
         queryset = self.filter_queryset(self.get_queryset())
@@ -4660,7 +5310,6 @@ class BookingListCreateView(generics.ListCreateAPIView):
 
 
 class BookingDetailView(generics.RetrieveAPIView):
-
     """GET /api/bookings/<id>/ → see my booking"""
     serializer_class = BookingSerializer
     permission_classes = [IsAuthenticated]
@@ -4669,8 +5318,7 @@ class BookingDetailView(generics.RetrieveAPIView):
         if self.request.user.is_staff:
             return Booking.objects.filter(is_deleted=False)
         return Booking.objects.filter(user=self.request.user, is_deleted=False)
-    
-    
+
     @extend_schema(
         responses={
             200: BookingResponseEnvelopeSerializer,
@@ -4679,15 +5327,9 @@ class BookingDetailView(generics.RetrieveAPIView):
         },
         description="Retrieve a booking owned by the authenticated user.",
     )
-    def get(self, request, *args, **kwargs):
-        return super().get(request, *args, **kwargs)
-        
-    
-    
     def retrieve(self, request, *args, **kwargs):
         resp = super().retrieve(request, *args, **kwargs)
         return _wrap_response_success(resp)
-
 
 
 
@@ -4868,29 +5510,65 @@ class RoomAvailabilityView(APIView):
                 type=OpenApiTypes.DATETIME,
                 location=OpenApiParameter.QUERY,
                 required=True,
+                description="Start datetime in ISO 8601 format.",
             ),
             OpenApiParameter(
                 name="to",
                 type=OpenApiTypes.DATETIME,
                 location=OpenApiParameter.QUERY,
                 required=True,
+                description="End datetime in ISO 8601 format.",
             ),
         ],
-        responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT, 404: OpenApiTypes.OBJECT},
+        responses={
+            200: inline_serializer(
+                name="RoomAvailabilityResponse",
+                fields={
+                    "available": serializers.BooleanField(),
+                    "conflicts": serializers.ListSerializer(
+                        child=inline_serializer(
+                            name="RoomAvailabilityConflict",
+                            fields={
+                                "id": serializers.IntegerField(),
+                                "start": serializers.DateTimeField(),
+                                "end": serializers.DateTimeField(),
+                            },
+                        )
+                    ),
+                },
+            ),
+            400: inline_serializer(
+                name="RoomAvailabilityBadRequest",
+                fields={
+                    "detail": serializers.CharField(),
+                },
+            ),
+            404: OpenApiResponse(description="Room not found."),
+        },
+        description="Check whether a room is available between the supplied from/to datetimes.",
     )
     def get(self, request, pk):
         room = get_object_or_404(Room.objects.alive(), pk=pk)
         start_str = request.query_params.get("from")
         end_str = request.query_params.get("to")
         if not start_str or not end_str:
-            return Response({"detail": "Query params 'from' and 'to' are required (ISO 8601)."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"detail": "Query params 'from' and 'to' are required (ISO 8601)."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         try:
             start = datetime.fromisoformat(start_str)
             end = datetime.fromisoformat(end_str)
         except Exception:
-            return Response({"detail": "from/to must be ISO 8601 datetimes."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"detail": "from/to must be ISO 8601 datetimes."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         if start >= end:
-            return Response({"detail": "'to' must be after 'from'."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"detail": "'to' must be after 'from'."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         conflicts_qs = (
             Booking.objects.filter(room=room, canceled_at__isnull=True)
@@ -5732,7 +6410,7 @@ class SavedCardsListView(APIView):
         request=None,
         responses={
             200: SavedCardsListResponseSerializer,
-            502: OpenApiResponse(description="Unable to fetch saved cards from Stripe."),
+            502: DetailResponseSerializer,
         },
         description="Return up to 4 saved card payment methods for the current user.",
     )
@@ -6480,8 +7158,23 @@ class DataExportLatestView(APIView):
     permission_classes = [IsAuthenticated]
 
     @extend_schema(
-        request=None,
-        responses={200: NotificationMarkReadResponseSerializer, 404: OpenApiResponse(description="Not found.")},
+    request=None,
+    responses={
+        200: inline_serializer(
+            name="DataExportLatestResponseSerializer",
+            fields={
+                "download_url": serializers.URLField(),
+                "expires_at": serializers.DateTimeField(),
+            },
+        ),
+        404: inline_serializer(
+            name="DataExportLatestNotFoundResponseSerializer",
+            fields={
+                "detail": serializers.CharField(),
+            },
+        ),
+    },
+    description="Return the latest non-expired export link for the authenticated user.",
     )
     def get(self, request):
         export = (
@@ -6493,16 +7186,48 @@ class DataExportLatestView(APIView):
             return Response({"detail": "No active export."}, status=404)
         url = request.build_absolute_uri((settings.MEDIA_URL or "/media/") + export.file_path)
         return Response({"download_url": url, "expires_at": export.expires_at})
+    
 
 class AccountDeletePreviewView(APIView):
     """
     GET /api/users/me/delete/preview/
-    Shows counts of records that will be anonymised/retained.
-    """
+    Shows counts of records that will be deleted, anonymised, or retained.
+        """
+    
+    
     permission_classes = [IsAuthenticated]
     @extend_schema(
-        request=None,
-        responses={200: NotificationMarkAllReadResponseSerializer},
+    request=None,
+    responses={
+        200: inline_serializer(
+            name="AccountDeletePreviewResponseSerializer",
+            fields={
+                "delete": inline_serializer(
+                    name="AccountDeletePreviewDeleteSectionSerializer",
+                    fields={
+                        "profile": serializers.IntegerField(),
+                    },
+                ),
+                "anonymise": inline_serializer(
+                    name="AccountDeletePreviewAnonymiseSectionSerializer",
+                    fields={
+                        "rooms": serializers.IntegerField(),
+                        "reviews": serializers.IntegerField(),
+                        "messages": serializers.IntegerField(),
+                    },
+                ),
+                "retain_non_pii": inline_serializer(
+                    name="AccountDeletePreviewRetainSectionSerializer",
+                    fields={
+                        "payments": serializers.IntegerField(),
+                        "bookings": serializers.IntegerField(),
+                    },
+                ),
+            },
+        ),
+        401: OpenApiResponse(description="Authentication required."),
+    },
+    description="Show counts of records that will be deleted, anonymised, or retained for the authenticated user.",
     )
     def get(self, request):
         return Response(preview_erasure(request.user))
@@ -6620,21 +7345,18 @@ class HealthCheckView(APIView):
     permission_classes = [AllowAny]
 
     @extend_schema(
-    request=None,
-    responses={
-        200: inline_serializer(
-            name="HealthCheckOkResponse",
-            fields={
-                "ok": serializers.BooleanField(),
-                "data": inline_serializer(
-                    name="HealthCheckData",
-                    fields={"status": serializers.CharField()},
-                ),
-            },
-        )
-    },
-    auth=[],
-    description="Health check. Returns ok_response envelope.",
+        request=None,
+        responses={
+            200: inline_serializer(
+                name="HealthCheckResponse",
+                fields={
+                    "status": serializers.CharField(),
+                    "db": serializers.BooleanField(),
+                },
+            )
+        },
+        auth=[],
+        description="Health check endpoint.",
     )
     def get(self, request):
         # Minimal DB ping (read-only, fast)

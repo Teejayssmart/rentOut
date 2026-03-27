@@ -2018,7 +2018,12 @@ class ProfilePageSerializer(serializers.Serializer):
         # preview list (2 cards like your screenshot)
         reviews_preview = ReviewCardSerializer(many=True)    
             
-    
+
+
+class MessageCreateSerializer(serializers.Serializer):
+    body = serializers.CharField(allow_blank=False, trim_whitespace=True)
+
+   
 
 class ContactMessageSerializer(serializers.ModelSerializer):
     class Meta:
