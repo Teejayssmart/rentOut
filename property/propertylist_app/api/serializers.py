@@ -231,6 +231,17 @@ class BookingReviewCreateSerializer(serializers.ModelSerializer):
         validated_data.pop("tenancy_id", None)
         return Review.objects.create(**validated_data)
     
+
+class BookingReviewCreateRequestSerializer(serializers.Serializer):
+    tenancy_id = serializers.IntegerField(required=True)
+    overall_rating = serializers.IntegerField(min_value=1, max_value=5, required=False)
+    review_flags = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+        allow_empty=True,
+    )
+    notes = serializers.CharField(required=False, allow_blank=True)
+
     
     
     

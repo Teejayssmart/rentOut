@@ -545,20 +545,26 @@ class BookingReviewCreateView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     @extend_schema(
-    request=BookingReviewCreateSerializer,
-    responses={
-        201: inline_serializer(
-            name="BookingReviewCreateOkResponse",
-            fields={
-                "ok": serializers.BooleanField(),
-                "data": BookingReviewCreateSerializer(),
-            },
-        ),
-        400: OpenApiResponse(description="Validation error."),
-        401: OpenApiResponse(description="Authentication required."),
-        404: OpenApiResponse(description="Not found."),
-    },
-    description="Create a booking review. Returns ok_response envelope.",
+        request=BookingReviewCreateRequestSerializer,
+        responses={
+            201: inline_serializer(
+                name="BookingReviewCreateOkResponse",
+                fields={
+                    "ok": serializers.BooleanField(),
+                    "message": serializers.CharField(required=False, allow_null=True),
+                    "data": inline_serializer(
+                        name="BookingReviewCreateData",
+                        fields={
+                            "review_id": serializers.IntegerField(),
+                        },
+                    ),
+                },
+            ),
+            400: OpenApiResponse(description="Validation error."),
+            401: OpenApiResponse(description="Authentication required."),
+            404: OpenApiResponse(description="Not found."),
+        },
+        description="Create a tenancy review. Returns ok_response envelope.",
     )
     def post(self, request, booking_id):
         serializer = BookingReviewCreateSerializer(
@@ -568,20 +574,14 @@ class BookingReviewCreateView(APIView):
             },
             context={"request": request},
         )
+        serializer.is_valid(raise_exception=True)
+        review = serializer.save()
 
-        if serializer.is_valid():
-            review = serializer.save()
-            return Response(
-                {
-                    "message": "Review submitted successfully.",
-                    "review_id": review.id,
-                },
-                status=status.HTTP_201_CREATED,
-            )
-
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-
+        return ok_response(
+            {"review_id": review.id},
+            message="Review submitted successfully.",
+            status_code=status.HTTP_201_CREATED,
+        )
 
 class ReviewCreateView(generics.CreateAPIView):
     permission_classes = [permissions.IsAuthenticated]
@@ -696,7 +696,20 @@ class TenancyReviewCreateView(APIView):
 
     @extend_schema(
         request=ReviewCreateSerializer,
-        responses={201: ReviewSerializer, 400: OpenApiTypes.OBJECT},
+        responses={
+            201: inline_serializer(
+                name="TenancyReviewCreateOkResponse",
+                fields={
+                    "ok": serializers.BooleanField(),
+                    "message": serializers.CharField(required=False, allow_null=True),
+                    "data": ReviewSerializer(),
+                },
+            ),
+            400: OpenApiResponse(description="Validation error."),
+            401: OpenApiResponse(description="Authentication required."),
+            404: OpenApiResponse(description="Tenancy not found."),
+        },
+        description="Create a tenancy review and return it in ok_response envelope.",
     )
     def post(self, request, tenancy_id):
         # IMPORTANT:
@@ -710,12 +723,11 @@ class TenancyReviewCreateView(APIView):
         serializer.is_valid(raise_exception=True)
         review = serializer.save()
 
-        # Return the created review payload (use your existing ReviewSerializer)
-        return Response(ReviewSerializer(review).data, status=status.HTTP_201_CREATED)
-
-
-def _get_model(app_label: str, model_name: str):
-    return apps.get_model(app_label, model_name)
+        return ok_response(
+            ReviewSerializer(review).data,
+            message="Review submitted successfully.",
+            status_code=status.HTTP_201_CREATED,
+        )
 
 
 class TenancyStillLivingConfirmView(APIView):
@@ -792,11 +804,19 @@ class TenancyExtensionCreateView(APIView):
     @extend_schema(
         request=TenancyExtensionCreateSerializer,
         responses={
-            201: TenancyExtensionResponseSerializer,
-            400: OpenApiTypes.OBJECT,
-            403: OpenApiTypes.OBJECT,
-            404: OpenApiTypes.OBJECT,
+            201: inline_serializer(
+                name="TenancyExtensionCreateOkResponse",
+                fields={
+                    "ok": serializers.BooleanField(),
+                    "message": serializers.CharField(required=False, allow_null=True),
+                    "data": TenancyExtensionResponseSerializer(),
+                },
+            ),
+            400: DetailResponseSerializer,
+            403: DetailResponseSerializer,
+            404: DetailResponseSerializer,
         },
+        description="Create a tenancy extension proposal.",
     )
     def post(self, request, tenancy_id: int):
         Tenancy = _get_model("propertylist_app", "Tenancy")
@@ -811,7 +831,10 @@ class TenancyExtensionCreateView(APIView):
             return Response({"detail": "Forbidden."}, status=drf_status.HTTP_403_FORBIDDEN)
 
         # Disallow if ended
-        ended_statuses = {getattr(Tenancy, "STATUS_ENDED", "ended"), getattr(Tenancy, "STATUS_CANCELED", "canceled")}
+        ended_statuses = {
+            getattr(Tenancy, "STATUS_ENDED", "ended"),
+            getattr(Tenancy, "STATUS_CANCELED", "canceled"),
+        }
         if getattr(tenancy, "status", None) in ended_statuses:
             return Response({"detail": "Cannot extend an ended tenancy."}, status=drf_status.HTTP_400_BAD_REQUEST)
 
@@ -842,8 +865,14 @@ class TenancyExtensionCreateView(APIView):
             "responded_at": ext.responded_at,
             "created_at": ext.created_at,
         }
-        return Response(TenancyExtensionResponseSerializer(payload).data, status=drf_status.HTTP_201_CREATED)
 
+        return ok_response(
+            TenancyExtensionResponseSerializer(payload).data,
+            message="Tenancy extension proposal created successfully.",
+            status_code=drf_status.HTTP_201_CREATED,
+        )
+        
+        
 class TenancyExtensionRespondView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -6549,16 +6578,50 @@ class PaymentTransactionsListView(ListAPIView):
             )
         },
         parameters=[
-           
-            
-            OpenApiParameter(name="q", type=str, location=OpenApiParameter.QUERY, required=False),
-            OpenApiParameter(name="range", type=str, location=OpenApiParameter.QUERY, required=False),
-            OpenApiParameter(name="offset", type=int, location=OpenApiParameter.QUERY, required=False),
-            OpenApiParameter(name="limit", type=int, location=OpenApiParameter.QUERY, required=False),
-            OpenApiParameter(name="start", type=str, location=OpenApiParameter.QUERY, required=False, deprecated=True),
-            OpenApiParameter(name="end", type=str, location=OpenApiParameter.QUERY, required=False),
+            OpenApiParameter(
+                name="q",
+                type=str,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Search by room title, Stripe payment intent id, or Stripe checkout session id.",
+            ),
+            OpenApiParameter(
+                name="range",
+                type=str,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Date range filter. Supported values: today, yesterday, last_7_days, this_month, custom.",
+            ),
+            OpenApiParameter(
+                name="offset",
+                type=int,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Number of transactions to skip before starting the result set.",
+            ),
+            OpenApiParameter(
+                name="limit",
+                type=int,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Maximum number of transactions to return.",
+            ),
+            OpenApiParameter(
+                name="start",
+                type=str,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Custom range start date. Used when range=custom.",
+            ),
+            OpenApiParameter(
+                name="end",
+                type=str,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Custom range end date. Used when range=custom.",
+            ),
         ],
-        description="List payment transactions. DRF paginated response (count/next/previous/results). Supports filters.",
+        description="List payment transactions in DRF paginated format (count/next/previous/results). Supports search and date-range filtering.",
     )
     def list(self, request, *args, **kwargs):
         return super().list(request, *args, **kwargs)
@@ -7302,14 +7365,25 @@ class NotificationListView(APIView):
     permission_classes = [IsAuthenticated]
 
     @extend_schema(
-    responses={200: NotificationSerializer(many=True)},
-    description="List notifications for the current user. Returns a plain array (not paginated).",
+        responses={
+            200: inline_serializer(
+                name="NotificationListOkResponse",
+                fields={
+                    "ok": serializers.BooleanField(),
+                    "message": serializers.CharField(required=False, allow_null=True),
+                    "data": NotificationSerializer(many=True),
+                },
+            ),
+            401: OpenApiResponse(description="Authentication required."),
+        },
+        description="List notifications for the current user. Returns ok_response envelope (not paginated).",
     )
     def get(self, request):
         qs = Notification.objects.filter(user=request.user).order_by("is_read", "-created_at")
         data = NotificationSerializer(qs, many=True).data
-        return Response(data, status=status.HTTP_200_OK)
-
+        return ok_response(data, status_code=status.HTTP_200_OK)
+    
+    
 
 class NotificationMarkReadView(APIView):
     permission_classes = [IsAuthenticated]
@@ -7614,42 +7688,93 @@ class PhoneOTPVerifyView(APIView):
 class MyNotificationPreferencesView(APIView):
     permission_classes = [IsAuthenticated]
 
-    @extend_schema(responses={200: NotificationPreferencesSerializer})
+    @extend_schema(
+        responses={
+            200: inline_serializer(
+                name="NotificationPreferencesOkResponse",
+                fields={
+                    "ok": serializers.BooleanField(),
+                    "message": serializers.CharField(required=False, allow_null=True),
+                    "data": NotificationPreferencesSerializer(),
+                },
+            ),
+            401: OpenApiResponse(description="Authentication required."),
+        },
+        description="Get current user's notification preferences.",
+    )
     def get(self, request):
         profile, _ = UserProfile.objects.get_or_create(user=request.user)
         ser = NotificationPreferencesSerializer(profile)
-        return Response(ser.data, status=status.HTTP_200_OK)
+        return ok_response(ser.data)
+
 
     @extend_schema(
         request=NotificationPreferencesSerializer,
-        responses={200: NotificationPreferencesSerializer},
+        responses={
+            200: inline_serializer(
+                name="NotificationPreferencesUpdateOkResponse",
+                fields={
+                    "ok": serializers.BooleanField(),
+                    "message": serializers.CharField(required=False, allow_null=True),
+                    "data": NotificationPreferencesSerializer(),
+                },
+            ),
+            400: OpenApiResponse(description="Validation error."),
+            401: OpenApiResponse(description="Authentication required."),
+        },
+        description="Update notification preferences (partial update allowed).",
     )
     def patch(self, request):
         profile, _ = UserProfile.objects.get_or_create(user=request.user)
         ser = NotificationPreferencesSerializer(profile, data=request.data, partial=True)
         ser.is_valid(raise_exception=True)
         ser.save()
-        return Response(ser.data, status=status.HTTP_200_OK)
+        return ok_response(ser.data)
 
 
 
 class MyPrivacyPreferencesView(APIView):
     permission_classes = [IsAuthenticated]
 
-
-    @extend_schema(responses={200: PrivacyPreferencesSerializer})
+    @extend_schema(
+        responses={
+            200: inline_serializer(
+                name="PrivacyPreferencesOkResponse",
+                fields={
+                    "ok": serializers.BooleanField(),
+                    "message": serializers.CharField(required=False, allow_null=True),
+                    "data": PrivacyPreferencesSerializer(),
+                },
+            ),
+            401: OpenApiResponse(description="Authentication required."),
+        },
+        description="Get the current user's privacy preferences.",
+    )
     def get(self, request):
-        profile = request.user.profile
-        return Response(PrivacyPreferencesSerializer(profile).data)
+        profile, _ = UserProfile.objects.get_or_create(user=request.user)
+        return ok_response(PrivacyPreferencesSerializer(profile).data, status_code=status.HTTP_200_OK)
 
-
-    @extend_schema(request=PrivacyPreferencesSerializer, responses={200: PrivacyPreferencesSerializer})
+    @extend_schema(
+        request=PrivacyPreferencesSerializer,
+        responses={
+            200: inline_serializer(
+                name="PrivacyPreferencesUpdateOkResponse",
+                fields={
+                    "ok": serializers.BooleanField(),
+                    "message": serializers.CharField(required=False, allow_null=True),
+                    "data": PrivacyPreferencesSerializer(),
+                },
+            ),
+            400: OpenApiResponse(description="Validation error."),
+            401: OpenApiResponse(description="Authentication required."),
+        },
+        description="Update the current user's privacy preferences.",
+    )
     def patch(self, request):
-        profile = request.user.profile
+        profile, _ = UserProfile.objects.get_or_create(user=request.user)
         serializer = PrivacyPreferencesSerializer(profile, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         serializer.save()
-        return Response(serializer.data, status=status.HTTP_200_OK)
-        
+        return ok_response(serializer.data, status_code=status.HTTP_200_OK)
         
         
