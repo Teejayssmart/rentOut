@@ -27,11 +27,11 @@ from drf_spectacular.utils import extend_schema, OpenApiResponse
 
 from drf_spectacular.utils import extend_schema, OpenApiResponse
 
+
 from propertylist_app.api.schema_serializers import (
+    ErrorResponseSerializer,
     StandardErrorResponseSerializer,
-    EmptyDataSerializer,
 )
-from propertylist_app.api.schema_serializers import StandardErrorResponseSerializer
 from propertylist_app.api.schema_helpers import (
     standard_response_serializer,
     standard_list_response_serializer,
@@ -271,12 +271,50 @@ from .serializers import (
     
 )
 
+APPLE_ISSUER = "https://appleid.apple.com"
+APPLE_JWKS_URL = "https://appleid.apple.com/auth/keys"
 
+
+def _verify_apple_identity_token(raw_token: str) -> dict:
+    """
+    Verify an Apple identity token (JWT) using Apple's JWKS.
+    """
+    audience = getattr(settings, "APPLE_AUDIENCE", "").strip()
+    if not audience:
+        raise ValueError("APPLE_AUDIENCE is not configured.")
+
+    if not raw_token:
+        raise ValueError("Missing Apple identity token.")
+
+    jwk_client = PyJWKClient(APPLE_JWKS_URL)
+    signing_key = jwk_client.get_signing_key_from_jwt(raw_token)
+
+    payload = jwt.decode(
+        raw_token,
+        signing_key.key,
+        algorithms=["RS256"],
+        audience=audience,
+        issuer=APPLE_ISSUER,
+    )
+
+    email = (payload.get("email") or "").strip().lower()
+    if not email:
+        raise ValueError("Apple token does not include an email address.")
+
+    email_verified = payload.get("email_verified", False)
+    if isinstance(email_verified, str):
+        email_verified = email_verified.lower() == "true"
+
+    if not email_verified:
+        raise ValueError("Apple account email is not verified.")
+
+    return payload
 
 
 stripe.api_key = settings.STRIPE_SECRET_KEY
 
-
+def _get_model(app_label: str, model_name: str):
+    return apps.get_model(app_label, model_name)
 
 def _parse_simple_rate(rate: str):
     if not rate:
@@ -488,8 +526,8 @@ class UserReviewSummaryView(APIView):
 
     @extend_schema(
     responses={
-        200: standard_response_serializer("ExactResponseNameHere", ExactOutputSerializerHere),
-        404: OpenApiResponse(response=StandardErrorResponseSerializer),
+            200: standard_response_serializer("UserReviewSummaryResponse", UserReviewSummarySerializer),
+            404: OpenApiResponse(response=ErrorResponseSerializer),
         }
     )
     def get(self, request, user_id):
@@ -541,30 +579,25 @@ class UserReviewSummaryView(APIView):
     
 
 
+class BookingReviewCreateOutputSerializer(serializers.Serializer):
+    review_id = serializers.IntegerField()
+
+
 class BookingReviewCreateView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     @extend_schema(
-        request=BookingReviewCreateRequestSerializer,
+        request=BookingReviewCreateSerializer,
         responses={
-            201: inline_serializer(
-                name="BookingReviewCreateOkResponse",
-                fields={
-                    "ok": serializers.BooleanField(),
-                    "message": serializers.CharField(required=False, allow_null=True),
-                    "data": inline_serializer(
-                        name="BookingReviewCreateData",
-                        fields={
-                            "review_id": serializers.IntegerField(),
-                        },
-                    ),
-                },
+            201: standard_response_serializer(
+                "BookingReviewCreateResponse",
+                BookingReviewCreateOutputSerializer,
             ),
-            400: OpenApiResponse(description="Validation error."),
-            401: OpenApiResponse(description="Authentication required."),
-            404: OpenApiResponse(description="Not found."),
+            400: OpenApiResponse(response=StandardErrorResponseSerializer),
+            401: OpenApiResponse(response=StandardErrorResponseSerializer),
+            404: OpenApiResponse(response=StandardErrorResponseSerializer),
         },
-        description="Create a tenancy review. Returns ok_response envelope.",
+        description="Create a tenancy review.",
     )
     def post(self, request, booking_id):
         serializer = BookingReviewCreateSerializer(
@@ -583,17 +616,109 @@ class BookingReviewCreateView(APIView):
             status_code=status.HTTP_201_CREATED,
         )
 
+# --------------------
+# Booking (function-based view)
+# --------------------
+
+@extend_schema(
+    request=BookingPreflightRequestSerializer,
+    responses={
+        200: BookingPreflightResponseSerializer,
+        400: OpenApiResponse(description="Missing/invalid fields or invalid datetime format."),
+        401: OpenApiResponse(description="Authentication required."),
+    },
+    parameters=[
+        OpenApiParameter(
+            name="Idempotency-Key",
+            type=str,
+            location=OpenApiParameter.HEADER,
+            required=False,
+            description="Optional idempotency key to prevent duplicate booking creation.",
+        ),
+    ],
+    description=(
+        "Preflight validation for booking creation. Validates room, start/end datetimes, "
+        "and checks for booking conflicts."
+    ),
+)
+@transaction.atomic
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def create_booking(request):
+    key = request.headers.get("Idempotency-Key")
+    info = ensure_idempotency(
+        user_id=request.user.id,
+        key=key,
+        action="create_booking",
+        payload_bytes=request.body,
+        idem_qs=IdempotencyKey.objects,
+    )
+
+    room_id = request.data.get("room")
+    start_str = request.data.get("start")
+    end_str = request.data.get("end")
+    if not room_id or not start_str or not end_str:
+        return Response(
+            {"detail": "room, start, and end are required."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    room = get_object_or_404(Room, pk=room_id)
+    try:
+        start_dt = datetime.fromisoformat(start_str)
+        end_dt = datetime.fromisoformat(end_str)
+    except Exception:
+        return Response(
+            {"detail": "start and end must be ISO 8601 datetimes."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    Booking.objects.select_for_update().filter(room=room)
+    validate_no_booking_conflict(room, start_dt, end_dt, Booking.objects)
+
+    IdempotencyKey.objects.create(
+        user_id=request.user.id,
+        key=key,
+        action="create_booking",
+        request_hash=info["request_hash"],
+    )
+
+    return Response(
+        {"detail": "Validated. Ready to create booking."},
+        status=status.HTTP_200_OK,
+    )
+
+
+
+
+
 class ReviewCreateView(generics.CreateAPIView):
     permission_classes = [permissions.IsAuthenticated]
     serializer_class = ReviewCreateSerializer
 
+    @extend_schema(
+        request=ReviewCreateSerializer,
+        responses={
+            201: standard_response_serializer(
+                "ReviewCreateResponse",
+                ReviewSerializer,
+            ),
+            400: OpenApiResponse(response=StandardErrorResponseSerializer),
+        },
+    )
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data, context={"request": request})
         serializer.is_valid(raise_exception=True)
         review = serializer.save()
-        return Response(ReviewSerializer(review).data, status=status.HTTP_201_CREATED)
 
-
+        return ok_response(
+            ReviewSerializer(review).data,
+            message="Review created successfully.",
+            status_code=status.HTTP_201_CREATED,
+        )
+    
+    
+    
 class ReviewListView(generics.ListAPIView):
     permission_classes = [permissions.IsAuthenticated]
     serializer_class = ReviewSerializer
@@ -730,42 +855,72 @@ class TenancyReviewCreateView(APIView):
         )
 
 
+class TenancyStillLivingConfirmResponseSerializer(serializers.Serializer):
+    tenancy_id = serializers.IntegerField()
+    tenant_confirmed = serializers.BooleanField()
+    landlord_confirmed = serializers.BooleanField()
+    confirmed_at = serializers.DateTimeField(required=False, allow_null=True)
+
+
 class TenancyStillLivingConfirmView(APIView):
     permission_classes = [IsAuthenticated]
 
     @extend_schema(
         request=None,
-        responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT, 403: OpenApiTypes.OBJECT, 404: OpenApiTypes.OBJECT},
+        responses={
+            200: standard_response_serializer(
+                "TenancyStillLivingConfirmResponse",
+                TenancyStillLivingConfirmResponseSerializer,
+            ),
+            400: OpenApiResponse(response=StandardErrorResponseSerializer),
+            404: OpenApiResponse(response=StandardErrorResponseSerializer),
+        },
     )
     def patch(self, request, tenancy_id: int, *args, **kwargs):
         Tenancy = apps.get_model("propertylist_app", "Tenancy")
 
         t = Tenancy.objects.select_related("landlord", "tenant", "room").filter(id=tenancy_id).first()
         if not t:
-            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+            return Response(
+                {
+                    "ok": False,
+                    "message": "Not found.",
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
 
         user = request.user
         if user.id not in (t.landlord_id, t.tenant_id):
-            return Response({"detail": "Forbidden."}, status=status.HTTP_403_FORBIDDEN)
+            return Response(
+                {
+                    "ok": False,
+                    "message": "Forbidden.",
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
         now = timezone.now()
 
-        # --- Guardrails: only allow confirm when due + tenancy is active ---
         active_status = getattr(Tenancy, "STATUS_ACTIVE", "active")
         if getattr(t, "status", None) != active_status:
             return Response(
-                {"detail": "Still-living confirmation is only allowed for active tenancies."},
+                {
+                    "ok": False,
+                    "message": "Still-living confirmation is only allowed for active tenancies.",
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
         check_at = getattr(t, "still_living_check_at", None)
         if check_at and now < check_at:
             return Response(
-                {"detail": "Still-living confirmation is not due yet."},
+                {
+                    "ok": False,
+                    "message": "Still-living confirmation is not due yet.",
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # set per-side confirmation
         updated_fields = []
 
         if user.id == t.tenant_id and getattr(t, "still_living_tenant_confirmed_at", None) is None:
@@ -776,7 +931,6 @@ class TenancyStillLivingConfirmView(APIView):
             t.still_living_landlord_confirmed_at = now
             updated_fields.append("still_living_landlord_confirmed_at")
 
-        # if both confirmed, set the aggregate confirmed_at (used by sweep filter)
         landlord_done = bool(getattr(t, "still_living_landlord_confirmed_at", None))
         tenant_done = bool(getattr(t, "still_living_tenant_confirmed_at", None))
 
@@ -787,16 +941,16 @@ class TenancyStillLivingConfirmView(APIView):
         if updated_fields:
             t.save(update_fields=updated_fields)
 
-        return Response(
+        return ok_response(
             {
                 "tenancy_id": t.id,
                 "tenant_confirmed": bool(getattr(t, "still_living_tenant_confirmed_at", None)),
                 "landlord_confirmed": bool(getattr(t, "still_living_landlord_confirmed_at", None)),
                 "confirmed_at": getattr(t, "still_living_confirmed_at", None),
             },
-            status=status.HTTP_200_OK,
+            message="Still-living confirmation recorded successfully.",
+            status_code=status.HTTP_200_OK,
         )
-        
         
 class TenancyExtensionCreateView(APIView):
     permission_classes = [IsAuthenticated]
@@ -878,7 +1032,15 @@ class TenancyExtensionRespondView(APIView):
 
     @extend_schema(
         request=TenancyExtensionRespondSerializer,
-        responses={200: TenancyExtensionResponseSerializer, 400: OpenApiTypes.OBJECT, 403: OpenApiTypes.OBJECT, 404: OpenApiTypes.OBJECT},
+        responses={
+            200: standard_response_serializer(
+                "TenancyExtensionRespondResponse",
+                TenancyExtensionResponseSerializer,
+            ),
+            400: OpenApiResponse(response=StandardErrorResponseSerializer),
+            403: OpenApiResponse(response=StandardErrorResponseSerializer),
+            404: OpenApiResponse(response=StandardErrorResponseSerializer),
+        },
     )
     def patch(self, request, tenancy_id: int, extension_id: int):
         Tenancy = _get_model("propertylist_app", "Tenancy")
@@ -886,22 +1048,40 @@ class TenancyExtensionRespondView(APIView):
 
         tenancy = Tenancy.objects.select_related("landlord", "tenant").filter(id=tenancy_id).first()
         if not tenancy:
-            return Response({"detail": "Tenancy not found."}, status=drf_status.HTTP_404_NOT_FOUND)
+            return Response(
+                {"ok": False, "message": "Tenancy not found."},
+                status=drf_status.HTTP_404_NOT_FOUND,
+            )
 
-        ext = TenancyExtension.objects.select_related("tenancy").filter(id=extension_id, tenancy_id=tenancy_id).first()
+        ext = TenancyExtension.objects.select_related("tenancy").filter(
+            id=extension_id,
+            tenancy_id=tenancy_id,
+        ).first()
         if not ext:
-            return Response({"detail": "Extension not found."}, status=drf_status.HTTP_404_NOT_FOUND)
+            return Response(
+                {"ok": False, "message": "Extension not found."},
+                status=drf_status.HTTP_404_NOT_FOUND,
+            )
 
         user = request.user
         if user.id not in {tenancy.landlord_id, tenancy.tenant_id}:
-            return Response({"detail": "Forbidden."}, status=drf_status.HTTP_403_FORBIDDEN)
+            return Response(
+                {"ok": False, "message": "Forbidden."},
+                status=drf_status.HTTP_403_FORBIDDEN,
+            )
 
         # Only counterparty can respond
         if user.id == ext.proposed_by_id:
-            return Response({"detail": "Proposer cannot respond."}, status=drf_status.HTTP_403_FORBIDDEN)
+            return Response(
+                {"ok": False, "message": "Proposer cannot respond."},
+                status=drf_status.HTTP_403_FORBIDDEN,
+            )
 
         if ext.status != TenancyExtension.STATUS_PROPOSED:
-            return Response({"detail": "Extension is not open."}, status=drf_status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"ok": False, "message": "Extension is not open."},
+                status=drf_status.HTTP_400_BAD_REQUEST,
+            )
 
         ser = TenancyExtensionRespondSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
@@ -920,7 +1100,6 @@ class TenancyExtensionRespondView(APIView):
             ext.save(update_fields=["status", "responded_at"])
 
             # Apply extension to tenancy
-            # This assumes tenancy uses duration_months (as in your existing test helpers)
             if hasattr(tenancy, "duration_months"):
                 tenancy.duration_months = ext.proposed_duration_months
                 tenancy.save(update_fields=["duration_months"])
@@ -934,7 +1113,13 @@ class TenancyExtensionRespondView(APIView):
             "responded_at": ext.responded_at,
             "created_at": ext.created_at,
         }
-        return Response(TenancyExtensionResponseSerializer(payload).data, status=drf_status.HTTP_200_OK)
+
+        return ok_response(
+            TenancyExtensionResponseSerializer(payload).data,
+            message="Tenancy extension response recorded successfully.",
+            status_code=drf_status.HTTP_200_OK,
+        )
+
 
 
 class TenancyProposeView(APIView):
@@ -942,16 +1127,26 @@ class TenancyProposeView(APIView):
 
     @extend_schema(
         request=TenancyProposalSerializer,
-        responses={201: TenancyDetailSerializer, 400: OpenApiTypes.OBJECT},
+        responses={
+            201: inline_serializer(
+                name="TenancyProposeOkResponse",
+                fields={
+                    "ok": serializers.BooleanField(),
+                    "message": serializers.CharField(required=False, allow_null=True),
+                    "data": TenancyDetailSerializer(),
+                },
+            ),
+            400: OpenApiResponse(description="Validation error."),
+            401: OpenApiResponse(description="Authentication required."),
+        },
+        description="Create a tenancy proposal.",
     )
     def post(self, request):
         serializer = TenancyProposalSerializer(
             data=request.data,
             context={"request": request},
         )
-
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.is_valid(raise_exception=True)
 
         tenancy = serializer.save()
 
@@ -959,7 +1154,11 @@ class TenancyProposeView(APIView):
         from propertylist_app.tasks import task_send_tenancy_notification
         task_send_tenancy_notification.delay(tenancy.id, "proposed")
 
-        return Response(TenancyDetailSerializer(tenancy).data, status=status.HTTP_201_CREATED)
+        return ok_response(
+            TenancyDetailSerializer(tenancy).data,
+            message="Tenancy proposal created successfully.",
+            status_code=status.HTTP_201_CREATED,
+        )
     
     
 
@@ -968,7 +1167,20 @@ class TenancyRespondView(APIView):
 
     @extend_schema(
         request=TenancyRespondSerializer,
-        responses={200: TenancyDetailSerializer, 400: OpenApiTypes.OBJECT, 404: OpenApiTypes.OBJECT},
+        responses={
+            200: inline_serializer(
+                name="TenancyRespondOkResponse",
+                fields={
+                    "ok": serializers.BooleanField(),
+                    "message": serializers.CharField(required=False, allow_null=True),
+                    "data": TenancyDetailSerializer(),
+                },
+            ),
+            400: OpenApiResponse(description="Validation error."),
+            401: OpenApiResponse(description="Authentication required."),
+            404: DetailResponseSerializer,
+        },
+        description="Respond to a tenancy proposal and return the updated tenancy.",
     )
     def post(self, request, tenancy_id):
         Tenancy = apps.get_model("propertylist_app", "Tenancy")
@@ -985,22 +1197,26 @@ class TenancyRespondView(APIView):
             data=request.data,
             context={"request": request, "tenancy": tenancy},
         )
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.is_valid(raise_exception=True)
 
         tenancy = serializer.save()
 
         from propertylist_app.tasks import task_send_tenancy_notification
         if tenancy.status == getattr(Tenancy, "STATUS_CONFIRMED", "confirmed"):
             task_send_tenancy_notification.delay(tenancy.id, "confirmed")
+            response_message = "Tenancy confirmed successfully."
         elif tenancy.status == getattr(Tenancy, "STATUS_CANCELLED", "cancelled"):
             task_send_tenancy_notification.delay(tenancy.id, "cancelled")
+            response_message = "Tenancy cancelled successfully."
         else:
             task_send_tenancy_notification.delay(tenancy.id, "updated")
+            response_message = "Tenancy updated successfully."
 
-        return Response(TenancyDetailSerializer(tenancy).data, status=status.HTTP_200_OK)
-    
-    
+        return ok_response(
+            TenancyDetailSerializer(tenancy).data,
+            message=response_message,
+            status_code=status.HTTP_200_OK,
+        )
 
 class MyTenanciesView(ListAPIView):
     permission_classes = [permissions.IsAuthenticated]
@@ -1153,24 +1369,53 @@ class RoomCategorieAV(APIView):
 
     @extend_schema(
         request=None,
-        responses={200: RoomCategorieSerializer(many=True)},
+        responses={
+            200: inline_serializer(
+                name="RoomCategoryListOkResponse",
+                fields={
+                    "ok": serializers.BooleanField(),
+                    "message": serializers.CharField(required=False, allow_null=True),
+                    "data": RoomCategorieSerializer(many=True),
+                },
+            ),
+        },
+        description="List room categories. Non-staff users only see active categories.",
     )
     def get(self, request):
         qs = RoomCategorie.objects.all().order_by("name")
         if not (request.user and request.user.is_staff):
             qs = qs.filter(active=True)
-        return Response(RoomCategorieSerializer(qs, many=True).data)
+        return ok_response(
+            RoomCategorieSerializer(qs, many=True).data,
+            status_code=status.HTTP_200_OK,
+        )
 
     @extend_schema(
         request=RoomCategorieSerializer,
-        responses={201: RoomCategorieSerializer, 400: OpenApiTypes.OBJECT},
+        responses={
+            201: inline_serializer(
+                name="RoomCategoryCreateOkResponse",
+                fields={
+                    "ok": serializers.BooleanField(),
+                    "message": serializers.CharField(required=False, allow_null=True),
+                    "data": RoomCategorieSerializer(),
+                },
+            ),
+            400: OpenApiResponse(description="Validation error."),
+            401: OpenApiResponse(description="Authentication required."),
+            403: OpenApiResponse(description="Admin privileges required."),
+        },
+        description="Create a room category.",
     )
     def post(self, request):
         ser = RoomCategorieSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
         ser.save()
-        return Response(ser.data, status=status.HTTP_201_CREATED)
-    
+        return ok_response(
+            ser.data,
+            message="Room category created successfully.",
+            status_code=status.HTTP_201_CREATED,
+        )
     
 
 class RoomCategorieDetailAV(APIView):
@@ -1178,9 +1423,9 @@ class RoomCategorieDetailAV(APIView):
     throttle_classes = [AnonRateThrottle]
 
     @extend_schema(
-    responses={
-        200: standard_response_serializer("ExactResponseNameHere", ExactOutputSerializerHere),
-        404: OpenApiResponse(response=StandardErrorResponseSerializer),
+        responses={
+            200: standard_response_serializer("RoomCategorieDetailResponse", RoomCategorieSerializer),
+            404: OpenApiResponse(response=ErrorResponseSerializer),
         }
     )
     def get(self, request, pk):
@@ -1189,14 +1434,25 @@ class RoomCategorieDetailAV(APIView):
 
     @extend_schema(
         request=RoomCategorieSerializer,
-        responses={200: RoomCategorieSerializer, 400: OpenApiTypes.OBJECT, 404: OpenApiTypes.OBJECT},
+        responses={
+            200: standard_response_serializer(
+                "RoomCategorieUpdateResponse",
+                RoomCategorieSerializer,
+            ),
+            400: OpenApiResponse(response=StandardErrorResponseSerializer),
+            404: OpenApiResponse(response=StandardErrorResponseSerializer),
+        },
     )
     def put(self, request, pk):
         category = get_object_or_404(RoomCategorie, pk=pk)
         ser = RoomCategorieSerializer(category, data=request.data)
         ser.is_valid(raise_exception=True)
         ser.save()
-        return Response(ser.data)
+        return ok_response(
+            ser.data,
+            message="Room category updated successfully.",
+            status_code=status.HTTP_200_OK,
+        )
 
     @extend_schema(
         request=None,
@@ -1206,52 +1462,8 @@ class RoomCategorieDetailAV(APIView):
         category = get_object_or_404(RoomCategorie, pk=pk)
         category.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
-# --------------------
-# Rooms
-# --------------------
 
 
-
-@extend_schema_view(
-    get=extend_schema(
-        operation_id="api_v1_rooms_alt_list",
-        responses={
-            200: inline_serializer(
-                name="RoomListGVResponse",
-                fields={
-                    "count": serializers.IntegerField(),
-                    "next": serializers.CharField(allow_null=True),
-                    "previous": serializers.CharField(allow_null=True),
-                    "results": RoomSerializer(many=True),
-                },
-            ),
-        },
-        parameters=[
-            OpenApiParameter(
-                name="limit",
-                type=int,
-                location=OpenApiParameter.QUERY,
-                required=False,
-                description="Maximum number of rooms to return.",
-            ),
-            OpenApiParameter(
-                name="offset",
-                type=int,
-                location=OpenApiParameter.QUERY,
-                required=False,
-                description="Number of rooms to skip before starting the result set.",
-            ),
-            OpenApiParameter(
-                name="ordering",
-                type=str,
-                location=OpenApiParameter.QUERY,
-                required=False,
-                description="Ordering field. Supported values include avg_rating and category__name.",
-            ),
-        ],
-        description="List rooms with limit/offset pagination.",
-    )
-)
 class RoomListGV(CachedAnonymousGETMixin, generics.ListAPIView):
     queryset = Room.objects.alive()
     serializer_class = RoomSerializer
@@ -1385,9 +1597,6 @@ class RoomDetailAV(APIView):
     permission_classes = [IsOwnerOrReadOnly]
     http_method_names = ["get", "put", "patch", "delete"]
 
-
-
-
     @extend_schema(
         operation_id="api_v1_rooms_retrieve",
         responses={
@@ -1400,7 +1609,7 @@ class RoomDetailAV(APIView):
                 },
             ),
             404: OpenApiResponse(
-                response=StandardErrorResponseSerializer,
+                response=ErrorResponseSerializer,
                 description="Not found.",
             ),
         },
@@ -1411,21 +1620,17 @@ class RoomDetailAV(APIView):
         serializer = RoomSerializer(room, context={"request": request})
         return ok_response(serializer.data, status_code=status.HTTP_200_OK)
 
-
-
-
-
-
     @extend_schema(
-    request=RoomSerializer,
-    responses={
-        200: RoomSerializer,
-        400: OpenApiResponse(description="Validation error."),
-        401: OpenApiResponse(description="Authentication required."),
-        403: OpenApiResponse(description="Forbidden."),
-        404: OpenApiResponse(description="Not found."),
-    },
-    description="Replace room fields (owner-only).",
+        request=RoomSerializer,
+        responses={
+            200: standard_response_serializer(
+                "RoomUpdateResponse",
+                RoomSerializer,
+            ),
+            400: OpenApiResponse(response=StandardErrorResponseSerializer),
+            404: OpenApiResponse(response=StandardErrorResponseSerializer),
+        },
+        description="Replace room fields (owner-only).",
     )
     def put(self, request, pk, *args, **kwargs):
         room = get_object_or_404(Room.objects.alive(), pk=pk)
@@ -1438,38 +1643,33 @@ class RoomDetailAV(APIView):
         ser = RoomSerializer(room, data=data, context={"request": request})
         ser.is_valid(raise_exception=True)
         ser.save()
-        return Response(ser.data, status=status.HTTP_200_OK)
 
-
-
-
+        return ok_response(
+            ser.data,
+            message="Room updated successfully.",
+            status_code=status.HTTP_200_OK,
+        )
 
     @extend_schema(
-    request=RoomSerializer,
-    responses={
-        200: RoomSerializer,
-        400: OpenApiResponse(description="Validation error or preview requires 3 photos."),
-        401: OpenApiResponse(description="Authentication required."),
-        403: OpenApiResponse(description="Forbidden."),
-        404: OpenApiResponse(description="Not found."),
-    },
-    description="Partial update (owner-only). If action=preview, requires at least 3 photos.",
+        request=RoomSerializer,
+        responses={
+            200: standard_response_serializer(
+                "RoomPartialUpdateResponse",
+                RoomSerializer,
+            ),
+            400: OpenApiResponse(response=StandardErrorResponseSerializer),
+            404: OpenApiResponse(response=StandardErrorResponseSerializer),
+        },
+        description="Partial update (owner-only). If action=preview, requires at least 3 photos.",
     )
-    def patch(self, request,pk, *args, **kwargs):
-
+    def patch(self, request, pk, *args, **kwargs):
         room = get_object_or_404(Room.objects.alive(), pk=pk)
         self.check_object_permissions(request, room)
 
         data = request.data.copy()
 
-        # Read the wizard action before we drop it
-        # Possible values we expect from the frontend:
-        # - "next"       -> Step 2/3 Next
-        # - "save_close" -> Save & Close
-        # - "preview"    -> Step 4 Next / Preview   enforce 3 photos here
         action = (data.get("action") or "").strip().lower()
 
-        # Never let the wizard change these directly
         data.pop("action", None)
         data.pop("status", None)
         data.pop("paid_until", None)
@@ -1483,46 +1683,44 @@ class RoomDetailAV(APIView):
         ser.is_valid(raise_exception=True)
         ser.save()
 
-        # --- Minimum 3 photos rule for Step 4 Next / Preview ---
         if action == "preview":
-            # Count ALL photos for this room (pending + approved)
             total_photos = RoomImage.objects.filter(room=room).count()
 
             if total_photos < 3:
                 return Response(
                     {
-                        "detail": "Please upload at least 3 photos before previewing your listing.",
-                        "photos_min_required": 3,
-                        "photos_current": total_photos,
+                        "ok": False,
+                        "message": "Please upload at least 3 photos before previewing your listing.",
+                        "errors": {
+                            "photos_min_required": 3,
+                            "photos_current": total_photos,
+                        },
                     },
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-        return Response(ser.data, status=status.HTTP_200_OK)
-
-
-
-
-
-
+        return ok_response(
+            ser.data,
+            message="Room updated successfully.",
+            status_code=status.HTTP_200_OK,
+        )
 
     @extend_schema(
-    responses={
-        204: OpenApiResponse(description="Deleted."),
-        401: OpenApiResponse(description="Authentication required."),
-        403: OpenApiResponse(description="Forbidden."),
-        404: OpenApiResponse(description="Not found."),
-    },
-    description="Soft-delete a room (owner-only).",
+        responses={
+            204: OpenApiResponse(description="Deleted."),
+            401: OpenApiResponse(description="Authentication required."),
+            403: OpenApiResponse(description="Forbidden."),
+            404: OpenApiResponse(description="Not found."),
+        },
+        description="Soft-delete a room (owner-only).",
     )
-    def delete(self, request,pk, *args, **kwargs):
-
+    def delete(self, request, pk, *args, **kwargs):
         room = get_object_or_404(Room.objects.alive(), pk=pk)
         self.check_object_permissions(request, room)
         room.soft_delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
-
-
+    
+    
 
 class RoomPreviewView(APIView):
     """
@@ -1532,20 +1730,33 @@ class RoomPreviewView(APIView):
 
     Returns:
       {
-        "room": { ... full RoomSerializer data ... },
-        "photos": [ ... ]
+        "ok": true,
+        "message": null,
+        "data": {
+          "room": { ... },
+          "photos": [ ... ]
+        }
       }
 
     Only the room owner is allowed to see this preview payload.
     """
-    # Must be logged in
     permission_classes = [IsAuthenticated]
 
     @extend_schema(
-    responses={
-        200: standard_response_serializer("ExactResponseNameHere", ExactOutputSerializerHere),
-        404: OpenApiResponse(response=StandardErrorResponseSerializer),
-        }
+        responses={
+            200: inline_serializer(
+                name="RoomPreviewOkResponse",
+                fields={
+                    "ok": serializers.BooleanField(),
+                    "message": serializers.CharField(required=False, allow_null=True),
+                    "data": RoomPreviewSerializer(),
+                },
+            ),
+            401: OpenApiResponse(description="Authentication required."),
+            403: DetailResponseSerializer,
+            404: DetailResponseSerializer,
+        },
+        description="Return the private preview payload for a room owned by the authenticated user.",
     )
     def get(self, request, pk):
         room = get_object_or_404(Room.objects.filter(is_deleted=False), pk=pk)
@@ -1558,7 +1769,7 @@ class RoomPreviewView(APIView):
             )
 
         serializer = RoomPreviewSerializer(room, context={"request": request})
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        return ok_response(serializer.data, status_code=status.HTTP_200_OK)
 
 
 class RoomListAlt(CachedAnonymousGETMixin, generics.ListAPIView):
@@ -1566,21 +1777,51 @@ class RoomListAlt(CachedAnonymousGETMixin, generics.ListAPIView):
     serializer_class = RoomSerializer
     cache_timeout = 120  # cache this endpoint for 2 minutes
 
+    @extend_schema(
+        request=RoomSerializer,
+        responses={
+            200: standard_response_serializer(
+                "RoomListAltPutResponse",
+                RoomSerializer,
+            ),
+            400: OpenApiResponse(response=StandardErrorResponseSerializer),
+            404: OpenApiResponse(response=StandardErrorResponseSerializer),
+        },
+    )
     def put(self, request, pk):
         room = get_object_or_404(Room.objects.alive(), pk=pk)
         self.check_object_permissions(request, room)
         ser = RoomSerializer(room, data=request.data)
         ser.is_valid(raise_exception=True)
         ser.save()
-        return Response(ser.data)
+        return ok_response(
+            ser.data,
+            message="Room updated successfully.",
+            status_code=status.HTTP_200_OK,
+        )
 
+    @extend_schema(
+        request=RoomSerializer,
+        responses={
+            200: standard_response_serializer(
+                "RoomListAltPatchResponse",
+                RoomSerializer,
+            ),
+            400: OpenApiResponse(response=StandardErrorResponseSerializer),
+            404: OpenApiResponse(response=StandardErrorResponseSerializer),
+        },
+    )
     def patch(self, request, pk):
         room = get_object_or_404(Room.objects.alive(), pk=pk)
         self.check_object_permissions(request, room)
         ser = RoomSerializer(room, data=request.data, partial=True)
         ser.is_valid(raise_exception=True)
         ser.save()
-        return Response(ser.data)
+        return ok_response(
+            ser.data,
+            message="Room updated successfully.",
+            status_code=status.HTTP_200_OK,
+        )
 
     def delete(self, request, pk):
         room = get_object_or_404(Room.objects.alive(), pk=pk)
@@ -1595,13 +1836,34 @@ class RoomSoftDeleteView(APIView):
 
     @extend_schema(
         request=None,
-        responses={200: OpenApiTypes.OBJECT, 403: OpenApiTypes.OBJECT, 404: OpenApiTypes.OBJECT},
+        responses={
+            200: inline_serializer(
+                name="RoomSoftDeleteOkResponse",
+                fields={
+                    "ok": serializers.BooleanField(),
+                    "message": serializers.CharField(required=False, allow_null=True),
+                    "data": inline_serializer(
+                        name="RoomSoftDeleteData",
+                        fields={
+                            "detail": serializers.CharField(),
+                        },
+                    ),
+                },
+            ),
+            403: DetailResponseSerializer,
+            404: DetailResponseSerializer,
+        },
+        description="Soft-delete a room owned by the authenticated user.",
     )
     def post(self, request, pk, *args, **kwargs):
         room = get_object_or_404(Room.objects.alive(), pk=pk)
         self.check_object_permissions(request, room)
         room.soft_delete()
-        return Response({"detail": f"Room {room.id} soft-deleted."})
+        return ok_response(
+            {"detail": f"Room {room.id} soft-deleted."},
+            message="Room soft-deleted successfully.",
+            status_code=status.HTTP_200_OK,
+        )
 
 
 
@@ -1613,7 +1875,27 @@ class RoomUnpublishView(APIView):
 
     @extend_schema(
         request=None,
-        responses={200: OpenApiTypes.OBJECT, 403: OpenApiTypes.OBJECT, 404: OpenApiTypes.OBJECT},
+        responses={
+            200: inline_serializer(
+                name="RoomUnpublishOkResponse",
+                fields={
+                    "ok": serializers.BooleanField(),
+                    "message": serializers.CharField(required=False, allow_null=True),
+                    "data": inline_serializer(
+                        name="RoomUnpublishData",
+                        fields={
+                            "id": serializers.IntegerField(),
+                            "status": serializers.CharField(),
+                            "listing_state": serializers.CharField(),
+                        },
+                    ),
+                },
+            ),
+            401: OpenApiResponse(description="Authentication required."),
+            403: DetailResponseSerializer,
+            404: DetailResponseSerializer,
+        },
+        description="Unpublish a room listing owned by the authenticated user.",
     )
     def post(self, request, pk, *args, **kwargs):
         room = get_object_or_404(Room.objects.filter(is_deleted=False), pk=pk)
@@ -1629,78 +1911,15 @@ class RoomUnpublishView(APIView):
         room.status = "hidden"
         room.save(update_fields=["status", "updated_at"])
 
-        return Response(
+        return ok_response(
             {
                 "id": room.id,
-                "status": room.status,  # "hidden"
+                "status": room.status,
                 "listing_state": _listing_state_for_room(room),
             },
-            status=status.HTTP_200_OK,
+            message="Room unpublished successfully.",
+            status_code=status.HTTP_200_OK,
         )
-
-
-# --------------------
-# Idempotent booking validation (legacy pre-flight)
-# --------------------
-@extend_schema(
-    request=BookingPreflightRequestSerializer,
-    responses={
-        200: BookingPreflightResponseSerializer,
-        400: OpenApiResponse(description="Missing/invalid fields or invalid datetime format."),
-        401: OpenApiResponse(description="Authentication required."),
-    },
-    parameters=[
-        OpenApiParameter(
-            name="Idempotency-Key",
-            type=str,
-            location=OpenApiParameter.HEADER,
-            required=False,
-            description="Optional idempotency key to prevent duplicate booking creation.",
-        ),
-    ],
-    description=(
-        "Preflight validation for booking creation. Validates room, start/end datetimes, "
-        "and checks for booking conflicts."
-    ),
-)
-@transaction.atomic
-@api_view(["POST"])
-@permission_classes([IsAuthenticated])
-def create_booking(request):
-    key = request.headers.get("Idempotency-Key")
-    info = ensure_idempotency(
-        user_id=request.user.id,
-        key=key,
-        action="create_booking",
-        payload_bytes=request.body,
-        idem_qs=IdempotencyKey.objects,
-    )
-
-    room_id = request.data.get("room")
-    start_str = request.data.get("start")
-    end_str = request.data.get("end")
-    if not room_id or not start_str or not end_str:
-        return Response({"detail": "room, start, and end are required."}, status=status.HTTP_400_BAD_REQUEST)
-
-    room = get_object_or_404(Room, pk=room_id)
-    try:
-        start_dt = datetime.fromisoformat(start_str)
-        end_dt = datetime.fromisoformat(end_str)
-    except Exception:
-        return Response({"detail": "start and end must be ISO 8601 datetimes."}, status=status.HTTP_400_BAD_REQUEST)
-
-    Booking.objects.select_for_update().filter(room=room)  # lock scope
-    validate_no_booking_conflict(room, start_dt, end_dt, Booking.objects)
-
-    IdempotencyKey.objects.create(
-        user_id=request.user.id,
-        key=key,
-        action="create_booking",
-        request_hash=info["request_hash"],
-    )
-
-    return Response({"detail": "Validated. Ready to create booking."}, status=status.HTTP_200_OK)
-
 
 # --------------------
 # Generic webhook entry (optional)
@@ -1733,12 +1952,22 @@ def webhook_in(request):
 class ProviderWebhookView(APIView):
     permission_classes = [AllowAny]
 
-
-
     @extend_schema(
         operation_id="api_v1_webhooks_provider_incoming_create",
         request=ProviderWebhookRequestSerializer,
-        responses={200: ProviderWebhookResponseSerializer},
+        responses={
+            200: inline_serializer(
+                name="ProviderWebhookOkResponse",
+                fields={
+                    "ok": serializers.BooleanField(),
+                    "duplicate": serializers.BooleanField(required=False),
+                    "note": serializers.CharField(required=False, allow_null=True),
+                    "object_id": serializers.CharField(required=False, allow_null=True),
+                },
+            ),
+            400: DetailResponseSerializer,
+        },
+        description="Receive and verify a provider webhook, store the receipt, and handle supported provider events.",
     )
     def post(self, request, provider):
         raw_body = request.body or b""
@@ -1758,10 +1987,17 @@ class ProviderWebhookView(APIView):
         sig_header = request.headers.get("Stripe-Signature") or request.headers.get("X-Signature") or ""
         try:
             verify_webhook_signature(
-                secret=secret, payload=raw_body, signature_header=sig_header, scheme="sha256=", clock_skew=300
+                secret=secret,
+                payload=raw_body,
+                signature_header=sig_header,
+                scheme="sha256=",
+                clock_skew=300,
             )
         except Exception as e:
-            return Response({"detail": f"signature verification failed: {e}"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"detail": f"signature verification failed: {e}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         try:
             payload = json.loads(raw_body.decode("utf-8") or "{}")
@@ -1790,12 +2026,18 @@ class ProviderWebhookView(APIView):
                 "X-Event-Id": request.headers.get("X-Event-Id"),
                 "Content-Type": request.headers.get("Content-Type"),
             }
-            WebhookReceipt.objects.create(source=provider_key, event_id=event_id, payload=payload, headers=hdrs)
+            WebhookReceipt.objects.create(
+                source=provider_key,
+                event_id=event_id,
+                payload=payload,
+                headers=hdrs,
+            )
         except Exception:
             pass
 
         if provider_key == "stripe":
             return self._handle_stripe(payload)
+
         return Response({"ok": True})
 
     def _handle_stripe(self, payload: dict):
@@ -1805,12 +2047,11 @@ class ProviderWebhookView(APIView):
         except Exception:
             return Response({"ok": True, "note": "malformed stripe payload"})
 
-        obj_id = data_obj.get("id")  # now it's accessed
+        obj_id = data_obj.get("id")
 
-        return Response({"ok": True, "note": f"ignored stripe event {evt_type}", "object_id": obj_id})
-
-
-        
+        return Response(
+            {"ok": True, "note": f"ignored stripe event {evt_type}", "object_id": obj_id}
+        )
 
 # --------------------
 # Auth / Profile
@@ -1819,24 +2060,42 @@ class RegistrationView(generics.CreateAPIView):
     serializer_class = RegistrationSerializer
     permission_classes = [AllowAny]
     throttle_classes = [RegisterAnonThrottle]
-    versioning_class = None 
+    versioning_class = None
 
+    @extend_schema(
+        request=RegistrationSerializer,
+        responses={
+            201: standard_response_serializer(
+                "RegistrationResponse",
+                RegistrationSerializer,
+            ),
+            400: OpenApiResponse(response=StandardErrorResponseSerializer),
+        },
+    )
     def create(self, request, *args, **kwargs):
         # Optional CAPTCHA
         if getattr(settings, "ENABLE_CAPTCHA", False):
             token = (request.data.get("captcha_token") or "").strip()
             if not verify_captcha(token, request.META.get("REMOTE_ADDR", "")):
                 return Response(
-                    {"detail": "CAPTCHA verification failed."},
+                    {
+                        "ok": False,
+                        "message": "CAPTCHA verification failed.",
+                    },
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
         # 1) Terms & Privacy must be accepted
         raw_terms = request.data.get("terms_accepted")
-        # Accept common “truthy” values only
         if raw_terms not in [True, "true", "True", "1", 1, "on"]:
             return Response(
-                {"terms_accepted": ["You must accept Terms & Privacy."]},
+                {
+                    "ok": False,
+                    "message": "Validation error.",
+                    "errors": {
+                        "terms_accepted": ["You must accept Terms & Privacy."]
+                    },
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -1844,21 +2103,33 @@ class RegistrationView(generics.CreateAPIView):
         email = (request.data.get("email") or "").strip()
         if email and get_user_model().objects.filter(email__iexact=email).exists():
             return Response(
-                {"email": ["This email is already in use."]},
+                {
+                    "ok": False,
+                    "message": "Validation error.",
+                    "errors": {
+                        "email": ["This email is already in use."]
+                    },
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # 3) Let the serializer do the rest (username, password, etc.)
-        return super().create(request, *args, **kwargs)
+        # 3) Let the serializer do the rest
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
 
+        return ok_response(
+            serializer.data,
+            message="Registration successful.",
+            status_code=status.HTTP_201_CREATED,
+        )
 
 # ---------- Social sign-up stubs (Google / Apple) ----------  
-@method_decorator(csrf_exempt, name='dispatch')
+@method_decorator(csrf_exempt, name="dispatch")
 class GoogleRegisterView(APIView):
     permission_classes = [AllowAny]
     throttle_classes = [RegisterAnonThrottle]
-    
-    
+
     @extend_schema(
         request=inline_serializer(
             name="GoogleRegisterRequest",
@@ -1881,12 +2152,19 @@ class GoogleRegisterView(APIView):
                     ),
                 },
             ),
-            400: OpenApiResponse(description="Missing or invalid Google token."),
+            400: inline_serializer(
+                name="GoogleRegisterBadRequestResponse",
+                fields={
+                    "ok": serializers.BooleanField(),
+                    "message": serializers.CharField(),
+                    "data": serializers.JSONField(allow_null=True),
+                },
+            ),
+            429: OpenApiResponse(description="Rate limit exceeded."),
         },
         auth=[],
         description="Register or log in with a Google ID token. Returns JWT refresh and access tokens.",
-        )
-
+    )
     def post(self, request, *args, **kwargs):
         token = request.data.get("token")
 
@@ -1902,7 +2180,6 @@ class GoogleRegisterView(APIView):
                 google_requests.Request(),
                 settings.GOOGLE_WEB_CLIENT_ID,
             )
-
         except Exception:
             return Response(
                 {"ok": False, "message": "Invalid Google token", "data": None},
@@ -1925,7 +2202,6 @@ class GoogleRegisterView(APIView):
             },
         )
 
-        # Mark as verified (important)
         if hasattr(user, "is_email_verified"):
             user.is_email_verified = True
             user.save()
@@ -1942,56 +2218,7 @@ class GoogleRegisterView(APIView):
                 },
             },
             status=status.HTTP_200_OK,
-        )                                                  #
-                       
-                       
-                       
-APPLE_ISSUER = "https://appleid.apple.com"
-APPLE_JWKS_URL = "https://appleid.apple.com/auth/keys"
-
-
-def _verify_apple_identity_token(raw_token: str) -> dict:
-    """
-    Verify an Apple identity token (JWT) using Apple's JWKS.
-
-    Validates:
-    - signature using Apple's public key set
-    - issuer == https://appleid.apple.com
-    - audience == settings.APPLE_AUDIENCE
-    - expiration
-    """
-    audience = getattr(settings, "APPLE_AUDIENCE", "").strip()
-    if not audience:
-        raise ValueError("APPLE_AUDIENCE is not configured.")
-
-    if not raw_token:
-        raise ValueError("Missing Apple identity token.")
-
-    jwk_client = PyJWKClient(APPLE_JWKS_URL)
-    signing_key = jwk_client.get_signing_key_from_jwt(raw_token)
-
-    payload = jwt.decode(
-        raw_token,
-        signing_key.key,
-        algorithms=["RS256"],
-        audience=audience,
-        issuer=APPLE_ISSUER,
-    )
-
-    email = (payload.get("email") or "").strip().lower()
-    if not email:
-        raise ValueError("Apple token does not include an email address.")
-
-    # Apple may return string values in some environments
-    email_verified = payload.get("email_verified", False)
-    if isinstance(email_verified, str):
-        email_verified = email_verified.lower() == "true"
-
-    if not email_verified:
-        raise ValueError("Apple account email is not verified.")
-
-    return payload                       
-                       
+        )
                        
                        
                                                                     
@@ -2083,21 +2310,41 @@ class AppleRegisterView(APIView):
 # Auth / Login
 # --------------------
 class LoginView(APIView):
-    
     permission_classes = [AllowAny]
-    #throttle_classes = [ScopedRateThrottle]
+    # throttle_classes = [ScopedRateThrottle]
     throttle_scope = "login"
     versioning_class = None
     throttle_classes = []
 
-
     @extend_schema(
         request=LoginSerializer,
         responses={
-            200: LoginResponseSerializer,
-            400: OpenApiResponse(description="Invalid input or invalid credentials."),
-            403: OpenApiResponse(description="Email not verified."),
-            429: OpenApiResponse(description="Too many failed attempts."),
+            200: inline_serializer(
+                name="LoginOkResponse",
+                fields={
+                    "ok": serializers.BooleanField(),
+                    "message": serializers.CharField(required=False, allow_null=True),
+                    "data": inline_serializer(
+                        name="LoginOkData",
+                        fields={
+                            "tokens": inline_serializer(
+                                name="LoginTokenData",
+                                fields={
+                                    "access": serializers.CharField(),
+                                    "refresh": serializers.CharField(),
+                                    "access_expires_at": serializers.DateTimeField(),
+                                    "refresh_expires_at": serializers.DateTimeField(),
+                                },
+                            ),
+                            "user": UserSerializer(),
+                            "profile": UserProfileSerializer(),
+                        },
+                    ),
+                },
+            ),
+            400: DetailResponseSerializer,
+            403: DetailResponseSerializer,
+            429: DetailResponseSerializer,
         },
         auth=[],
         description=(
@@ -2105,10 +2352,6 @@ class LoginView(APIView):
             "Returns JWT refresh/access tokens on success."
         ),
     )
-    
-    
-    
-    
     def post(self, request, *args, **kwargs):
         throttled = _manual_scope_throttle(request, "login")
         if throttled:
@@ -2125,7 +2368,7 @@ class LoginView(APIView):
 
             identifier_for_lock = (data.get("identifier") or "").strip()
             ip = request.META.get("REMOTE_ADDR", "") or ""
-            
+
             logger.info("login_attempt ip=%s identifier=%s", ip, (identifier_for_lock or "-"))
 
             if identifier_for_lock and is_locked_out(ip, identifier_for_lock):
@@ -2135,7 +2378,6 @@ class LoginView(APIView):
                     status=status.HTTP_429_TOO_MANY_REQUESTS,
                 )
 
-            #  SAFE: do not crash if ENABLE_CAPTCHA is missing in prod settings
             if getattr(settings, "ENABLE_CAPTCHA", False):
                 token = (data.get("captcha_token") or "").strip()
                 if not verify_captcha(token, ip):
@@ -2145,10 +2387,10 @@ class LoginView(APIView):
                         status=status.HTTP_400_BAD_REQUEST,
                     )
 
-            ser = LoginSerializer(data=data)  # expects: identifier, password
+            ser = LoginSerializer(data=data)
             ser.is_valid(raise_exception=True)
 
-            identifier = ser.validated_data["identifier"]  # username OR email
+            identifier = ser.validated_data["identifier"]
             password = ser.validated_data["password"]
 
             lookup_username = identifier
@@ -2161,7 +2403,6 @@ class LoginView(APIView):
 
             user = authenticate(request, username=lookup_username, password=password)
             if user:
-                #  SAFE: do not crash if profile row is missing on Render DB
                 profile = None
                 if hasattr(user, "profile"):
                     try:
@@ -2169,7 +2410,6 @@ class LoginView(APIView):
                     except Exception:
                         profile = None
 
-                # If you require email verification, enforce it safely
                 if not profile or not getattr(profile, "email_verified", False):
                     logger.warning("login_email_not_verified ip=%s user_id=%s", ip, user.id)
                     return Response(
@@ -2177,19 +2417,13 @@ class LoginView(APIView):
                         status=status.HTTP_403_FORBIDDEN,
                     )
 
-               
-
-                # ...
-
                 clear_login_failures(ip, identifier_for_lock or identifier)
 
-                #  Ensure profile exists (prevents Render DB missing-profile edge case)
                 profile, _ = UserProfile.objects.get_or_create(user=user)
 
                 refresh = RefreshToken.for_user(user)
                 access_token = refresh.access_token
 
-                #  Expiry timestamps from JWT claims (exp is a UNIX timestamp)
                 access_exp = datetime.fromtimestamp(int(access_token["exp"]), tz=dt_timezone.utc)
                 refresh_exp = datetime.fromtimestamp(int(refresh["exp"]), tz=dt_timezone.utc)
 
@@ -2222,31 +2456,45 @@ class LoginView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # except Exception:
-        #     import logging
-        #     import traceback
-
-        #     # Force traceback into Render logs (stdout/stderr)
-        #     logging.getLogger("django.request").exception("LoginView crashed")
-        #     print("LoginView crashed traceback:\n" + traceback.format_exc(), flush=True)
-        #     raise
-        
-        # except Exception as e:
-        #     import traceback
-        #     print("LOGINVIEW_EXCEPTION:", repr(e), flush=True)
-        #     print(traceback.format_exc(), flush=True)
-        #     raise
-
-
         except Exception:
             logger.exception("LoginView crashed")
             raise
+        
 
 class TokenRefreshEnvelopeView(TokenRefreshView):
     """
     Wrap SimpleJWT refresh response in the API success envelope.
     """
 
+    @extend_schema(
+        request=inline_serializer(
+            name="TokenRefreshEnvelopeRequest",
+            fields={
+                "refresh": serializers.CharField(),
+            },
+        ),
+        responses={
+            200: inline_serializer(
+                name="TokenRefreshEnvelopeOkResponse",
+                fields={
+                    "ok": serializers.BooleanField(),
+                    "data": inline_serializer(
+                        name="TokenRefreshEnvelopeData",
+                        fields={
+                            "access": serializers.CharField(),
+                            "refresh": serializers.CharField(required=False),
+                            "access_expires_at": serializers.CharField(required=False),
+                            "refresh_expires_at": serializers.CharField(required=False),
+                        },
+                    ),
+                },
+            ),
+            400: DetailResponseSerializer,
+            401: DetailResponseSerializer,
+        },
+        auth=[],
+        description="Refresh JWT access token and return it in the API success envelope.",
+    )
     def post(self, request, *args, **kwargs):
         refresh = request.data.get("refresh")
 
@@ -2270,39 +2518,36 @@ class TokenRefreshEnvelopeView(TokenRefreshView):
         if response.status_code != 200:
             return response
 
-    # ... keep the rest of your payload wrapping + expires_at logic unchanged ...
-
-
         # Successful refresh typically returns {"access": "..."} (and sometimes "refresh" if rotation enabled)
         payload = dict(response.data)
 
         access = payload.get("access")
         if access:
-                    try:
-                        token = AccessToken(access)
-                        exp = int(token.get("exp"))
-                        payload["access_expires_at"] = datetime.fromtimestamp(exp, tz=dt_timezone.utc).isoformat()
-                    except Exception:
-                        raise ValidationError({"detail": "Unable to determine access token expiry."})
+            try:
+                token = AccessToken(access)
+                exp = int(token.get("exp"))
+                payload["access_expires_at"] = datetime.fromtimestamp(
+                    exp, tz=dt_timezone.utc
+                ).isoformat()
+            except Exception:
+                raise ValidationError({"detail": "Unable to determine access token expiry."})
 
         refresh = payload.get("refresh")
         if refresh:
-                    try:
-                        refresh_token = RefreshToken(refresh)
-                        refresh_exp = int(refresh_token.get("exp"))
-                        payload["refresh_expires_at"] = datetime.fromtimestamp(
-                            refresh_exp, tz=dt_timezone.utc
-                        ).isoformat()
-                    except Exception:
-                        raise ValidationError({"detail": "Unable to determine refresh token expiry."})
+            try:
+                refresh_token = RefreshToken(refresh)
+                refresh_exp = int(refresh_token.get("exp"))
+                payload["refresh_expires_at"] = datetime.fromtimestamp(
+                    refresh_exp, tz=dt_timezone.utc
+                ).isoformat()
+            except Exception:
+                raise ValidationError({"detail": "Unable to determine refresh token expiry."})
 
         response.data = {
-                    "ok": True,
-                    "data": payload,
-                }
+            "ok": True,
+            "data": payload,
+        }
         return response
-
-
 
 
 
@@ -2312,24 +2557,24 @@ class LogoutView(APIView):
     versioning_class = None
 
     @extend_schema(
-    request=None,
-    responses={
-        200: inline_serializer(
-            name="LogoutOkResponse",
-            fields={
-                "ok": serializers.BooleanField(),
-                "data": inline_serializer(
-                    name="LogoutData",
-                    fields={"detail": serializers.CharField()},
-                ),
-            },
-        ),
-        401: OpenApiResponse(description="Authentication required."),
-    },
-    description="Logout current user. Returns ok_response envelope.",
+        request=None,
+        responses={
+            200: inline_serializer(
+                name="LogoutOkResponse",
+                fields={
+                    "ok": serializers.BooleanField(),
+                    "message": serializers.CharField(required=False, allow_null=True),
+                    "data": inline_serializer(
+                        name="LogoutData",
+                        fields={"detail": serializers.CharField()},
+                    ),
+                },
+            ),
+            401: OpenApiResponse(description="Authentication required."),
+        },
+        description="Logout current user. Returns ok_response envelope.",
     )
     def post(self, request):
-    
         refresh = (request.data.get("refresh") or "").strip()
         if not refresh:
             # Reason: allow global error handler to format consistently
@@ -2343,38 +2588,37 @@ class LogoutView(APIView):
 
         # Reason: A3/C1 consistent success envelope
         return ok_response({"detail": "Logged out."}, status_code=status.HTTP_200_OK)
-
-
+    
+    
 
 class TokenRefreshView(APIView):
     permission_classes = [AllowAny]
     versioning_class = None
 
-
     @extend_schema(
-    request=TokenRefreshRequestSerializer,
-    responses={
-        200: inline_serializer(
-            name="TokenRefreshOkResponse",
-            fields={
-                "ok": serializers.BooleanField(),
-                "data": inline_serializer(
-                    name="TokenRefreshData",
-                    fields={
-                        "access": serializers.CharField(),
-                        "access_expires_at": serializers.DateTimeField(),
-                        "refresh_expires_at": serializers.DateTimeField(),
-                    },
-                ),
-            },
-        ),
-        400: OpenApiResponse(description="Invalid or expired refresh token."),
-    },
-    auth=[],
-    description="Exchange a refresh token for a new access token. Returns ok_response envelope.",
+        request=TokenRefreshRequestSerializer,
+        responses={
+            200: inline_serializer(
+                name="TokenRefreshOkResponse",
+                fields={
+                    "ok": serializers.BooleanField(),
+                    "message": serializers.CharField(required=False, allow_null=True),
+                    "data": inline_serializer(
+                        name="TokenRefreshData",
+                        fields={
+                            "access": serializers.CharField(),
+                            "access_expires_at": serializers.DateTimeField(),
+                            "refresh_expires_at": serializers.DateTimeField(),
+                        },
+                    ),
+                },
+            ),
+            400: OpenApiResponse(description="Invalid or expired refresh token."),
+        },
+        auth=[],
+        description="Exchange a refresh token for a new access token. Returns ok_response envelope.",
     )
     def post(self, request):
-    
         from propertylist_app.api.serializers import TokenRefreshRequestSerializer
 
         ser = TokenRefreshRequestSerializer(data=request.data)
@@ -2397,13 +2641,10 @@ class TokenRefreshView(APIView):
                 "refresh_expires_at": refresh_exp,
             }
 
-            # Use your existing A3/C1 success envelope helper (same one you used for login)
             return ok_response(payload, status_code=status.HTTP_200_OK)
 
         except Exception:
-            # Let your standard error envelope handle it consistently
             raise ValidationError({"refresh": "Invalid or expired refresh token."})
-
 
 
 
@@ -2423,10 +2664,26 @@ class OnboardingCompleteView(APIView):
     """
     permission_classes = [IsAuthenticated]
 
-
     @extend_schema(
         request=OnboardingCompleteSerializer,
-        responses={200: OpenApiTypes.OBJECT},
+        responses={
+            200: inline_serializer(
+                name="OnboardingCompleteOkResponse",
+                fields={
+                    "ok": serializers.BooleanField(),
+                    "message": serializers.CharField(required=False, allow_null=True),
+                    "data": inline_serializer(
+                        name="OnboardingCompleteData",
+                        fields={
+                            "onboarding_completed": serializers.BooleanField(),
+                        },
+                    ),
+                },
+            ),
+            400: OpenApiResponse(description="Validation error."),
+            401: OpenApiResponse(description="Authentication required."),
+        },
+        description="Mark onboarding as completed for the current user. Returns ok_response envelope.",
     )
     def post(self, request):
         serializer = OnboardingCompleteSerializer(data=request.data)
@@ -2436,7 +2693,10 @@ class OnboardingCompleteView(APIView):
         profile.onboarding_completed = True
         profile.save(update_fields=["onboarding_completed"])
 
-        return Response({"onboarding_completed": True})
+        return ok_response(
+            {"onboarding_completed": True},
+            status_code=status.HTTP_200_OK,
+        )
 
 class UserProfileView(generics.RetrieveUpdateAPIView):
     serializer_class = UserProfileSerializer
@@ -2447,12 +2707,18 @@ class UserProfileView(generics.RetrieveUpdateAPIView):
         profile, _ = UserProfile.objects.get_or_create(user=self.request.user)
         return profile
 
+    @extend_schema(
+        request=UserProfileSerializer,
+        responses={
+            200: standard_response_serializer(
+                "UserProfileUpdateResponse",
+                UserProfileSerializer,
+            ),
+            400: OpenApiResponse(response=StandardErrorResponseSerializer),
+            404: OpenApiResponse(response=StandardErrorResponseSerializer),
+        },
+    )
     def update(self, request, *args, **kwargs):
-        """
-        Override update so this endpoint returns plain DRF-style errors
-        (e.g. {"gender": ["..."]}) instead of the global wrapped format.
-        The tests for onboarding expect these top-level field keys.
-        """
         partial = kwargs.pop("partial", False)
         instance = self.get_object()
 
@@ -2461,15 +2727,14 @@ class UserProfileView(generics.RetrieveUpdateAPIView):
             data=request.data,
             partial=partial,
         )
-
-        if not serializer.is_valid():
-            # Return raw serializer errors so resp.data has "gender", "date_of_birth", etc
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
+        serializer.is_valid(raise_exception=True)
         self.perform_update(serializer)
-        return Response(serializer.data)
 
-
+        return ok_response(
+            serializer.data,
+            message="Profile updated successfully.",
+            status_code=status.HTTP_200_OK,
+        )
 
 class MyProfilePageView(APIView):
     permission_classes = [IsAuthenticated]
@@ -2572,14 +2837,26 @@ class RoomPhotoUploadView(APIView):
 
     @extend_schema(
         request=None,
-        responses={200: RoomImageSerializer(many=True), 404: OpenApiResponse(description="Room not found.")},
+        responses={
+            200: inline_serializer(
+                name="RoomPhotoListOkResponse",
+                fields={
+                    "ok": serializers.BooleanField(),
+                    "message": serializers.CharField(required=False, allow_null=True),
+                    "data": RoomImageSerializer(many=True),
+                },
+            ),
+            404: OpenApiResponse(description="Room not found."),
+        },
+        description="List approved room photos. Returns ok_response envelope.",
     )
     def get(self, request, pk):
         """Return only approved images for a room (for grids on Step 4/5, room cards, etc.)."""
         room = get_object_or_404(Room, pk=pk)
         photos = RoomImage.objects.approved().filter(room=room)
         data = RoomImageSerializer(photos, many=True).data
-        return Response(data, status=status.HTTP_200_OK)
+
+        return ok_response(data, status_code=status.HTTP_200_OK)
 
     @extend_schema(
         request=OpenApiRequest(
@@ -2587,11 +2864,19 @@ class RoomPhotoUploadView(APIView):
             encoding={"image": {"contentType": "image/*"}},
         ),
         responses={
-            201: RoomImageSerializer,
+            201: inline_serializer(
+                name="RoomPhotoUploadOkResponse",
+                fields={
+                    "ok": serializers.BooleanField(),
+                    "message": serializers.CharField(required=False, allow_null=True),
+                    "data": RoomImageSerializer(),
+                },
+            ),
             400: OpenApiResponse(description="Invalid file or validation error."),
             403: OpenApiResponse(description="Forbidden (not the room owner)."),
             404: OpenApiResponse(description="Room not found."),
         },
+        description="Upload a room image. Returns ok_response envelope.",
     )
     def post(self, request, pk):
         """
@@ -2649,9 +2934,9 @@ class RoomPhotoUploadView(APIView):
             status=photo_status,
         )
 
-        return Response(
+        return ok_response(
             RoomImageSerializer(photo).data,
-            status=status.HTTP_201_CREATED,
+            status_code=status.HTTP_201_CREATED,
         )
 
 
@@ -4139,7 +4424,23 @@ class RoomSaveView(APIView):
 
     @extend_schema(
         request=None,
-        responses={201: OpenApiTypes.OBJECT, 404: OpenApiTypes.OBJECT},
+        responses={
+            201: inline_serializer(
+                name="RoomSaveOkResponse",
+                fields={
+                    "ok": serializers.BooleanField(),
+                    "message": serializers.CharField(required=False, allow_null=True),
+                    "data": inline_serializer(
+                        name="RoomSaveData",
+                        fields={
+                            "saved": serializers.BooleanField(),
+                        },
+                    ),
+                },
+            ),
+            404: DetailResponseSerializer,
+        },
+        description="Save a room for the authenticated user. Returns ok_response envelope.",
     )
     def post(self, request, pk, *args, **kwargs):
         room = get_object_or_404(Room.objects.alive(), pk=pk)
@@ -4148,12 +4449,28 @@ class RoomSaveView(APIView):
 
     @extend_schema(
         request=None,
-        responses={204: None, 404: OpenApiTypes.OBJECT},
+        responses={
+            200: inline_serializer(
+                name="RoomUnsaveOkResponse",
+                fields={
+                    "ok": serializers.BooleanField(),
+                    "message": serializers.CharField(required=False, allow_null=True),
+                    "data": inline_serializer(
+                        name="RoomUnsaveData",
+                        fields={
+                            "saved": serializers.BooleanField(),
+                        },
+                    ),
+                },
+            ),
+            404: DetailResponseSerializer,
+        },
+        description="Remove a saved room for the authenticated user. Returns ok_response envelope.",
     )
     def delete(self, request, pk, *args, **kwargs):
         room = get_object_or_404(Room.objects.alive(), pk=pk)
         SavedRoom.objects.filter(user=request.user, room=room).delete()
-        return Response(status=status.HTTP_204_NO_CONTENT)
+        return ok_response({"saved": False}, status_code=status.HTTP_200_OK)
 
 
 # views.py
@@ -4266,7 +4583,7 @@ class MessageThreadListCreateView(generics.ListCreateAPIView):
     GET /api/messages/threads/
 
     Query params:
-      - folder : inbox (default) | sent | bin | new | waiting_reply   # >>> 
+      - folder : inbox (default) | sent | bin | new | waiting_reply
       - label  : filter by per-user label (Viewing scheduled, Good fit, etc.)
       - q      : search in message body or participant username
       - sort_by: latest (default) | oldest
@@ -4284,44 +4601,37 @@ class MessageThreadListCreateView(generics.ListCreateAPIView):
         user = self.request.user
         params = self.request.query_params
 
-        # Base: threads where I am a participant
         qs = (
             MessageThread.objects
             .filter(participants=user)
             .prefetch_related("participants")
         )
 
-        # ===== folder handling (inbox / sent / bin / new) =====          # >>> GOLDEN
         folder = (params.get("folder") or "").strip().lower()
 
-        # All threads that *I* have put in bin (per-user state)
         bin_thread_ids = list(
             MessageThreadState.objects.filter(user=user, in_bin=True)
             .values_list("thread_id", flat=True)
         )
 
         if folder == "bin":
-            # Only those I’ve put in the bin
-            qs = qs.filter(id__in=bin_thread_ids or [-1])  # -1 to handle empty list safely
+            qs = qs.filter(id__in=bin_thread_ids or [-1])
         else:
-            # inbox / sent / new → exclude ones in my bin
             if bin_thread_ids:
                 qs = qs.exclude(id__in=bin_thread_ids)
 
-            if folder == "new":                                         # 
-                # Threads where there is at least one UNREAD inbound    # 
-                unread_exists = Message.objects.filter(                 # 
-                    thread=OuterRef("pk")                               # 
-                ).exclude(                                              # 
-                    sender=user                                        # 
-                ).exclude(                                              # 
-                    reads__user=user                                   # 
-                )                                                       # 
-                qs = qs.annotate(has_unread=Exists(unread_exists))      # 
-                qs = qs.filter(has_unread=True)                         # 
+            if folder == "new":
+                unread_exists = Message.objects.filter(
+                    thread=OuterRef("pk")
+                ).exclude(
+                    sender=user
+                ).exclude(
+                    reads__user=user
+                )
+                qs = qs.annotate(has_unread=Exists(unread_exists))
+                qs = qs.filter(has_unread=True)
 
-            elif folder == "sent":                                      # 
-                # Threads where the *latest* message is from me
+            elif folder == "sent":
                 last_sender_subq = (
                     Message.objects
                     .filter(thread=OuterRef("pk"))
@@ -4331,17 +4641,15 @@ class MessageThreadListCreateView(generics.ListCreateAPIView):
                 qs = qs.annotate(last_sender_id=Subquery(last_sender_subq))
                 qs = qs.filter(last_sender_id=user.id)
 
-        # ===== label filter (per-user label from MessageThreadState) =====
         label = (params.get("label") or "").strip()
         if label:
             label_ids = MessageThreadState.objects.filter(
                 user=user,
                 label=label,
-                in_bin=False,  # usually you don’t want bin here
+                in_bin=False,
             ).values_list("thread_id", flat=True)
             qs = qs.filter(id__in=label_ids)
 
-        # ===== free-text search =====
         search = (params.get("q") or "").strip()
         if search:
             qs = qs.filter(
@@ -4349,15 +4657,12 @@ class MessageThreadListCreateView(generics.ListCreateAPIView):
                 | Q(participants__username__icontains=search)
             ).distinct()
 
-                # ===== sorting =====
         sort_by = (params.get("sort_by") or "").strip().lower()
 
         if sort_by == "oldest":
-            # Old → oldest first
             qs = qs.order_by("created_at")
 
         elif sort_by in {"name", "alphabetical"}:
-            # Sort by the *other* participant's username
             UserModel = get_user_model()
 
             other_username_subq = (
@@ -4373,12 +4678,9 @@ class MessageThreadListCreateView(generics.ListCreateAPIView):
             )
 
         else:
-            # Default / "new" / unknown → newest first
             qs = qs.order_by("-created_at")
 
         return qs.distinct()
-
-
 
     def _attach_state_for_user(self, user, threads):
         """
@@ -4397,8 +4699,6 @@ class MessageThreadListCreateView(generics.ListCreateAPIView):
         for t in threads:
             setattr(t, "_state_for_user", state_map.get(t.id))
 
-    
-    
     @extend_schema(
         responses={
             200: inline_serializer(
@@ -4469,10 +4769,6 @@ class MessageThreadListCreateView(generics.ListCreateAPIView):
         description="List message threads wrapped in ok_response. Supports folder, label, search, sort, and limit/offset pagination.",
     )
     def list(self, request, *args, **kwargs):
-        """
-        Override list() so we can attach per-user state on the page/queryset
-        before serialisation.
-        """
         queryset = self.filter_queryset(self.get_queryset())
 
         page = self.paginate_queryset(queryset)
@@ -4485,41 +4781,36 @@ class MessageThreadListCreateView(generics.ListCreateAPIView):
         self._attach_state_for_user(request.user, queryset)
         serializer = self.get_serializer(queryset, many=True)
         return ok_response(serializer.data, status_code=200)
-            
-            
-    
+
     @extend_schema(
         request=MessageThreadSerializer,
         responses={
-            201: inline_serializer(
-                name="MessageThreadCreateOkResponse",
-                fields={
-                    "ok": serializers.BooleanField(),
-                    "message": serializers.CharField(required=False, allow_null=True),
-                    "data": MessageThreadSerializer(),
-                },
+            201: standard_response_serializer(
+                "MessageThreadCreateResponse",
+                MessageThreadSerializer,
             ),
-            400: inline_serializer(
-                name="MessageThreadCreateBadRequestResponse",
-                fields={
-                    "detail": serializers.CharField(required=False),
-                    "participants": serializers.CharField(required=False),
-                },
-            ),
-            401: OpenApiResponse(description="Authentication required."),
+            400: OpenApiResponse(response=StandardErrorResponseSerializer),
+            401: OpenApiResponse(response=StandardErrorResponseSerializer),
         },
         description="Create a new message thread between exactly two participants: you and one other user.",
     )
     def create(self, request, *args, **kwargs):
-        resp = super().create(request, *args, **kwargs)
-        return _wrap_response_success(resp)
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+
+        return ok_response(
+            serializer.data,
+            message="Message thread created successfully.",
+            status_code=status.HTTP_201_CREATED,
+        )
 
     def perform_create(self, serializer):
         participants = set(serializer.validated_data.get("participants", []))
         participants.add(self.request.user)
         if len(participants) != 2:
             raise ValidationError(
-                {"participants": "Threads must have exactly 2 participants (you + one other user)." }
+                {"participants": "Threads must have exactly 2 participants (you + one other user)."}
             )
 
         p_list = list(participants)
@@ -4535,8 +4826,6 @@ class MessageThreadListCreateView(generics.ListCreateAPIView):
         thread = serializer.save()
         thread.participants.set(participants)
 
-
-# INSERT in propertylist_app/api/serializers.py
 
 
 class ThreadMoveToBinRequestSerializer(serializers.Serializer):
@@ -4571,20 +4860,37 @@ class ContactMessageCreateView(generics.CreateAPIView):
     permission_classes = [AllowAny]
     serializer_class = ContactMessageSerializer
 
+    @extend_schema(
+        request=ContactMessageSerializer,
+        responses={
+            201: standard_response_serializer(
+                "ContactMessageCreateResponse",
+                ContactMessageSerializer,
+            ),
+            400: OpenApiResponse(response=StandardErrorResponseSerializer),
+        },
+    )
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
 
-        #  Wrap DRF field errors into "field_errors" for your tests/UI
         if not serializer.is_valid():
             return Response(
-                {"field_errors": serializer.errors},
+                {
+                    "ok": False,
+                    "message": "Validation error.",
+                    "errors": serializer.errors,
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
         self.perform_create(serializer)
         headers = self.get_success_headers(serializer.data)
-        return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
-
+        return ok_response(
+            serializer.data,
+            message="Contact message submitted successfully.",
+            status_code=status.HTTP_201_CREATED,
+            headers=headers,
+        )
 
 
 
@@ -4601,13 +4907,15 @@ class MessageThreadStateView(APIView):
     @extend_schema(
         request=MessageThreadStateUpdateSerializer,
         responses={
-            200: ThreadStateResponseSerializer,
-            400: OpenApiResponse(description="Validation error."),
-            404: OpenApiResponse(description="Thread not found."),
+            200: standard_response_serializer(
+                "MessageThreadStateUpdateResponse",
+                ThreadStateResponseSerializer,
+            ),
+            400: OpenApiResponse(response=StandardErrorResponseSerializer),
+            404: OpenApiResponse(response=StandardErrorResponseSerializer),
         }
     )
     def patch(self, request, thread_id):
-        # User must be a participant in the thread
         thread = get_object_or_404(
             MessageThread.objects.filter(participants=request.user),
             pk=thread_id,
@@ -4622,24 +4930,27 @@ class MessageThreadStateView(APIView):
             thread=thread,
         )
 
-        # Update label if present
         if "label" in data:
-            state.label = data["label"]  # "" means clear / no status
+            state.label = data["label"]
 
-        # Update bin flag if present
         if "in_bin" in data:
             state.in_bin = bool(data["in_bin"])
 
         state.save()
 
-        return Response(
-            {
-                "thread": thread.id,
-                "label": state.label or None,
-                "in_bin": state.in_bin,
-            },
-            status=status.HTTP_200_OK,
+        payload = {
+            "thread": thread.id,
+            "label": state.label or None,
+            "in_bin": state.in_bin,
+        }
+
+        return ok_response(
+            payload,
+            message="Thread state updated successfully.",
+            status_code=status.HTTP_200_OK,
         )
+        
+        
 
 class MessageStatsView(APIView):
     """
@@ -4752,7 +5063,6 @@ class MessageListCreateView(generics.ListCreateAPIView):
             return super().get_throttles()
         return []
 
-
     # NEW: allow ?ordering=created / -created / updated / -updated / id / -id
     filter_backends = [filters.OrderingFilter]
     ordering_fields = ["updated", "created", "id"]
@@ -4776,6 +5086,11 @@ class MessageListCreateView(generics.ListCreateAPIView):
 
         return qs
 
+    def get_serializer_class(self):
+        if self.request.method == "POST":
+            return MessageCreateSerializer
+        return MessageSerializer
+
     def perform_create(self, serializer):
         thread = get_object_or_404(
             MessageThread.objects.filter(participants=self.request.user),
@@ -4783,10 +5098,6 @@ class MessageListCreateView(generics.ListCreateAPIView):
         )
         serializer.save(thread=thread, sender=self.request.user)
 
-     
-     
-     
-     
     @extend_schema(
         responses={
             200: inline_serializer(
@@ -4854,38 +5165,39 @@ class MessageListCreateView(generics.ListCreateAPIView):
             return ok_response(resp.data.get("results"), meta=meta, status_code=resp.status_code)
 
         return ok_response(resp.data, status_code=resp.status_code)
-    
-       
+
     @extend_schema(
         request=MessageCreateSerializer,
         responses={
-            201: inline_serializer(
-                name="ThreadMessageCreateOkResponse",
-                fields={
-                    "ok": serializers.BooleanField(),
-                    "message": serializers.CharField(required=False, allow_null=True),
-                    "data": MessageSerializer(),
-                },
+            201: standard_response_serializer(
+                "ThreadMessageCreateResponse",
+                MessageSerializer,
             ),
-            400: OpenApiResponse(description="Validation error."),
-            401: OpenApiResponse(description="Authentication required."),
-            404: OpenApiResponse(description="Thread not found or not accessible."),
-            429: OpenApiResponse(description="Rate limit exceeded."),
+            400: OpenApiResponse(response=StandardErrorResponseSerializer),
+            401: OpenApiResponse(response=StandardErrorResponseSerializer),
+            404: OpenApiResponse(response=StandardErrorResponseSerializer),
+            429: OpenApiResponse(response=StandardErrorResponseSerializer),
         },
         description="Create a new message in a thread the authenticated user participates in.",
     )
     def create(self, request, *args, **kwargs):
-        resp = super().create(request, *args, **kwargs)
-        return ok_response(resp.data, status_code=resp.status_code)
-    
-    
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+
+        message = Message.objects.get(pk=serializer.instance.pk)
+
+        return ok_response(
+            MessageSerializer(message, context=self.get_serializer_context()).data,
+            message="Message created successfully.",
+            status_code=status.HTTP_201_CREATED,
+        )
     
 class ThreadMarkReadView(APIView):
     """POST /api/messages/threads/<thread_id>/read/ — marks all inbound messages as read."""
     permission_classes = [IsAuthenticated]
     # Disable throttling here as well to avoid flakiness
-    #throttle_classes = [UserRateThrottle]
-
+    # throttle_classes = [UserRateThrottle]
 
     @extend_schema(
         request=None,
@@ -4894,6 +5206,7 @@ class ThreadMarkReadView(APIView):
                 name="ThreadMarkReadOkResponse",
                 fields={
                     "ok": serializers.BooleanField(),
+                    "message": serializers.CharField(required=False, allow_null=True),
                     "data": inline_serializer(
                         name="ThreadMarkReadData",
                         fields={"marked": serializers.IntegerField()},
@@ -4906,13 +5219,18 @@ class ThreadMarkReadView(APIView):
         description="Mark thread as read for the current user.",
     )
     def post(self, request, thread_id):
-        thread = get_object_or_404(MessageThread.objects.filter(participants=request.user), pk=thread_id)
+        thread = get_object_or_404(
+            MessageThread.objects.filter(participants=request.user),
+            pk=thread_id,
+        )
 
         to_mark = thread.messages.exclude(sender=request.user).exclude(reads__user=request.user)
-        MessageRead.objects.bulk_create([MessageRead(message=m, user=request.user) for m in to_mark], ignore_conflicts=True)
+        MessageRead.objects.bulk_create(
+            [MessageRead(message=m, user=request.user) for m in to_mark],
+            ignore_conflicts=True,
+        )
 
         return ok_response({"marked": to_mark.count()}, status_code=status.HTTP_200_OK)
-
     
     
 class ThreadSetLabelView(APIView):
@@ -4924,31 +5242,29 @@ class ThreadSetLabelView(APIView):
     """
     permission_classes = [IsAuthenticated]
 
-
-#  INSERT just above def post(...) or def patch(...) in ThreadSetLabelView
     @extend_schema(
         request=ThreadSetLabelRequestSerializer,
         responses={
             200: inline_serializer(
-                    name="ThreadSetLabelResponse",
-                    fields={
-                        "ok": serializers.BooleanField(),
-                        "data": inline_serializer(
-                            name="ThreadSetLabelData",
-                            fields={
-                                "thread_id": serializers.IntegerField(),
-                                "label": serializers.CharField(required=False, allow_null=True),
-                            },
-                        ),
-                    },
-                ),
+                name="ThreadSetLabelResponse",
+                fields={
+                    "ok": serializers.BooleanField(),
+                    "message": serializers.CharField(required=False, allow_null=True),
+                    "data": inline_serializer(
+                        name="ThreadSetLabelData",
+                        fields={
+                            "thread_id": serializers.IntegerField(),
+                            "label": serializers.CharField(required=False, allow_null=True),
+                        },
+                    ),
+                },
+            ),
             400: OpenApiResponse(description="Validation error."),
             401: OpenApiResponse(description="Authentication required."),
             404: OpenApiResponse(description="Thread not found."),
         },
         description="Set per-user label for a message thread.",
-        )
-    
+    )
     def post(self, request, thread_id):
         # Only allow labels for threads I am in
         thread = get_object_or_404(
@@ -4989,16 +5305,14 @@ class ThreadSetLabelView(APIView):
         state.label = allowed[raw_label]
         state.save(update_fields=["label", "updated_at"])
 
-        #  INSERT/REPLACE: return A3 ok_response envelope
         return ok_response(
             {
                 "thread_id": thread.id,
-                "label": state.label or None,  # return None instead of "" for “none”
+                "label": state.label or None,
             },
             status_code=status.HTTP_200_OK,
         )
-
-    
+        
 
 class ThreadMoveToBinView(APIView):
     """
@@ -5008,23 +5322,24 @@ class ThreadMoveToBinView(APIView):
     permission_classes = [IsAuthenticated]
 
     @extend_schema(
-    request=ThreadMoveToBinRequestSerializer,
-    responses={
-        200: inline_serializer(
-            name="ThreadMoveToBinResponse",
-            fields={
-                "ok": serializers.BooleanField(),
-                "data": inline_serializer(
-                    name="ThreadMoveToBinData",
-                    fields={"detail": serializers.CharField()},
-                ),
-            },
-        ),
-        400: OpenApiResponse(description="Validation error."),
-        401: OpenApiResponse(description="Authentication required."),
-        404: OpenApiResponse(description="Thread not found."),
-    },
-    description="Move a thread to bin (per-user).",
+        request=ThreadMoveToBinRequestSerializer,
+        responses={
+            200: inline_serializer(
+                name="ThreadMoveToBinResponse",
+                fields={
+                    "ok": serializers.BooleanField(),
+                    "message": serializers.CharField(required=False, allow_null=True),
+                    "data": inline_serializer(
+                        name="ThreadMoveToBinData",
+                        fields={"detail": serializers.CharField()},
+                    ),
+                },
+            ),
+            400: OpenApiResponse(description="Validation error."),
+            401: OpenApiResponse(description="Authentication required."),
+            404: OpenApiResponse(description="Thread not found."),
+        },
+        description="Move a thread to bin (per-user).",
     )
     def post(self, request, thread_id):
         thread = get_object_or_404(
@@ -5049,7 +5364,6 @@ class ThreadMoveToBinView(APIView):
 
 
 
-
 class ThreadRestoreFromBinView(APIView):
     """
     POST /api/messages/threads/<thread_id>/restore/
@@ -5059,7 +5373,25 @@ class ThreadRestoreFromBinView(APIView):
 
     @extend_schema(
         request=None,
-        responses={200: ThreadRestoreResponseSerializer, 404: OpenApiResponse(description="Thread not found.")},
+        responses={
+            200: inline_serializer(
+                name="ThreadRestoreFromBinResponse",
+                fields={
+                    "ok": serializers.BooleanField(),
+                    "message": serializers.CharField(required=False, allow_null=True),
+                    "data": inline_serializer(
+                        name="ThreadRestoreFromBinData",
+                        fields={
+                            "id": serializers.IntegerField(),
+                            "in_bin": serializers.BooleanField(),
+                        },
+                    ),
+                },
+            ),
+            401: OpenApiResponse(description="Authentication required."),
+            404: OpenApiResponse(description="Thread not found."),
+        },
+        description="Restore a thread from bin back to inbox (per-user).",
     )
     def post(self, request, thread_id):
         thread = get_object_or_404(
@@ -5071,30 +5403,45 @@ class ThreadRestoreFromBinView(APIView):
             state = MessageThreadState.objects.get(user=request.user, thread=thread)
         except MessageThreadState.DoesNotExist:
             # Nothing to restore; treat as already in inbox
-            return Response(
+            return ok_response(
                 {"id": thread.id, "in_bin": False},
-                status=status.HTTP_200_OK,
+                status_code=status.HTTP_200_OK,
             )
 
         if state.in_bin:
             state.in_bin = False
             state.save(update_fields=["in_bin", "updated_at"])
 
-        return Response(
+        return ok_response(
             {"id": thread.id, "in_bin": False},
-            status=status.HTTP_200_OK,
+            status_code=status.HTTP_200_OK,
         )
-
-
-
 
 
 class StartThreadFromRoomView(APIView):
     permission_classes = [IsAuthenticated]
 
     @extend_schema(
-        request=MessageSerializer,  # request body may include {"body": "..."}; this is close enough for schema
-        responses={200: MessageThreadSerializer, 400: OpenApiTypes.OBJECT, 404: OpenApiTypes.OBJECT},
+        request=inline_serializer(
+            name="StartThreadFromRoomRequest",
+            fields={
+                "body": serializers.CharField(required=False, allow_blank=True),
+            },
+        ),
+        responses={
+            200: inline_serializer(
+                name="StartThreadFromRoomOkResponse",
+                fields={
+                    "ok": serializers.BooleanField(),
+                    "message": serializers.CharField(required=False, allow_null=True),
+                    "data": MessageThreadSerializer(),
+                },
+            ),
+            400: DetailResponseSerializer,
+            401: OpenApiResponse(description="Authentication required."),
+            404: DetailResponseSerializer,
+        },
+        description="Start or reuse a message thread from a room, and optionally send an initial message.",
     )
     def post(self, request, room_id):
         room = get_object_or_404(Room.objects.alive(), pk=room_id)
@@ -5123,43 +5470,55 @@ class StartThreadFromRoomView(APIView):
         if body:
             Message.objects.create(thread=thread, sender=request.user, body=body)
 
-        return Response(
+        return ok_response(
             MessageThreadSerializer(thread, context={"request": request}).data,
-            status=status.HTTP_200_OK,
+            status_code=status.HTTP_200_OK,
         )
-
 
 # --------------------
 # Booking
 # --------------------
 class BookingListCreateView(generics.ListCreateAPIView):
-
     """GET my bookings / POST create (slot OR direct)."""
     serializer_class = BookingSerializer
     permission_classes = [IsAuthenticated]
     pagination_class = StandardLimitOffsetPagination
     throttle_classes = [UserRateThrottle]
-    # >>> Added to enable ?ordering=... on this endpoint <<<
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
     ordering_fields = ["start", "end", "created_at", "id"]
     ordering = ["-created_at"]
 
+    def get_serializer_class(self):
+        if self.request.method == "POST":
+            return BookingCreateRequestSerializer
+        return BookingSerializer
 
     @extend_schema(
         request=BookingCreateRequestSerializer,
         responses={
-            201: BookingResponseEnvelopeSerializer,
-            400: OpenApiResponse(description="Validation error."),
-            401: OpenApiResponse(description="Authentication required."),
+            201: standard_response_serializer(
+                "BookingCreateResponse",
+                BookingSerializer,
+            ),
+            400: OpenApiResponse(response=StandardErrorResponseSerializer),
+            401: OpenApiResponse(response=StandardErrorResponseSerializer),
         },
         description="Create a booking using either a slot OR room/start/end.",
     )
     def create(self, request, *args, **kwargs):
-        return super().create(request, *args, **kwargs)
-    
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
 
-     
-    def get_queryset(self): 
+        booking = serializer.instance
+
+        return ok_response(
+            BookingSerializer(booking, context=self.get_serializer_context()).data,
+            message="Booking created successfully.",
+            status_code=status.HTTP_201_CREATED,
+        )
+
+    def get_queryset(self):
         if getattr(self, "swagger_fake_view", False):
             return Booking.objects.none()
         user = self.request.user
@@ -5168,25 +5527,17 @@ class BookingListCreateView(generics.ListCreateAPIView):
         room_id = self.request.query_params.get("room")
         scope = self.request.query_params.get("scope")
 
-        # Default: tenant sees only their own bookings
         if not room_id:
             return qs.filter(user=user).order_by("-created_at")
 
-        # If room is provided, allow two modes:
-        # 1) tenant mode: show my bookings for this room
-        # 2) landlord viewers mode: show viewers of my room (only if I own the room)
         room = get_object_or_404(Room.objects.alive(), pk=room_id)
 
         if scope == "viewers":
-            # landlord mode: only the owner of the room can see bookings for that room
             if room.property_owner_id != user.id:
                 return Booking.objects.none()
             return qs.filter(room=room).order_by("-created_at")
 
-        # tenant mode: my bookings for this room
         return qs.filter(user=user, room=room).order_by("-created_at")
-
-
 
     def perform_create(self, serializer):
         slot_id = self.request.data.get("slot")
@@ -5205,7 +5556,7 @@ class BookingListCreateView(generics.ListCreateAPIView):
                 if active >= slot_locked.max_bookings:
                     raise ValidationError({"detail": "This slot is fully booked."})
 
-                booking = serializer.save(
+                serializer.save(
                     user=self.request.user,
                     room=slot_locked.room,
                     slot=slot_locked,
@@ -5213,7 +5564,6 @@ class BookingListCreateView(generics.ListCreateAPIView):
                     end=slot_locked.end,
                 )
 
-            # Notification: booking confirmation (respects Account -> Notifications -> Confirmations)
             profile, _ = UserProfile.objects.get_or_create(user=self.request.user)
             if getattr(profile, "notify_confirmations", True):
                 Notification.objects.create(
@@ -5222,7 +5572,6 @@ class BookingListCreateView(generics.ListCreateAPIView):
                     title="Booking confirmed",
                     body="Your booking has been successfully created.",
                 )
-
             return
 
         room_id = self.request.data.get("room")
@@ -5247,9 +5596,8 @@ class BookingListCreateView(generics.ListCreateAPIView):
         if conflicts:
             raise ValidationError({"detail": "Selected dates clash with an existing booking."})
 
-        booking = serializer.save(user=self.request.user, room=room)
+        serializer.save(user=self.request.user, room=room)
 
-        # Notification: booking confirmation (respects Account -> Notifications -> Confirmations)
         profile, _ = UserProfile.objects.get_or_create(user=self.request.user)
         if getattr(profile, "notify_confirmations", True):
             Notification.objects.create(
@@ -5259,10 +5607,6 @@ class BookingListCreateView(generics.ListCreateAPIView):
                 body="Your booking has been successfully created.",
             )
 
-
-
-
-    
     @extend_schema(
         responses={
             200: inline_serializer(
@@ -5336,8 +5680,9 @@ class BookingListCreateView(generics.ListCreateAPIView):
 
         serializer = self.get_serializer(queryset, many=True)
         return ok_response(serializer.data, status_code=200)
-
-
+    
+    
+    
 class BookingDetailView(generics.RetrieveAPIView):
     """GET /api/bookings/<id>/ → see my booking"""
     serializer_class = BookingSerializer
@@ -5373,33 +5718,42 @@ class BookingCancelView(APIView):
     permission_classes = [IsAuthenticated]
 
     @extend_schema(
-    request=None,
-    responses={
-        200: inline_serializer(
-            name="BookingCancelOkResponse",
-            fields={
-                "ok": serializers.BooleanField(),
-                "data": inline_serializer(
-                    name="BookingCancelData",
-                    fields={"detail": serializers.CharField()},
-                ),
-            },
-        ),
-        400: OpenApiResponse(description="Validation error."),
-        401: OpenApiResponse(description="Authentication required."),
-        404: OpenApiResponse(description="Not found."),
-    },
-    description="Cancel a booking. Returns ok_response envelope.",
+        request=None,
+        responses={
+            200: inline_serializer(
+                name="BookingCancelOkResponse",
+                fields={
+                    "ok": serializers.BooleanField(),
+                    "message": serializers.CharField(required=False, allow_null=True),
+                    "data": inline_serializer(
+                        name="BookingCancelData",
+                        fields={
+                            "detail": serializers.CharField(),
+                            "canceled_at": serializers.DateTimeField(required=False, allow_null=True),
+                        },
+                    ),
+                },
+            ),
+            400: OpenApiResponse(description="Validation error."),
+            401: OpenApiResponse(description="Authentication required."),
+            404: OpenApiResponse(description="Not found."),
+        },
+        description="Cancel a booking. Returns ok_response envelope.",
     )
     def post(self, request, pk):
-        # REPLACE your existing qs line with these
         qs = Booking.objects.filter(is_deleted=False)
         qs = qs if request.user.is_staff else qs.filter(user=request.user)
 
         booking = get_object_or_404(qs, pk=pk)
 
         if booking.canceled_at:
-            return Response({"detail": "Booking already cancelled."})
+            return ok_response(
+                {
+                    "detail": "Booking already cancelled.",
+                    "canceled_at": booking.canceled_at,
+                },
+                status_code=status.HTTP_200_OK,
+            )
 
         if booking.start <= timezone.now():
             return Response(
@@ -5408,13 +5762,16 @@ class BookingCancelView(APIView):
             )
 
         booking.canceled_at = timezone.now()
-        booking.status = Booking.STATUS_CANCELLED  # also set status
+        booking.status = Booking.STATUS_CANCELLED
         booking.save(update_fields=["canceled_at", "status"])
 
         return ok_response(
-            {"detail": "Booking cancelled.", "canceled_at": booking.canceled_at},
+            {
+                "detail": "Booking cancelled.",
+                "canceled_at": booking.canceled_at,
+            },
             status_code=status.HTTP_200_OK,
-                )
+        )
 
 
     
@@ -5425,24 +5782,29 @@ class BookingSuspendView(APIView):
     permission_classes = [IsAuthenticated]
 
     @extend_schema(
-    request=None,
-    responses={
-        200: inline_serializer(
-            name="BookingSuspendOkResponse",
-            fields={
-                "ok": serializers.BooleanField(),
-                "data": inline_serializer(
-                    name="BookingSuspendData",
-                    fields={"detail": serializers.CharField()},
-                ),
-            },
-        ),
-        400: OpenApiResponse(description="Validation error."),
-        401: OpenApiResponse(description="Authentication required."),
-        403: OpenApiResponse(description="Forbidden."),
-        404: OpenApiResponse(description="Not found."),
-    },
-    description="Suspend a booking. Returns ok_response envelope.",
+        request=None,
+        responses={
+            200: inline_serializer(
+                name="BookingSuspendOkResponse",
+                fields={
+                    "ok": serializers.BooleanField(),
+                    "message": serializers.CharField(required=False, allow_null=True),
+                    "data": inline_serializer(
+                        name="BookingSuspendData",
+                        fields={
+                            "id": serializers.IntegerField(),
+                            "status": serializers.CharField(),
+                            "canceled_at": serializers.DateTimeField(required=False, allow_null=True),
+                        },
+                    ),
+                },
+            ),
+            400: OpenApiResponse(description="Validation error."),
+            401: OpenApiResponse(description="Authentication required."),
+            403: OpenApiResponse(description="Forbidden."),
+            404: OpenApiResponse(description="Not found."),
+        },
+        description="Suspend a booking. Returns ok_response envelope.",
     )
     def post(self, request, pk):
         booking = get_object_or_404(Booking, pk=pk, is_deleted=False)
@@ -5453,7 +5815,7 @@ class BookingSuspendView(APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        #  idempotent
+        # idempotent
         if booking.status != Booking.STATUS_SUSPENDED:
             booking.status = Booking.STATUS_SUSPENDED
 
@@ -5464,10 +5826,13 @@ class BookingSuspendView(APIView):
             booking.save(update_fields=["status", "canceled_at"])
 
         return ok_response(
-            {"id": booking.id, "status": booking.status, "canceled_at": booking.canceled_at},
+            {
+                "id": booking.id,
+                "status": booking.status,
+                "canceled_at": booking.canceled_at,
+            },
             status_code=status.HTTP_200_OK,
-                )
-
+        )
 
 class BookingDeleteView(APIView):
     permission_classes = [IsAuthenticated]
@@ -5687,27 +6052,32 @@ class UserAvatarUploadView(APIView):
     permission_classes = [IsAuthenticated]
     parser_classes = [MultiPartParser, FormParser]
 
-
-
-
-
     @extend_schema(
-    request={"multipart/form-data": AvatarUploadRequestSerializer},
-    responses={
-        200: AvatarUploadResponseSerializer,
-        400: OpenApiResponse(description="Invalid file or validation error."),
-        401: OpenApiResponse(description="Authentication required."),
+        request={"multipart/form-data": AvatarUploadRequestSerializer},
+        responses={
+            200: inline_serializer(
+                name="AvatarUploadOkResponse",
+                fields={
+                    "ok": serializers.BooleanField(),
+                    "message": serializers.CharField(required=False, allow_null=True),
+                    "data": AvatarUploadResponseSerializer(),
+                },
+            ),
+            400: OpenApiResponse(description="Invalid file or validation error."),
+            401: OpenApiResponse(description="Authentication required."),
         },
         description="Upload/update the current user's avatar.",
     )
-
     def post(self, request):
         # Ensure a profile exists (prevents 500 if none)
         profile, _ = UserProfile.objects.get_or_create(user=request.user)
 
         file_obj = request.FILES.get("avatar")
         if not file_obj:
-            return Response({"avatar": "File is required (form-data key 'avatar')."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"avatar": "File is required (form-data key 'avatar')."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         # Our validator raises DjangoValidationError; convert to a 400 API response
         try:
@@ -5719,15 +6089,40 @@ class UserAvatarUploadView(APIView):
 
         profile.avatar = cleaned
         profile.save(update_fields=["avatar"])
-        return Response({"avatar": profile.avatar.url if profile.avatar else None}, status=status.HTTP_200_OK)
 
+        payload = {
+            "ok": True,
+            "message": None,
+            "data": {
+                "avatar": profile.avatar.url if profile.avatar else None,
+            },
+            "avatar": profile.avatar.url if profile.avatar else None,
+        }
+        return Response(payload, status=status.HTTP_200_OK)
 
 class ChangeEmailView(APIView):
     permission_classes = [IsAuthenticated]
 
     @extend_schema(
         request=ChangeEmailRequestSerializer,
-        responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT},
+        responses={
+            200: inline_serializer(
+                name="ChangeEmailOkResponse",
+                fields={
+                    "ok": serializers.BooleanField(),
+                    "message": serializers.CharField(required=False, allow_null=True),
+                    "data": inline_serializer(
+                        name="ChangeEmailData",
+                        fields={
+                            "detail": serializers.CharField(),
+                        },
+                    ),
+                },
+            ),
+            400: OpenApiResponse(description="Validation error."),
+            401: OpenApiResponse(description="Authentication required."),
+        },
+        description="Change the user's email address.",
     )
     def post(self, request):
         current_password = request.data.get("current_password")
@@ -5762,14 +6157,37 @@ class ChangeEmailView(APIView):
 
         user.email = new_email
         user.save(update_fields=["email"])
-        return Response({"detail": "Email updated."})
+
+        return ok_response(
+            {"detail": "Email updated."},
+            status_code=status.HTTP_200_OK,
+        )
+    
+    
 
 class ChangePasswordView(APIView):
     permission_classes = [IsAuthenticated]
 
     @extend_schema(
         request=ChangePasswordRequestSerializer,
-        responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT},
+        responses={
+            200: inline_serializer(
+                name="ChangePasswordOkResponse",
+                fields={
+                    "ok": serializers.BooleanField(),
+                    "message": serializers.CharField(required=False, allow_null=True),
+                    "data": inline_serializer(
+                        name="ChangePasswordData",
+                        fields={
+                            "detail": serializers.CharField(),
+                        },
+                    ),
+                },
+            ),
+            400: OpenApiResponse(description="Validation error."),
+            401: OpenApiResponse(description="Authentication required."),
+        },
+        description="Change the current user's password.",
     )
     def post(self, request):
         current_password = request.data.get("current_password")
@@ -5808,14 +6226,35 @@ class ChangePasswordView(APIView):
 
         user.set_password(new_password)
         user.save(update_fields=["password"])
-        return Response({"detail": "Password updated. Please log in again."})
+
+        return ok_response(
+            {"detail": "Password updated. Please log in again."},
+            status_code=status.HTTP_200_OK,
+        )
 
 class CreatePasswordView(APIView):
     permission_classes = [IsAuthenticated]
 
     @extend_schema(
         request=CreatePasswordRequestSerializer,
-        responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT},
+        responses={
+            200: inline_serializer(
+                name="CreatePasswordOkResponse",
+                fields={
+                    "ok": serializers.BooleanField(),
+                    "message": serializers.CharField(required=False, allow_null=True),
+                    "data": inline_serializer(
+                        name="CreatePasswordData",
+                        fields={
+                            "detail": serializers.CharField(),
+                        },
+                    ),
+                },
+            ),
+            400: OpenApiResponse(description="Validation error."),
+            401: OpenApiResponse(description="Authentication required."),
+        },
+        description="Create a password for the current user if one does not already exist.",
     )
     def post(self, request):
         user = request.user
@@ -5856,36 +6295,49 @@ class CreatePasswordView(APIView):
         user.set_password(new_password)
         user.save(update_fields=["password"])
 
-        return Response({"detail": "Password created. You can now log in with email and password."})
+        return ok_response(
+            {"detail": "Password created. You can now log in with email and password."},
+            status_code=status.HTTP_200_OK,
+        )
+
+
 
 class PasswordResetRequestView(APIView):
     permission_classes = [AllowAny]
     throttle_classes = [PasswordResetScopedThrottle]
-    versioning_class = None 
+    versioning_class = None
 
     @extend_schema(
-    request=PasswordResetRequestSerializer,
-    responses={
-        200: inline_serializer(
-            name="PasswordResetRequestOkResponse",
-            fields={
-                "ok": serializers.BooleanField(),
-                "data": inline_serializer(
-                    name="PasswordResetRequestData",
-                    fields={"detail": serializers.CharField()},
-                ),
-            },
-        ),
-        400: OpenApiResponse(description="Validation error."),
-    },
-    auth=[],
-    description="Request a password reset email. Returns ok_response envelope.",
+        request=PasswordResetRequestSerializer,
+        responses={
+            200: inline_serializer(
+                name="PasswordResetRequestOkResponse",
+                fields={
+                    "ok": serializers.BooleanField(),
+                    "message": serializers.CharField(required=False, allow_null=True),
+                    "data": inline_serializer(
+                        name="PasswordResetRequestData",
+                        fields={
+                            "detail": serializers.CharField(),
+                            "token": serializers.CharField(required=False, allow_null=True),
+                        },
+                    ),
+                },
+            ),
+            400: OpenApiResponse(description="Validation error."),
+            429: OpenApiResponse(description="Rate limit exceeded."),
+        },
+        auth=[],
+        description="Request a password reset email. Returns ok_response envelope.",
     )
     def post(self, request):
         if settings.ENABLE_CAPTCHA:
             token = (request.data.get("captcha_token") or "").strip()
             if not verify_captcha(token, request.META.get("REMOTE_ADDR")):
-                return Response({"detail": "CAPTCHA verification failed."}, status=status.HTTP_400_BAD_REQUEST)
+                return Response(
+                    {"detail": "CAPTCHA verification failed."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
         ser = PasswordResetRequestSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
@@ -5894,7 +6346,10 @@ class PasswordResetRequestView(APIView):
         UserModel = get_user_model()
 
         # Always return a generic response (don’t reveal if email exists)
-        generic_response = Response({"detail": "If that email exists, a reset code has been sent."}, status=status.HTTP_200_OK)
+        generic_response = ok_response(
+            {"detail": "If that email exists, a reset code has been sent."},
+            status_code=status.HTTP_200_OK,
+        )
 
         try:
             user = UserModel.objects.get(email__iexact=email)
@@ -5908,11 +6363,9 @@ class PasswordResetRequestView(APIView):
             used_at__isnull=True,
         ).update(used_at=timezone.now())
 
-
         # Create a fresh 6-digit code
         code = get_random_string(6, allowed_chars="0123456789")
         EmailOTP.create_for(user, code, ttl_minutes=10, purpose=EmailOTP.PURPOSE_PASSWORD_RESET)
-
 
         # Send email (locmem backend in tests will capture this)
         mail.send_mail(
@@ -5924,34 +6377,38 @@ class PasswordResetRequestView(APIView):
         )
 
         # Important for tests/dev: return token so tests can use it easily.
-        # settings_test.py has DEBUG=True. :contentReference[oaicite:3]{index=3}
         if settings.DEBUG:
-            return Response({"detail": "Reset code sent.", "token": code}, status=status.HTTP_200_OK)
+            return ok_response(
+                {"detail": "Reset code sent.", "token": code},
+                status_code=status.HTTP_200_OK,
+            )
 
         return generic_response
-
 
 class PasswordResetConfirmView(APIView):
     permission_classes = [AllowAny]
     throttle_classes = [PasswordResetConfirmScopedThrottle]
-    versioning_class = None 
+    versioning_class = None
 
     @extend_schema(
-    request=PasswordResetConfirmSerializer,
-    responses={
-        200: inline_serializer(
-            name="PasswordResetConfirmOkResponse",
-            fields={
-                "ok": serializers.BooleanField(),
-                "data": inline_serializer(
-                    name="PasswordResetConfirmData",
-                    fields={"detail": serializers.CharField()},
-                ),
-            },
-        ),
-        400: OpenApiResponse(description="Validation error."),
-    },
-    auth=[],
+        request=PasswordResetConfirmSerializer,
+        responses={
+            200: inline_serializer(
+                name="PasswordResetConfirmOkResponse",
+                fields={
+                    "ok": serializers.BooleanField(),
+                    "message": serializers.CharField(required=False, allow_null=True),
+                    "data": inline_serializer(
+                        name="PasswordResetConfirmData",
+                        fields={"detail": serializers.CharField()},
+                    ),
+                },
+            ),
+            400: OpenApiResponse(description="Validation error."),
+            429: OpenApiResponse(description="Rate limit exceeded."),
+        },
+        auth=[],
+        description="Confirm a password reset using email, token, and new password. Returns ok_response envelope.",
     )
     def post(self, request):
         ser = PasswordResetConfirmSerializer(data=request.data)
@@ -5975,7 +6432,7 @@ class PasswordResetConfirmView(APIView):
             )
             .order_by("-created_at")
             .first()
-)
+        )
 
         if not otp:
             return Response({"detail": "Invalid token."}, status=status.HTTP_400_BAD_REQUEST)
@@ -5993,8 +6450,10 @@ class PasswordResetConfirmView(APIView):
         user.set_password(new_password)
         user.save(update_fields=["password"])
 
-        return Response({"detail": "Password has been reset."}, status=status.HTTP_200_OK)
-
+        return ok_response(
+            {"detail": "Password has been reset."},
+            status_code=status.HTTP_200_OK,
+        )
 
 
 
@@ -6003,12 +6462,32 @@ class DeactivateAccountView(APIView):
 
     @extend_schema(
         request=None,
-        responses={200: OpsStatsResponseSerializer},
+        responses={
+            200: inline_serializer(
+                name="DeactivateAccountOkResponse",
+                fields={
+                    "ok": serializers.BooleanField(),
+                    "message": serializers.CharField(required=False, allow_null=True),
+                    "data": inline_serializer(
+                        name="DeactivateAccountData",
+                        fields={
+                            "detail": serializers.CharField(),
+                        },
+                    ),
+                },
+            ),
+            401: OpenApiResponse(description="Authentication required."),
+        },
+        description="Deactivate the current user's account.",
     )
     def post(self, request):
         request.user.is_active = False
         request.user.save(update_fields=["is_active"])
-        return Response({"detail": "Account deactivated."})
+
+        return ok_response(
+            {"detail": "Account deactivated."},
+            status_code=status.HTTP_200_OK,
+        )
 
 
 class DeleteAccountRequestView(APIView):
@@ -6016,7 +6495,26 @@ class DeleteAccountRequestView(APIView):
 
     @extend_schema(
         request=AccountDeleteRequestSerializer,
-        responses={200: OpsStatsResponseSerializer},
+        responses={
+            200: inline_serializer(
+                name="DeleteAccountRequestOkResponse",
+                fields={
+                    "ok": serializers.BooleanField(),
+                    "message": serializers.CharField(required=False, allow_null=True),
+                    "data": inline_serializer(
+                        name="DeleteAccountRequestData",
+                        fields={
+                            "detail": serializers.CharField(),
+                            "scheduled_for": serializers.DateTimeField(),
+                            "grace_days": serializers.IntegerField(),
+                        },
+                    ),
+                },
+            ),
+            400: OpenApiResponse(description="Validation error."),
+            401: OpenApiResponse(description="Authentication required."),
+        },
+        description="Schedule the current user's account for deletion after the grace period.",
     )
     def post(self, request):
         from propertylist_app.models import UserProfile
@@ -6037,21 +6535,39 @@ class DeleteAccountRequestView(APIView):
         profile.pending_deletion_scheduled_for = scheduled_for
         profile.save(update_fields=["pending_deletion_requested_at", "pending_deletion_scheduled_for"])
 
-        return Response(
+        return ok_response(
             {
                 "detail": "Account scheduled for deletion.",
                 "scheduled_for": scheduled_for,
                 "grace_days": int(grace_days),
             },
-            status=status.HTTP_200_OK,
+            status_code=status.HTTP_200_OK,
         )
+        
         
 class DeleteAccountCancelView(APIView):
     permission_classes = [IsAuthenticated]
 
     @extend_schema(
         request=AccountDeleteCancelSerializer,
-        responses={200: OpenApiTypes.OBJECT},
+        responses={
+            200: inline_serializer(
+                name="DeleteAccountCancelOkResponse",
+                fields={
+                    "ok": serializers.BooleanField(),
+                    "message": serializers.CharField(required=False, allow_null=True),
+                    "data": inline_serializer(
+                        name="DeleteAccountCancelData",
+                        fields={
+                            "detail": serializers.CharField(),
+                        },
+                    ),
+                },
+            ),
+            400: OpenApiResponse(description="Validation error."),
+            401: OpenApiResponse(description="Authentication required."),
+        },
+        description="Cancel a pending account deletion request.",
     )
     def post(self, request):
         from propertylist_app.models import UserProfile
@@ -6069,11 +6585,10 @@ class DeleteAccountCancelView(APIView):
         request.user.is_active = True
         request.user.save(update_fields=["is_active"])
 
-        return Response({"detail": "Account deletion cancelled."}, status=status.HTTP_200_OK)
-
-
-
-
+        return ok_response(
+            {"detail": "Account deletion cancelled."},
+            status_code=status.HTTP_200_OK,
+        )
 
 
 
@@ -6086,7 +6601,14 @@ class CreateListingCheckoutSessionView(APIView):
     @extend_schema(
         request=StripeCheckoutSessionCreateRequestSerializer,
         responses={
-            200: StripeCheckoutRedirectResponseSerializer,
+            200: inline_serializer(
+                name="CreateListingCheckoutSessionOkResponse",
+                fields={
+                    "ok": serializers.BooleanField(),
+                    "message": serializers.CharField(required=False, allow_null=True),
+                    "data": StripeCheckoutRedirectResponseSerializer(),
+                },
+            ),
             400: OpenApiResponse(description="Invalid request or validation error."),
             401: OpenApiResponse(description="Authentication required."),
             403: OpenApiResponse(description="Forbidden (not the room owner)."),
@@ -6095,7 +6617,7 @@ class CreateListingCheckoutSessionView(APIView):
         description=(
             "Creates a Stripe Checkout Session for the specified room listing fee. "
             "Request body may include an optional payment_method_id. "
-            "Returns the Stripe-hosted checkout_url and session_id."
+            "Returns the Stripe-hosted checkout_url and session_id inside the standard envelope."
         ),
     )
     def post(self, request, pk):
@@ -6145,21 +6667,15 @@ class CreateListingCheckoutSessionView(APIView):
         # Optional: read a selected saved card id from the body (for future use)
         _payment_method_id = request.data.get("payment_method_id")  # may be None
 
-        # -------------------------------------------------------------------
-        # E1 FIX (Reason): Ensure Stripe redirects hit the REAL /api/v1/ routes
-        # by using reverse() against the v1 namespace URL names.
-        # -------------------------------------------------------------------
         base = (settings.SITE_URL or "").rstrip("/")
 
-        success_path = reverse("v1:payments-success")  # -> /api/v1/payments/success/
-        cancel_path = reverse("v1:payments-cancel")    # -> /api/v1/payments/cancel/
-        
-        
+        success_path = reverse("v1:payments-success")
+        cancel_path = reverse("v1:payments-cancel")
 
         # Create the Stripe Checkout Session
         session = stripe.checkout.Session.create(
             mode="payment",
-            customer=customer_id,  # ties it to saved cards
+            customer=customer_id,
             payment_method_types=["card"],
             line_items=[
                 {
@@ -6187,6 +6703,7 @@ class CreateListingCheckoutSessionView(APIView):
                 "user_id": str(user.id),
             },
         )
+
         # Safely extract session id + checkout URL (works for real Stripe + dict fakes)
         session_id = getattr(session, "id", None)
         checkout_url = getattr(session, "url", None)
@@ -6209,8 +6726,23 @@ class CreateListingCheckoutSessionView(APIView):
 @extend_schema(
     request=StripeWebhookEventRequestSerializer,
     responses={
-        200: StripeWebhookAckResponseSerializer,
-        400: StripeWebhookErrorResponseSerializer,
+        200: inline_serializer(
+            name="StripeWebhookAckOkResponse",
+            fields={
+                "ok": serializers.BooleanField(),
+                "message": serializers.CharField(required=False, allow_null=True),
+                "data": inline_serializer(
+                    name="StripeWebhookAckData",
+                    fields={
+                        "detail": serializers.CharField(),
+                        "event_id": serializers.CharField(required=False, allow_null=True),
+                        "event_type": serializers.CharField(required=False, allow_null=True),
+                        "payment_id": serializers.CharField(required=False, allow_null=True),
+                    },
+                ),
+            },
+        ),
+        400: DetailResponseSerializer,
     },
     parameters=[
         OpenApiParameter(
@@ -6253,7 +6785,7 @@ def stripe_webhook(request):
             {"detail": "Unable to construct Stripe event."},
             status=status.HTTP_400_BAD_REQUEST,
         )
-    
+
     logger.info(
         "stripe_webhook_received event_id=%s type=%s",
         event.get("id"),
@@ -6264,7 +6796,7 @@ def stripe_webhook(request):
     try:
         event_id = event.get("id") or ""
         evt_type = event.get("type")
-        evt_created = event.get("created")  # unix timestamp
+        evt_created = event.get("created")
         evt_livemode = event.get("livemode")
 
         data_obj = ((event.get("data") or {}).get("object") or {})
@@ -6284,18 +6816,11 @@ def stripe_webhook(request):
             },
         }
 
-        # Force JSON-safe types (prevents silent JSONField failures)
         payload_compact = json.loads(json.dumps(payload_compact))
     except Exception:
         event_id = event.get("id") or ""
         payload_compact = {"id": event_id, "type": event.get("type")}
 
-    # -----------------------------
-    # E3: webhook idempotency guard (event-level)
-    # -----------------------------
-        # -----------------------------
-    # E3: webhook idempotency guard (event-level)
-    # -----------------------------
     if event_id:
         try:
             with transaction.atomic():
@@ -6320,16 +6845,12 @@ def stripe_webhook(request):
                 status_code=status.HTTP_200_OK,
             )
         except Exception:
-            # Never fail webhook processing because receipt logging failed.
             try:
                 with transaction.atomic():
                     WebhookReceipt.objects.create(source="stripe", event_id=event_id)
             except Exception:
                 pass
 
-    # -----------------------------
-    # Handle Stripe event types
-    # -----------------------------
     evt_type = event.get("type")
 
     if evt_type == "checkout.session.completed":
@@ -6342,7 +6863,6 @@ def stripe_webhook(request):
         if payment_id:
             try:
                 with transaction.atomic():
-                    # idempotent: only transition once
                     updated = (
                         Payment.objects
                         .filter(id=payment_id)
@@ -6369,7 +6889,6 @@ def stripe_webhook(request):
                             room.paid_until = base + timedelta(days=30)
                             room.save(update_fields=["paid_until"])
 
-                        # create exactly once (only when updated == 1)
                         Notification.objects.create(
                             user=payment.user,
                             type="confirmation",
@@ -6427,7 +6946,8 @@ def stripe_webhook(request):
         },
         status_code=status.HTTP_200_OK,
     )
-
+    
+    
 class SavedCardsListView(APIView):
     """
     Returns up to 4 saved card payment methods for the current user
@@ -6492,10 +7012,24 @@ class DetachSavedCardView(APIView):
     @extend_schema(
         request=None,
         responses={
-            200: DetailResponseSerializer,
-            400: OpenApiResponse(description="No Stripe customer found for this user."),
-            502: OpenApiResponse(description="Unable to detach saved card."),
-        }
+            200: inline_serializer(
+                name="DetachSavedCardOkResponse",
+                fields={
+                    "ok": serializers.BooleanField(),
+                    "message": serializers.CharField(required=False, allow_null=True),
+                    "data": inline_serializer(
+                        name="DetachSavedCardData",
+                        fields={
+                            "detail": serializers.CharField(),
+                        },
+                    ),
+                },
+            ),
+            400: DetailResponseSerializer,
+            401: OpenApiResponse(description="Authentication required."),
+            502: DetailResponseSerializer,
+        },
+        description="Detach a saved Stripe card for the current user.",
     )
     def post(self, request, pm_id):
         profile = getattr(request.user, "profile", None)
@@ -6513,7 +7047,10 @@ class DetachSavedCardView(APIView):
                 status=status.HTTP_502_BAD_GATEWAY,
             )
 
-        return Response({"detail": "Card removed."}, status=status.HTTP_200_OK)
+        return ok_response(
+            {"detail": "Card removed."},
+            status_code=status.HTTP_200_OK,
+        )
 
 
 
@@ -6647,9 +7184,18 @@ class CreateSetupIntentView(APIView):
     @extend_schema(
         request=None,
         responses={
-            200: SetupIntentResponseSerializer,
-            502: OpenApiResponse(description="Unable to create setup intent."),
-    },
+            200: inline_serializer(
+                name="CreateSetupIntentOkResponse",
+                fields={
+                    "ok": serializers.BooleanField(),
+                    "message": serializers.CharField(required=False, allow_null=True),
+                    "data": SetupIntentResponseSerializer(),
+                },
+            ),
+            401: OpenApiResponse(description="Authentication required."),
+            502: DetailResponseSerializer,
+        },
+        description="Create a Stripe SetupIntent for the current user and return it in the standard envelope.",
     )
     def post(self, request):
         user = request.user
@@ -6700,12 +7246,12 @@ class CreateSetupIntentView(APIView):
                 status=status.HTTP_502_BAD_GATEWAY,
             )
 
-        return Response(
+        return ok_response(
             {
                 "clientSecret": client_secret,
                 "publishableKey": getattr(settings, "STRIPE_PUBLISHABLE_KEY", ""),
             },
-            status=status.HTTP_200_OK,
+            status_code=status.HTTP_200_OK,
         )
 
 
@@ -6715,10 +7261,24 @@ class SetDefaultSavedCardView(APIView):
     @extend_schema(
         request=None,
         responses={
-            200: DetailResponseSerializer,
-            400: OpenApiResponse(description="No Stripe customer found for this user."),
-            502: OpenApiResponse(description="Unable to set default card."),
-        }
+            200: inline_serializer(
+                name="SetDefaultSavedCardOkResponse",
+                fields={
+                    "ok": serializers.BooleanField(),
+                    "message": serializers.CharField(required=False, allow_null=True),
+                    "data": inline_serializer(
+                        name="SetDefaultSavedCardData",
+                        fields={
+                            "detail": serializers.CharField(),
+                        },
+                    ),
+                },
+            ),
+            400: DetailResponseSerializer,
+            401: OpenApiResponse(description="Authentication required."),
+            502: DetailResponseSerializer,
+        },
+        description="Set the default saved Stripe card for the current user.",
     )
     def post(self, request, pm_id):
         profile = getattr(request.user, "profile", None)
@@ -6739,10 +7299,10 @@ class SetDefaultSavedCardView(APIView):
                 status=status.HTTP_502_BAD_GATEWAY,
             )
 
-        return Response({"detail": "Default card updated."}, status=status.HTTP_200_OK)
-
-
-
+        return ok_response(
+            {"detail": "Default card updated."},
+            status_code=status.HTTP_200_OK,
+        )
 
 
 
@@ -6913,6 +7473,17 @@ class ModerationReportUpdateView(generics.UpdateAPIView):
     permission_classes = [IsAdminUser]
     queryset = Report.objects.all()
 
+    @extend_schema(
+        request=ReportSerializer,
+        responses={
+            200: standard_response_serializer(
+                "ModerationReportUpdateResponse",
+                ReportSerializer,
+            ),
+            400: OpenApiResponse(response=StandardErrorResponseSerializer),
+            404: OpenApiResponse(response=StandardErrorResponseSerializer),
+        },
+    )
     def partial_update(self, request, *args, **kwargs):
         report = self.get_object()
         status_new = request.data.get("status")
@@ -6922,7 +7493,13 @@ class ModerationReportUpdateView(generics.UpdateAPIView):
         if status_new in {"in_review", "resolved", "rejected"}:
             if not _can_transition_report_status(report.status, status_new):
                 return Response(
-                    {"status": f"Invalid transition from '{report.status}' to '{status_new}'."},
+                    {
+                        "ok": False,
+                        "message": "Validation error.",
+                        "errors": {
+                            "status": [f"Invalid transition from '{report.status}' to '{status_new}'."]
+                        },
+                    },
                     status=status.HTTP_400_BAD_REQUEST,
                 )
             report.status = status_new
@@ -6956,19 +7533,48 @@ class ModerationReportUpdateView(generics.UpdateAPIView):
         except Exception:
             pass
 
-        return Response(self.get_serializer(report).data)
+        return ok_response(
+            self.get_serializer(report).data,
+            message="Moderation report updated successfully.",
+            status_code=status.HTTP_200_OK,
+        )
+
+
 
 
 class ModerationReportModerateActionView(APIView):
     permission_classes = [IsAdminUser]
 
     @extend_schema(
-        request=OpenApiTypes.OBJECT,
+        request=inline_serializer(
+            name="ModerationReportModerateActionRequest",
+            fields={
+                "action": serializers.CharField(),
+                "hide_room": serializers.BooleanField(required=False),
+                "resolution_notes": serializers.CharField(required=False, allow_blank=True),
+            },
+        ),
         responses={
-            200: OpenApiTypes.OBJECT,
-            400: OpenApiTypes.OBJECT,
-            404: OpenApiTypes.OBJECT,
+            200: inline_serializer(
+                name="ModerationReportModerateActionOkResponse",
+                fields={
+                    "ok": serializers.BooleanField(),
+                    "message": serializers.CharField(required=False, allow_null=True),
+                    "data": inline_serializer(
+                        name="ModerationReportModerateActionData",
+                        fields={
+                            "id": serializers.IntegerField(),
+                            "status": serializers.CharField(),
+                        },
+                    ),
+                },
+            ),
+            400: OpenApiResponse(description="Validation error."),
+            401: OpenApiResponse(description="Authentication required."),
+            403: OpenApiResponse(description="Admin privileges required."),
+            404: OpenApiResponse(description="Report not found."),
         },
+        description="Moderate a report by changing its status, optionally hiding the reported room.",
     )
     def post(self, request, pk):
         """
@@ -6994,7 +7600,6 @@ class ModerationReportModerateActionView(APIView):
         if not new_status:
             return Response({"detail": "invalid action"}, status=status.HTTP_400_BAD_REQUEST)
 
-        # views.py
         if not _can_transition_report_status(report.status, new_status):
             return Response(
                 {"status": f"Invalid transition from '{report.status}' to '{new_status}'."},
@@ -7033,7 +7638,22 @@ class ModerationReportModerateActionView(APIView):
         except Exception:
             pass
 
-        return Response({"id": report.pk, "status": report.status})
+        return ok_response(
+            {"id": report.pk, "status": report.status},
+            status_code=status.HTTP_200_OK,
+        )
+        
+        
+        
+
+class RoomModerationStatusUpdateSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(choices=["active", "hidden"])
+
+
+class RoomModerationStatusResponseSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    status = serializers.CharField()
+
 
 class RoomModerationStatusView(APIView):
     """
@@ -7043,14 +7663,22 @@ class RoomModerationStatusView(APIView):
     permission_classes = [IsAdminUser]
 
     @extend_schema(
-        request=OpenApiTypes.OBJECT,
-        responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT},
+        request=RoomModerationStatusUpdateSerializer,
+        responses={
+            200: standard_response_serializer(
+                "RoomModerationStatusUpdateResponse",
+                RoomModerationStatusResponseSerializer,
+            ),
+            400: OpenApiResponse(response=StandardErrorResponseSerializer),
+            404: OpenApiResponse(response=StandardErrorResponseSerializer),
+        },
     )
     def patch(self, request, pk):
         room = get_object_or_404(Room, pk=pk)
-        status_new = (request.data.get("status") or "").strip()
-        if status_new not in {"active", "hidden"}:
-            return Response({"status": "Must be 'active' or 'hidden'."}, status=status.HTTP_400_BAD_REQUEST)
+
+        serializer = RoomModerationStatusUpdateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        status_new = serializer.validated_data["status"]
 
         if room.status != status_new:
             room.status = status_new
@@ -7065,8 +7693,11 @@ class RoomModerationStatusView(APIView):
             except Exception:
                 pass
 
-        return Response({"id": room.pk, "status": room.status})
-
+        return ok_response(
+            {"id": room.pk, "status": room.status},
+            message="Room moderation status updated successfully.",
+            status_code=status.HTTP_200_OK,
+        )
 
 # --------------------
 # Ops snapshot
@@ -7186,7 +7817,27 @@ class DataExportStartView(APIView):
 
     @extend_schema(
         request=GDPRExportStartSerializer,
-        responses={200: OpenApiTypes.OBJECT},
+        responses={
+            201: inline_serializer(
+                name="DataExportStartOkResponse",
+                fields={
+                    "ok": serializers.BooleanField(),
+                    "message": serializers.CharField(required=False, allow_null=True),
+                    "data": inline_serializer(
+                        name="DataExportStartData",
+                        fields={
+                            "status": serializers.CharField(),
+                            "download_url": serializers.CharField(),
+                            "expires_at": serializers.DateTimeField(allow_null=True),
+                        },
+                    ),
+                },
+            ),
+            400: OpenApiResponse(description="Validation error."),
+            401: OpenApiResponse(description="Authentication required."),
+            500: DetailResponseSerializer,
+        },
+        description="Start a GDPR data export build and return a download link in the standard envelope.",
     )
     def post(self, request):
         ser = GDPRExportStartSerializer(data=request.data)
@@ -7195,7 +7846,7 @@ class DataExportStartView(APIView):
         export = DataExport.objects.create(user=request.user, status="processing")
         try:
             # build_export_zip should return a *relative* path inside MEDIA_ROOT
-            rel_path = build_export_zip(request.user, export)  # e.g. "exports/1/export_20251029T234639.zip" or "exports\\1\\..."
+            rel_path = build_export_zip(request.user, export)
             # Normalise to URL/posix for building the public URL
             rel_path_url = (rel_path or "").replace("\\", "/").lstrip("/")
             media_url = (settings.MEDIA_URL or "/media/").rstrip("/")
@@ -7204,14 +7855,20 @@ class DataExportStartView(APIView):
             export.status = "failed"
             export.error = str(e)
             export.save(update_fields=["status", "error"])
-            return Response({"detail": "Failed to build export."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response(
+                {"detail": "Failed to build export."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
         # If your builder marked it ready, return that; otherwise "processing" is fine.
-        return Response(
-            {"status": export.status, "download_url": url, "expires_at": export.expires_at},
-            status=201,
+        return ok_response(
+            {
+                "status": export.status,
+                "download_url": url,
+                "expires_at": export.expires_at,
+            },
+            status_code=status.HTTP_201_CREATED,
         )
-
 
 class DataExportLatestView(APIView):
     """
@@ -7306,13 +7963,34 @@ class AccountDeleteConfirmView(APIView):
 
     @extend_schema(
         request=GDPRDeleteConfirmSerializer,
-        responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT},
+        responses={
+            200: inline_serializer(
+                name="AccountDeleteConfirmOkResponse",
+                fields={
+                    "ok": serializers.BooleanField(),
+                    "message": serializers.CharField(required=False, allow_null=True),
+                    "data": inline_serializer(
+                        name="AccountDeleteConfirmData",
+                        fields={
+                            "detail": serializers.CharField(),
+                        },
+                    ),
+                },
+            ),
+            400: OpenApiResponse(description="Validation error."),
+            401: OpenApiResponse(description="Authentication required."),
+        },
+        description="Confirm account deletion, perform GDPR erasure, and deactivate the current user.",
     )
     def post(self, request):
         ser = GDPRDeleteConfirmSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
+
         if not ser.validated_data["confirm"]:
-            return Response({"detail": "Confirmation required."}, status=400)
+            return Response(
+                {"detail": "Confirmation required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         try:
             # Preferred path: your service does full erasure.
@@ -7355,9 +8033,13 @@ class AccountDeleteConfirmView(APIView):
         except Exception:
             pass
 
-        return Response({"detail": "Your personal data has been erased and your account deactivated."})
-
-
+        return ok_response(
+            {"detail": "Your personal data has been erased and your account deactivated."},
+            status_code=status.HTTP_200_OK,
+        )
+        
+        
+        
 # --------------------
 # Notifications
 # --------------------
@@ -7390,14 +8072,36 @@ class NotificationMarkReadView(APIView):
 
     @extend_schema(
         request=None,
-        responses={200: OpenApiTypes.OBJECT, 404: OpenApiTypes.OBJECT},
+        responses={
+            200: inline_serializer(
+                name="NotificationMarkReadOkResponse",
+                fields={
+                    "ok": serializers.BooleanField(),
+                    "message": serializers.CharField(required=False, allow_null=True),
+                    "data": inline_serializer(
+                        name="NotificationMarkReadData",
+                        fields={
+                            "ok": serializers.BooleanField(),
+                        },
+                    ),
+                },
+            ),
+            401: OpenApiResponse(description="Authentication required."),
+            404: OpenApiResponse(description="Notification not found."),
+        },
+        description="Mark a notification as read for the current user.",
     )
     def post(self, request, pk: int):
         notif = get_object_or_404(Notification, pk=pk, user=request.user)
+
         if not notif.is_read:
             notif.is_read = True
             notif.save(update_fields=["is_read"])
-        return Response({"ok": True}, status=status.HTTP_200_OK)
+
+        return ok_response(
+            {"ok": True},
+            status_code=status.HTTP_200_OK,
+        )
 
 
 class NotificationMarkAllReadView(APIView):
@@ -7406,12 +8110,33 @@ class NotificationMarkAllReadView(APIView):
     @extend_schema(
         request=None,
         responses={
-            200: OpenApiTypes.OBJECT,
+            200: inline_serializer(
+                name="NotificationMarkAllReadOkResponse",
+                fields={
+                    "ok": serializers.BooleanField(),
+                    "message": serializers.CharField(required=False, allow_null=True),
+                    "data": inline_serializer(
+                        name="NotificationMarkAllReadData",
+                        fields={
+                            "marked": serializers.IntegerField(),
+                        },
+                    ),
+                },
+            ),
+            401: OpenApiResponse(description="Authentication required."),
         },
+        description="Mark all notifications as read for the current user.",
     )
     def post(self, request):
-        Notification.objects.filter(user=request.user, is_read=False).update(is_read=True)
-        return Response({"ok": True}, status=status.HTTP_200_OK)
+        updated_count = Notification.objects.filter(
+            user=request.user,
+            is_read=False
+        ).update(is_read=True)
+
+        return ok_response(
+            {"marked": updated_count},
+            status_code=status.HTTP_200_OK,
+        )
     
     
 
@@ -7450,15 +8175,24 @@ class EmailOTPVerifyView(APIView):
     versioning_class = None
 
     @extend_schema(
-    request=EmailOTPVerifySerializer,
-    responses={200: inline_serializer(
-        name="EmailOTPVerifyOkResponse",
-        fields={"ok": serializers.BooleanField(), "data": inline_serializer(
-            name="EmailOTPVerifyData",
-            fields={"detail": serializers.CharField()},
-        )},
-    )},
-    auth=[],
+        request=EmailOTPVerifySerializer,
+        responses={
+            200: inline_serializer(
+                name="EmailOTPVerifyOkResponse",
+                fields={
+                    "ok": serializers.BooleanField(),
+                    "message": serializers.CharField(required=False, allow_null=True),
+                    "data": inline_serializer(
+                        name="EmailOTPVerifyData",
+                        fields={"detail": serializers.CharField()},
+                    ),
+                },
+            ),
+            400: DetailResponseSerializer,
+            429: DetailResponseSerializer,
+        },
+        auth=[],
+        description="Verify a 6-digit email OTP code and mark the user's email as verified.",
     )
     def post(self, request):
         # 1) Validate input (user_id + 6-digit code)
@@ -7473,18 +8207,17 @@ class EmailOTPVerifyView(APIView):
 
         # 3) Get latest active OTP for this user
         otp = (
-                EmailOTP.objects
-                .filter(
-                    user=user,
-                    purpose=EmailOTP.PURPOSE_EMAIL_VERIFY,
-                    used_at__isnull=True,
-                )
-                .order_by("-created_at")
-                .first()
+            EmailOTP.objects
+            .filter(
+                user=user,
+                purpose=EmailOTP.PURPOSE_EMAIL_VERIFY,
+                used_at__isnull=True,
             )
+            .order_by("-created_at")
+            .first()
+        )
 
         if not otp:
-            # → used by tests when no active code should be treated as 400
             return Response(
                 {"detail": "No active code. Please resend."},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -7492,7 +8225,6 @@ class EmailOTPVerifyView(APIView):
 
         # 4) Expired?
         if otp.is_expired:
-            # NOTE: do NOT mark as used here; tests only care about 400
             return Response(
                 {"detail": "Code expired. Please resend."},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -7522,10 +8254,11 @@ class EmailOTPVerifyView(APIView):
         profile.email_verified_at = timezone.now()
         profile.save(update_fields=["email_verified", "email_verified_at"])
 
-        return Response(
+        return ok_response(
             {"detail": "Email verified."},
-            status=status.HTTP_200_OK,
+            status_code=status.HTTP_200_OK,
         )
+
 
 
 class EmailOTPResendView(APIView):
@@ -7535,15 +8268,24 @@ class EmailOTPResendView(APIView):
     versioning_class = None
 
     @extend_schema(
-    request=EmailOTPResendSerializer,
-    responses={200: inline_serializer(
-        name="EmailOTPResendOkResponse",
-        fields={"ok": serializers.BooleanField(), "data": inline_serializer(
-            name="EmailOTPResendData",
-            fields={"detail": serializers.CharField()},
-        )},
-    )},
-    auth=[],
+        request=EmailOTPResendSerializer,
+        responses={
+            200: inline_serializer(
+                name="EmailOTPResendOkResponse",
+                fields={
+                    "ok": serializers.BooleanField(),
+                    "message": serializers.CharField(required=False, allow_null=True),
+                    "data": inline_serializer(
+                        name="EmailOTPResendData",
+                        fields={"detail": serializers.CharField()},
+                    ),
+                },
+            ),
+            400: DetailResponseSerializer,
+            429: DetailResponseSerializer,
+        },
+        auth=[],
+        description="Resend a new email verification OTP code.",
     )
     def post(self, request):
         ser = EmailOTPResendSerializer(data=request.data)
@@ -7558,6 +8300,7 @@ class EmailOTPResendView(APIView):
                 {"detail": "Too many requests. Please wait before requesting another code."},
                 status=status.HTTP_429_TOO_MANY_REQUESTS,
             )
+
         # First call in the window → allow and set key
         cache.set(cache_key, 1, timeout=60)
 
@@ -7568,13 +8311,11 @@ class EmailOTPResendView(APIView):
             used_at__isnull=True,
         ).update(used_at=timezone.now())
 
-
         from django.core import mail
         from django.utils.crypto import get_random_string
 
         code = get_random_string(6, allowed_chars="0123456789")
         EmailOTP.create_for(user, code, ttl_minutes=10, purpose=EmailOTP.PURPOSE_EMAIL_VERIFY)
-
 
         mail.send_mail(
             subject="Your new verification code",
@@ -7583,26 +8324,35 @@ class EmailOTPResendView(APIView):
             recipient_list=[user.email],
             fail_silently=True,
         )
-        return Response(
-            {"detail": "Verification code resent."},
-            status=status.HTTP_200_OK,
-        )
 
+        return ok_response(
+            {"detail": "Verification code resent."},
+            status_code=status.HTTP_200_OK,
+        )
 
 class PhoneOTPStartView(APIView):
     permission_classes = [permissions.IsAuthenticated]
     versioning_class = None
 
     @extend_schema(
-    request=PhoneOTPStartSerializer,
-    responses={200: inline_serializer(
-        name="PhoneOTPStartOkResponse",
-        fields={"ok": serializers.BooleanField(), "data": inline_serializer(
-            name="PhoneOTPStartData",
-            fields={"detail": serializers.CharField()},
-        )},
-    )},
-    auth=[],
+        request=PhoneOTPStartSerializer,
+        responses={
+            200: inline_serializer(
+                name="PhoneOTPStartOkResponse",
+                fields={
+                    "ok": serializers.BooleanField(),
+                    "message": serializers.CharField(required=False, allow_null=True),
+                    "data": inline_serializer(
+                        name="PhoneOTPStartData",
+                        fields={"detail": serializers.CharField()},
+                    ),
+                },
+            ),
+            400: DetailResponseSerializer,
+            401: OpenApiResponse(description="Authentication required."),
+        },
+        auth=[],
+        description="Start phone OTP verification by sending a 6-digit code.",
     )
     def post(self, request):
         serializer = PhoneOTPStartSerializer(data=request.data)
@@ -7621,28 +8371,37 @@ class PhoneOTPStartView(APIView):
         )
 
         # your real SMS send goes here later (Twilio etc.)
-        # for now we just respond "sent" to match the UI flow
 
-        return Response(
+        return ok_response(
             {"detail": "OTP sent to phone."},
-            status=status.HTTP_200_OK,
+            status_code=status.HTTP_200_OK,
         )
-
+        
+        
 
 class PhoneOTPVerifyView(APIView):
     permission_classes = [permissions.IsAuthenticated]
     versioning_class = None
 
     @extend_schema(
-    request=PhoneOTPVerifySerializer,
-    responses={200: inline_serializer(
-        name="PhoneOTPVerifyOkResponse",
-        fields={"ok": serializers.BooleanField(), "data": inline_serializer(
-            name="PhoneOTPVerifyData",
-            fields={"detail": serializers.CharField()},
-        )},
-    )},
-    auth=[],
+        request=PhoneOTPVerifySerializer,
+        responses={
+            200: inline_serializer(
+                name="PhoneOTPVerifyOkResponse",
+                fields={
+                    "ok": serializers.BooleanField(),
+                    "message": serializers.CharField(required=False, allow_null=True),
+                    "data": inline_serializer(
+                        name="PhoneOTPVerifyData",
+                        fields={"detail": serializers.CharField()},
+                    ),
+                },
+            ),
+            400: DetailResponseSerializer,
+            401: OpenApiResponse(description="Authentication required."),
+        },
+        auth=[],
+        description="Verify a phone OTP code and mark the current user's phone number as verified.",
     )
     def post(self, request):
         serializer = PhoneOTPVerifySerializer(data=request.data)
@@ -7679,9 +8438,9 @@ class PhoneOTPVerifyView(APIView):
         profile.phone_verified_at = timezone.now()
         profile.save(update_fields=["phone", "phone_verified", "phone_verified_at"])
 
-        return Response(
+        return ok_response(
             {"detail": "Phone number verification complete."},
-            status=status.HTTP_200_OK,
+            status_code=status.HTTP_200_OK,
         )
         
         
@@ -7707,20 +8466,15 @@ class MyNotificationPreferencesView(APIView):
         ser = NotificationPreferencesSerializer(profile)
         return ok_response(ser.data)
 
-
     @extend_schema(
         request=NotificationPreferencesSerializer,
         responses={
-            200: inline_serializer(
-                name="NotificationPreferencesUpdateOkResponse",
-                fields={
-                    "ok": serializers.BooleanField(),
-                    "message": serializers.CharField(required=False, allow_null=True),
-                    "data": NotificationPreferencesSerializer(),
-                },
+            200: standard_response_serializer(
+                "NotificationPreferencesUpdateResponse",
+                NotificationPreferencesSerializer,
             ),
-            400: OpenApiResponse(description="Validation error."),
-            401: OpenApiResponse(description="Authentication required."),
+            400: OpenApiResponse(response=StandardErrorResponseSerializer),
+            401: OpenApiResponse(response=StandardErrorResponseSerializer),
         },
         description="Update notification preferences (partial update allowed).",
     )
@@ -7729,8 +8483,12 @@ class MyNotificationPreferencesView(APIView):
         ser = NotificationPreferencesSerializer(profile, data=request.data, partial=True)
         ser.is_valid(raise_exception=True)
         ser.save()
-        return ok_response(ser.data)
 
+        return ok_response(
+            ser.data,
+            message="Notification preferences updated successfully.",
+            status_code=status.HTTP_200_OK,
+        )
 
 
 class MyPrivacyPreferencesView(APIView):
@@ -7757,16 +8515,12 @@ class MyPrivacyPreferencesView(APIView):
     @extend_schema(
         request=PrivacyPreferencesSerializer,
         responses={
-            200: inline_serializer(
-                name="PrivacyPreferencesUpdateOkResponse",
-                fields={
-                    "ok": serializers.BooleanField(),
-                    "message": serializers.CharField(required=False, allow_null=True),
-                    "data": PrivacyPreferencesSerializer(),
-                },
+            200: standard_response_serializer(
+                "PrivacyPreferencesUpdateResponse",
+                PrivacyPreferencesSerializer,
             ),
-            400: OpenApiResponse(description="Validation error."),
-            401: OpenApiResponse(description="Authentication required."),
+            400: OpenApiResponse(response=StandardErrorResponseSerializer),
+            401: OpenApiResponse(response=StandardErrorResponseSerializer),
         },
         description="Update the current user's privacy preferences.",
     )
@@ -7775,6 +8529,8 @@ class MyPrivacyPreferencesView(APIView):
         serializer = PrivacyPreferencesSerializer(profile, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         serializer.save()
-        return ok_response(serializer.data, status_code=status.HTTP_200_OK)
-        
-        
+        return ok_response(
+            serializer.data,
+            message="Privacy preferences updated successfully.",
+            status_code=status.HTTP_200_OK,
+        )
