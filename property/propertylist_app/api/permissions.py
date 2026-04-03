@@ -16,3 +16,67 @@ class IsOwnerOrReadOnly(permissions.BasePermission):
             return True
         owner = getattr(obj, "property_owner", None)
         return (owner is not None and owner == request.user) or bool(request.user and request.user.is_staff)
+
+
+from rest_framework import permissions
+
+
+class HasAnyAdminRole(permissions.BasePermission):
+    """
+    Allows access to staff/superuser users or users whose profile.admin_role is set.
+    """
+
+    message = "You do not have permission to perform this action."
+
+    def has_permission(self, request, view):
+        user = request.user
+        if not user or not user.is_authenticated:
+            return False
+
+        if getattr(user, "is_superuser", False) or getattr(user, "is_staff", False):
+            return True
+
+        profile = getattr(user, "profile", None)
+        admin_role = getattr(profile, "admin_role", "") if profile else ""
+        return bool(admin_role)
+
+
+class HasSpecificAdminRole(permissions.BasePermission):
+    """
+    Base class for role-specific admin access.
+    Child classes must define allowed_admin_roles.
+    """
+    allowed_admin_roles = set()
+    message = "You do not have permission to perform this action."
+
+    def has_permission(self, request, view):
+        user = request.user
+        if not user or not user.is_authenticated:
+            return False
+
+        if getattr(user, "is_superuser", False):
+            return True
+
+        profile = getattr(user, "profile", None)
+        admin_role = getattr(profile, "admin_role", "") if profile else ""
+
+        if getattr(user, "is_staff", False) and not self.allowed_admin_roles:
+            return True
+
+        return admin_role in self.allowed_admin_roles
+
+
+class IsModerationAdmin(HasSpecificAdminRole):
+    allowed_admin_roles = {"super_admin", "moderator"}
+
+
+class IsOpsAdmin(HasSpecificAdminRole):
+    allowed_admin_roles = {"super_admin", "ops_admin"}
+
+
+class IsFinanceAdmin(HasSpecificAdminRole):
+    allowed_admin_roles = {"super_admin", "finance_admin"}
+
+
+class IsSupportAdmin(HasSpecificAdminRole):
+    allowed_admin_roles = {"super_admin", "support_admin"}

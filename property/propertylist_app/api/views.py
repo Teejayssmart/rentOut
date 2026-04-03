@@ -31,6 +31,7 @@ from drf_spectacular.utils import extend_schema, OpenApiResponse
 from propertylist_app.api.schema_serializers import (
     ErrorResponseSerializer,
     StandardErrorResponseSerializer,
+    EmptyDataSerializer,
 )
 from propertylist_app.api.schema_helpers import (
     standard_response_serializer,
@@ -159,7 +160,19 @@ from propertylist_app.validators import (
 
 # API plumbing
 from propertylist_app.api.pagination import StandardLimitOffsetPagination
-from propertylist_app.api.permissions import IsAdminOrReadOnly, IsOwnerOrReadOnly
+
+
+from propertylist_app.api.permissions import (
+    IsAdminOrReadOnly,
+    IsOwnerOrReadOnly,
+    HasAnyAdminRole,
+    IsModerationAdmin,
+    IsOpsAdmin,
+    IsFinanceAdmin,
+    IsSupportAdmin,
+)
+
+
 from propertylist_app.api.serializers import (
     AvailabilitySlotSerializer,
     BookingReviewCreateSerializer,
@@ -1366,6 +1379,7 @@ class RoomCategorieVS(viewsets.ModelViewSet):
 class RoomCategorieAV(APIView):
     permission_classes = [IsAdminOrReadOnly]
     throttle_classes = [AnonRateThrottle]
+    pagination_class = StandardLimitOffsetPagination
 
     @extend_schema(
         request=None,
@@ -1385,9 +1399,13 @@ class RoomCategorieAV(APIView):
         qs = RoomCategorie.objects.all().order_by("name")
         if not (request.user and request.user.is_staff):
             qs = qs.filter(active=True)
-        return ok_response(
-            RoomCategorieSerializer(qs, many=True).data,
-            status_code=status.HTTP_200_OK,
+
+        paginator = self.pagination_class()
+        page = paginator.paginate_queryset(qs, request, view=self)
+        serializer = RoomCategorieSerializer(page, many=True)
+
+        return _wrap_response_success(
+            paginator.get_paginated_response(serializer.data)
         )
 
     @extend_schema(
@@ -1455,13 +1473,23 @@ class RoomCategorieDetailAV(APIView):
         )
 
     @extend_schema(
-        request=None,
-        responses={204: None, 404: OpenApiTypes.OBJECT},
+    responses={
+        200: standard_response_serializer(
+            "RoomCategorieDeleteResponse",
+            EmptyDataSerializer,
+        ),
+        404: OpenApiResponse(response=StandardErrorResponseSerializer),
+    }
     )
     def delete(self, request, pk):
         category = get_object_or_404(RoomCategorie, pk=pk)
         category.delete()
-        return Response(status=status.HTTP_204_NO_CONTENT)
+
+        return ok_response(
+            {},
+            message="Room category deleted successfully.",
+            status_code=status.HTTP_200_OK,
+        )
 
 
 class RoomListGV(CachedAnonymousGETMixin, generics.ListAPIView):
@@ -1484,24 +1512,19 @@ class RoomAV(APIView):
 
 
     @extend_schema(
-        operation_id="api_v1_rooms_list",
-        responses={
-            200: inline_serializer(
-                name="PaginatedRoomListResponse",
-                fields={
-                    "count": serializers.IntegerField(),
-                    "next": serializers.CharField(required=False, allow_null=True),
-                    "previous": serializers.CharField(required=False, allow_null=True),
-                    "results": RoomSerializer(many=True),
-                },
-            )
-        },
-        parameters=[
-            OpenApiParameter(name="limit", type=int, location=OpenApiParameter.QUERY, required=False),
-            OpenApiParameter(name="offset", type=int, location=OpenApiParameter.QUERY, required=False),
-        ],
-        description="List active rooms (paid and not expired). Paginated with limit/offset.",
-        )
+    operation_id="api_v1_rooms_list",
+    responses={
+        200: standard_paginated_response_serializer(
+            "RoomListResponse",
+            RoomSerializer,
+        ),
+    },
+    parameters=[
+        OpenApiParameter(name="limit", type=int, location=OpenApiParameter.QUERY, required=False),
+        OpenApiParameter(name="offset", type=int, location=OpenApiParameter.QUERY, required=False),
+    ],
+    description="List active rooms (paid and not expired). Paginated with limit/offset.",
+    )
     def get(self, request, *args, **kwargs):
             today = timezone.now().date()
 
@@ -1525,9 +1548,12 @@ class RoomAV(APIView):
     @extend_schema(
     request=RoomSerializer,
     responses={
-        201: RoomSerializer,
-        400: OpenApiResponse(description="Validation error."),
-        401: OpenApiResponse(description="Authentication required."),
+        201: standard_response_serializer(
+            "RoomCreateResponse",
+            RoomSerializer,
+        ),
+        400: OpenApiResponse(response=StandardErrorResponseSerializer),
+        401: OpenApiResponse(response=StandardErrorResponseSerializer),
     },
     description="Create a room owned by the logged-in user.",
     )
@@ -1551,19 +1577,31 @@ class RoomAV(APIView):
         price = data.get("price_per_month")
         if price in (None, "", []):
             return Response(
-                {"price_per_month": ["This field is required."]},
+                {
+                    "ok": False,
+                    "message": "Validation error.",
+                    "errors": {"price_per_month": ["This field is required."]},
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
         try:
             price_value = float(price)
         except (TypeError, ValueError):
             return Response(
-                {"price_per_month": ["A valid number is required."]},
+                {
+                    "ok": False,
+                    "message": "Validation error.",
+                    "errors": {"price_per_month": ["A valid number is required."]},
+                },
                 status=status.HTTP_400_BAD_REQUEST,
-            )
+)
         if price_value <= 0:
             return Response(
-                {"price_per_month": ["Must be greater than 0."]},
+                {
+                    "ok": False,
+                    "message": "Validation error.",
+                    "errors": {"price_per_month": ["Must be greater than 0."]},
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -1587,8 +1625,12 @@ class RoomAV(APIView):
         serializer.save(property_owner=request.user)
 
         # Return plain DRF object so tests can access response.data["id"]
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
-    
+        return ok_response(
+            serializer.data,
+            message="Room created successfully.",
+            status_code=status.HTTP_201_CREATED,
+        )
+            
 
 
 
@@ -1706,21 +1748,25 @@ class RoomDetailAV(APIView):
         )
 
     @extend_schema(
-        responses={
-            204: OpenApiResponse(description="Deleted."),
-            401: OpenApiResponse(description="Authentication required."),
-            403: OpenApiResponse(description="Forbidden."),
-            404: OpenApiResponse(description="Not found."),
-        },
-        description="Soft-delete a room (owner-only).",
+    responses={
+        200: standard_response_serializer("RoomDeleteResponse", EmptyDataSerializer),
+        401: OpenApiResponse(response=StandardErrorResponseSerializer),
+        403: OpenApiResponse(response=StandardErrorResponseSerializer),
+        404: OpenApiResponse(response=StandardErrorResponseSerializer),
+    },
+    description="Soft-delete a room (owner-only).",
     )
     def delete(self, request, pk, *args, **kwargs):
         room = get_object_or_404(Room.objects.alive(), pk=pk)
         self.check_object_permissions(request, room)
         room.soft_delete()
-        return Response(status=status.HTTP_204_NO_CONTENT)
-    
-    
+
+        return ok_response(
+            {},
+            message="Room deleted successfully.",
+            status_code=status.HTTP_200_OK,
+        )
+        
 
 class RoomPreviewView(APIView):
     """
@@ -1743,20 +1789,16 @@ class RoomPreviewView(APIView):
     permission_classes = [IsAuthenticated]
 
     @extend_schema(
-        responses={
-            200: inline_serializer(
-                name="RoomPreviewOkResponse",
-                fields={
-                    "ok": serializers.BooleanField(),
-                    "message": serializers.CharField(required=False, allow_null=True),
-                    "data": RoomPreviewSerializer(),
-                },
-            ),
-            401: OpenApiResponse(description="Authentication required."),
-            403: DetailResponseSerializer,
-            404: DetailResponseSerializer,
-        },
-        description="Return the private preview payload for a room owned by the authenticated user.",
+    responses={
+        200: standard_response_serializer(
+            "RoomPreviewResponse",
+            RoomPreviewSerializer,
+        ),
+        401: OpenApiResponse(response=StandardErrorResponseSerializer),
+        403: OpenApiResponse(response=StandardErrorResponseSerializer),
+        404: OpenApiResponse(response=StandardErrorResponseSerializer),
+    },
+    description="Return the private preview payload for a room owned by the authenticated user.",
     )
     def get(self, request, pk):
         room = get_object_or_404(Room.objects.filter(is_deleted=False), pk=pk)
@@ -1764,7 +1806,10 @@ class RoomPreviewView(APIView):
         # Explicit owner check – preview is private
         if request.user != room.property_owner:
             return Response(
-                {"detail": "You do not have permission to view this listing preview."},
+                {
+                    "ok": False,
+                    "message": "You do not have permission to view this listing preview.",
+                },
                 status=status.HTTP_403_FORBIDDEN,
             )
 
@@ -1823,12 +1868,26 @@ class RoomListAlt(CachedAnonymousGETMixin, generics.ListAPIView):
             status_code=status.HTTP_200_OK,
         )
 
+    @extend_schema(
+    responses={
+        200: standard_response_serializer(
+            "RoomListAltDeleteResponse",
+            EmptyDataSerializer,
+        ),
+        401: OpenApiResponse(response=StandardErrorResponseSerializer),
+        403: OpenApiResponse(response=StandardErrorResponseSerializer),
+        404: OpenApiResponse(response=StandardErrorResponseSerializer),
+    }
+    )
     def delete(self, request, pk):
         room = get_object_or_404(Room.objects.alive(), pk=pk)
         self.check_object_permissions(request, room)
         room.soft_delete()
-        return Response(status=status.HTTP_204_NO_CONTENT)
-
+        return ok_response(
+            {},
+            message="Room deleted successfully.",
+            status_code=status.HTTP_200_OK,
+        )
 
 class RoomSoftDeleteView(APIView):
     """POST /api/rooms/<id>/soft-delete/"""
@@ -2740,13 +2799,18 @@ class MyProfilePageView(APIView):
     permission_classes = [IsAuthenticated]
 
     @extend_schema(
-        responses={200: ProfilePageSerializer},
+        responses={
+            200: standard_response_serializer(
+                "MyProfilePageResponse",
+                ProfilePageSerializer,
+            ),
+            401: OpenApiResponse(response=StandardErrorResponseSerializer),
+        },
     )
     def get(self, request):
         user = request.user
         profile, _ = UserProfile.objects.get_or_create(user=user)
 
-        # review stats (same logic as UserReviewSummaryView)
         qs = Review.objects.filter(
             reviewee_id=user.id,
             reveal_at__isnull=False,
@@ -2765,25 +2829,21 @@ class MyProfilePageView(APIView):
 
         total = landlord_count + tenant_count
 
-        # weighted overall rating to match your single “4.0” on the profile card
         overall = None
         if total > 0:
             la = float(landlord_avg or 0)
             ta = float(tenant_avg or 0)
             overall = ((la * landlord_count) + (ta * tenant_count)) / total
 
-        # preview reviews (2 cards)  <-- IMPORTANT: serialize these, not raw objects
         preview_qs = qs.order_by("-submitted_at")[:2]
         preview = ReviewSerializer(preview_qs, many=True, context={"request": request}).data
 
-        # compute age from date_of_birth
         age = None
         if profile.date_of_birth:
             today = timezone.now().date()
             dob = profile.date_of_birth
             age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
 
-        # location text: prefer address_manual (what UI shows), fallback to postcode
         location = (profile.address_manual or "").strip()
         if not location:
             location = (profile.postcode or "").strip()
@@ -2793,36 +2853,34 @@ class MyProfilePageView(APIView):
             "email": user.email,
             "username": user.username,
             "date_joined": user.date_joined,
-
             "avatar": (profile.avatar.url if profile.avatar else None),
             "role": profile.role,
-
             "gender": profile.gender or "",
             "occupation": profile.occupation or "",
             "postcode": profile.postcode or "",
             "address_manual": profile.address_manual or "",
             "date_of_birth": profile.date_of_birth,
             "about_you": profile.about_you or "",
-
             "age": age,
             "location": location,
-
             "total_reviews": total,
             "overall_rating": overall,
-
             "landlord_reviews_count": landlord_count,
             "landlord_rating_average": landlord_avg,
-
             "tenant_reviews_count": tenant_count,
             "tenant_rating_average": tenant_avg,
-
             "reviews_preview": preview,
         }
 
-        # THIS is where it goes (end of method, right before return)
         ser = ProfilePageSerializer(payload, context={"request": request})
-        return Response(ser.data, status=status.HTTP_200_OK)
-
+        return ok_response(
+            ser.data,
+            message="Profile page retrieved successfully.",
+            status_code=status.HTTP_200_OK,
+        )
+        
+        
+        
 # --------------------
 # Room photos
 # --------------------
@@ -2838,15 +2896,11 @@ class RoomPhotoUploadView(APIView):
     @extend_schema(
         request=None,
         responses={
-            200: inline_serializer(
-                name="RoomPhotoListOkResponse",
-                fields={
-                    "ok": serializers.BooleanField(),
-                    "message": serializers.CharField(required=False, allow_null=True),
-                    "data": RoomImageSerializer(many=True),
-                },
+            200: standard_response_serializer(
+                "RoomPhotoListResponse",
+                RoomImageSerializer(many=True),
             ),
-            404: OpenApiResponse(description="Room not found."),
+            404: OpenApiResponse(response=StandardErrorResponseSerializer),
         },
         description="List approved room photos. Returns ok_response envelope.",
     )
@@ -2864,17 +2918,13 @@ class RoomPhotoUploadView(APIView):
             encoding={"image": {"contentType": "image/*"}},
         ),
         responses={
-            201: inline_serializer(
-                name="RoomPhotoUploadOkResponse",
-                fields={
-                    "ok": serializers.BooleanField(),
-                    "message": serializers.CharField(required=False, allow_null=True),
-                    "data": RoomImageSerializer(),
-                },
+            201: standard_response_serializer(
+                "RoomPhotoUploadResponse",
+                RoomImageSerializer,
             ),
-            400: OpenApiResponse(description="Invalid file or validation error."),
-            403: OpenApiResponse(description="Forbidden (not the room owner)."),
-            404: OpenApiResponse(description="Room not found."),
+            400: OpenApiResponse(response=StandardErrorResponseSerializer),
+            403: OpenApiResponse(response=StandardErrorResponseSerializer),
+            404: OpenApiResponse(response=StandardErrorResponseSerializer),
         },
         description="Upload a room image. Returns ok_response envelope.",
     )
@@ -2889,14 +2939,21 @@ class RoomPhotoUploadView(APIView):
         # Owner check
         if room.property_owner_id != request.user.id:
             return Response(
-                {"detail": "You do not have permission to perform this action."},
+                {
+                    "ok": False,
+                    "message": "You do not have permission to perform this action.",
+                },
                 status=status.HTTP_403_FORBIDDEN,
             )
 
         file_obj = request.FILES.get("image")
         if not file_obj:
             return Response(
-                {"image": "This field is required."},
+                {
+                    "ok": False,
+                    "message": "Validation error.",
+                    "errors": {"image": ["This field is required."]},
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -2906,7 +2963,11 @@ class RoomPhotoUploadView(APIView):
         ext = name_lower.rsplit(".", 1)[-1] if "." in name_lower else ""
         if ext not in allowed_exts:
             return Response(
-                {"image": "Only JPG, JPEG, or PNG files are allowed."},
+                {
+                    "ok": False,
+                    "message": "Validation error.",
+                    "errors": {"image": ["Only JPG, JPEG, or PNG files are allowed."]},
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -2916,7 +2977,14 @@ class RoomPhotoUploadView(APIView):
             assert_no_duplicate_files([file_obj])
         except DjangoValidationError as e:
             msg = e.message if hasattr(e, "message") else str(e)
-            return Response({"image": msg}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {
+                    "ok": False,
+                    "message": "Validation error.",
+                    "errors": {"image": [msg]},
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         # 3) Autopilot moderation: approve instantly unless flagged
         auto_ok = should_auto_approve_upload(file_obj)
@@ -2936,10 +3004,9 @@ class RoomPhotoUploadView(APIView):
 
         return ok_response(
             RoomImageSerializer(photo).data,
+            message="Room photo uploaded successfully.",
             status_code=status.HTTP_201_CREATED,
         )
-
-
 
 class RoomPhotoDeleteView(APIView):
     """
@@ -2948,14 +3015,19 @@ class RoomPhotoDeleteView(APIView):
     permission_classes = [IsAuthenticated]
 
     @extend_schema(
-        request=None,
-        responses={204: None, 403: OpenApiTypes.OBJECT, 404: OpenApiTypes.OBJECT},
+    responses={
+        200: standard_response_serializer(
+            "RoomPhotoDeleteResponse",
+            EmptyDataSerializer,
+        ),
+        401: OpenApiResponse(response=StandardErrorResponseSerializer),
+        403: OpenApiResponse(response=StandardErrorResponseSerializer),
+        404: OpenApiResponse(response=StandardErrorResponseSerializer),
+    }
     )
     def delete(self, request, pk, photo_id):
-        # Must be an actual instance
         room = get_object_or_404(Room, pk=pk)
 
-        # Robust owner-id extraction (works even if FK not loaded or None)
         owner_id = (
             getattr(room, "property_owner_id", None)
             or getattr(getattr(room, "property_owner", None), "id", None)
@@ -2963,13 +3035,21 @@ class RoomPhotoDeleteView(APIView):
 
         if owner_id != request.user.id:
             return Response(
-                {"detail": "You do not have permission to perform this action."},
+                {
+                    "ok": False,
+                    "message": "You do not have permission to perform this action.",
+                },
                 status=status.HTTP_403_FORBIDDEN,
             )
 
         photo = get_object_or_404(RoomImage, pk=photo_id, room=room)
         photo.delete()
-        return Response(status=status.HTTP_204_NO_CONTENT)
+
+        return ok_response(
+            {},
+            message="Room photo deleted successfully.",
+            status_code=status.HTTP_200_OK,
+        )
 
 # --------------------
 # My Rooms / Search / Nearby
@@ -3085,6 +3165,7 @@ class CityListView(APIView):
       ?q=Lon    -> filters by case-insensitive substring
     """
     permission_classes = [AllowAny]
+    pagination_class = StandardLimitOffsetPagination
 
     @extend_schema(
         request=None,
@@ -3131,8 +3212,13 @@ class CityListView(APIView):
             for r in rows
         ]
 
-        ser = CitySummarySerializer(data, many=True)
-        return ok_response(ser.data, status_code=status.HTTP_200_OK)
+        paginator = self.pagination_class()
+        page = paginator.paginate_queryset(data, request, view=self)
+        ser = CitySummarySerializer(page, many=True)
+
+        return _wrap_response_success(
+            paginator.get_paginated_response(ser.data)
+        )
 
     
 
@@ -3580,350 +3666,318 @@ class SearchRoomsView(generics.ListAPIView):
     
     @extend_schema(
         parameters=[
-                OpenApiParameter(
-                    name="q",
-                    type=str,
-                    location=OpenApiParameter.QUERY,
-                    required=False,
-                    description="Free-text search across title, description, and location.",
-                ),
-                OpenApiParameter(
-                    name="min_price",
-                    type=int,
-                    location=OpenApiParameter.QUERY,
-                    required=False,
-                    description="Minimum monthly price.",
-                ),
-                OpenApiParameter(
-                    name="max_price",
-                    type=int,
-                    location=OpenApiParameter.QUERY,
-                    required=False,
-                    description="Maximum monthly price.",
-                ),
-                OpenApiParameter(
-                    name="postcode",
-                    type=str,
-                    location=OpenApiParameter.QUERY,
-                    required=False,
-                    description="UK postcode centre for radius search.",
-                ),
-                OpenApiParameter(
-                    name="radius_miles",
-                    type=int,
-                    location=OpenApiParameter.QUERY,
-                    required=False,
-                    description="Search radius in miles around postcode.",
-                ),
-                OpenApiParameter(
-                    name="ordering",
-                    type=str,
-                    location=OpenApiParameter.QUERY,
-                    required=False,
-                    description="Sort order. Supported values include default, newest, last_updated, price_asc, price_desc, distance.",
-                ),
-                OpenApiParameter(
-                    name="property_types",
-                    type=str,
-                    location=OpenApiParameter.QUERY,
-                    required=False,
-                    many=True,
-                    description="Property types filter.",
-                ),
-                OpenApiParameter(
-                    name="rooms_min",
-                    type=int,
-                    location=OpenApiParameter.QUERY,
-                    required=False,
-                    description="Minimum number of bedrooms.",
-                ),
-                OpenApiParameter(
-                    name="rooms_max",
-                    type=int,
-                    location=OpenApiParameter.QUERY,
-                    required=False,
-                    description="Maximum number of bedrooms.",
-                ),
-                OpenApiParameter(
-                    name="move_in_date",
-                    type=OpenApiTypes.DATE,
-                    location=OpenApiParameter.QUERY,
-                    required=False,
-                    description="Earliest acceptable move-in date in YYYY-MM-DD format.",
-                ),
-                OpenApiParameter(
-                    name="min_rating",
-                    type=float,
-                    location=OpenApiParameter.QUERY,
-                    required=False,
-                    description="Minimum average rating from 1 to 5.",
-                ),
-                OpenApiParameter(
-                    name="max_rating",
-                    type=float,
-                    location=OpenApiParameter.QUERY,
-                    required=False,
-                    description="Maximum average rating from 1 to 5.",
-                ),
-                OpenApiParameter(
-                    name="street",
-                    type=str,
-                    location=OpenApiParameter.QUERY,
-                    required=False,
-                    description="Street filter.",
-                ),
-                OpenApiParameter(
-                    name="city",
-                    type=str,
-                    location=OpenApiParameter.QUERY,
-                    required=False,
-                    description="City filter.",
-                ),
-                OpenApiParameter(
-                    name="furnished",
-                    type=bool,
-                    location=OpenApiParameter.QUERY,
-                    required=False,
-                    description="Filter by furnished true/false.",
-                ),
-                OpenApiParameter(
-                    name="bills_included",
-                    type=bool,
-                    location=OpenApiParameter.QUERY,
-                    required=False,
-                    description="Filter by bills included true/false.",
-                ),
-                OpenApiParameter(
-                    name="parking_available",
-                    type=bool,
-                    location=OpenApiParameter.QUERY,
-                    required=False,
-                    description="Filter by parking available true/false.",
-                ),
-                OpenApiParameter(
-                    name="bathroom_type",
-                    type=str,
-                    location=OpenApiParameter.QUERY,
-                    required=False,
-                    description="Bathroom type filter.",
-                ),
-                OpenApiParameter(
-                    name="shared_living_space",
-                    type=str,
-                    location=OpenApiParameter.QUERY,
-                    required=False,
-                    description="Shared living space filter.",
-                ),
-                OpenApiParameter(
-                    name="smoking_allowed_in_property",
-                    type=str,
-                    location=OpenApiParameter.QUERY,
-                    required=False,
-                    description="Smoking allowed filter.",
-                ),
-                OpenApiParameter(
-                    name="suitable_for",
-                    type=str,
-                    location=OpenApiParameter.QUERY,
-                    required=False,
-                    description="Suitable for filter.",
-                ),
-                OpenApiParameter(
-                    name="max_occupants",
-                    type=int,
-                    location=OpenApiParameter.QUERY,
-                    required=False,
-                    description="Maximum occupants filter.",
-                ),
-                OpenApiParameter(
-                    name="household_bedrooms_min",
-                    type=int,
-                    location=OpenApiParameter.QUERY,
-                    required=False,
-                    description="Minimum household bedrooms filter.",
-                ),
-                OpenApiParameter(
-                    name="household_bedrooms_max",
-                    type=int,
-                    location=OpenApiParameter.QUERY,
-                    required=False,
-                    description="Maximum household bedrooms filter.",
-                ),
-                OpenApiParameter(
-                    name="household_type",
-                    type=str,
-                    location=OpenApiParameter.QUERY,
-                    required=False,
-                    description="Household type filter.",
-                ),
-                OpenApiParameter(
-                    name="household_environment",
-                    type=str,
-                    location=OpenApiParameter.QUERY,
-                    required=False,
-                    description="Household environment filter.",
-                ),
-                OpenApiParameter(
-                    name="pets_allowed",
-                    type=str,
-                    location=OpenApiParameter.QUERY,
-                    required=False,
-                    description="Pets allowed filter.",
-                ),
-                OpenApiParameter(
-                    name="inclusive_household",
-                    type=str,
-                    location=OpenApiParameter.QUERY,
-                    required=False,
-                    description="Inclusive household filter.",
-                ),
-                OpenApiParameter(
-                    name="accessible_entry",
-                    type=str,
-                    location=OpenApiParameter.QUERY,
-                    required=False,
-                    description="Accessible entry filter.",
-                ),
-                OpenApiParameter(
-                    name="free_to_contact",
-                    type=bool,
-                    location=OpenApiParameter.QUERY,
-                    required=False,
-                    description="Filter by free to contact true/false.",
-                ),
-                OpenApiParameter(
-                    name="photos_only",
-                    type=bool,
-                    location=OpenApiParameter.QUERY,
-                    required=False,
-                    description="Only return rooms with photos.",
-                ),
-                OpenApiParameter(
-                    name="verified_advertisers_only",
-                    type=bool,
-                    location=OpenApiParameter.QUERY,
-                    required=False,
-                    description="Only return verified advertisers.",
-                ),
-                OpenApiParameter(
-                    name="advert_by_household",
-                    type=str,
-                    location=OpenApiParameter.QUERY,
-                    required=False,
-                    description="Advert by household filter.",
-                ),
-                OpenApiParameter(
-                    name="posted_within_days",
-                    type=int,
-                    location=OpenApiParameter.QUERY,
-                    required=False,
-                    description="Only return rooms posted within the given number of days.",
-                ),
-                OpenApiParameter(
-                    name="include_shared",
-                    type=bool,
-                    location=OpenApiParameter.QUERY,
-                    required=False,
-                    description="Only include shared rooms.",
-                ),
-                OpenApiParameter(
-                    name="min_age",
-                    type=int,
-                    location=OpenApiParameter.QUERY,
-                    required=False,
-                    description="Minimum suitable age.",
-                ),
-                OpenApiParameter(
-                    name="max_age",
-                    type=int,
-                    location=OpenApiParameter.QUERY,
-                    required=False,
-                    description="Maximum suitable age.",
-                ),
-                OpenApiParameter(
-                    name="min_stay_months",
-                    type=int,
-                    location=OpenApiParameter.QUERY,
-                    required=False,
-                    description="Minimum stay in months.",
-                ),
-                OpenApiParameter(
-                    name="max_stay_months",
-                    type=int,
-                    location=OpenApiParameter.QUERY,
-                    required=False,
-                    description="Maximum stay in months.",
-                ),
-                OpenApiParameter(
-                    name="room_for",
-                    type=str,
-                    location=OpenApiParameter.QUERY,
-                    required=False,
-                    description="Room for filter.",
-                ),
-                OpenApiParameter(
-                    name="room_size",
-                    type=str,
-                    location=OpenApiParameter.QUERY,
-                    required=False,
-                    description="Room size filter.",
-                ),
-                OpenApiParameter(
-                    name="limit",
-                    type=int,
-                    location=OpenApiParameter.QUERY,
-                    required=False,
-                    description="Maximum number of rooms to return.",
-                ),
-                OpenApiParameter(
-                    name="offset",
-                    type=int,
-                    location=OpenApiParameter.QUERY,
-                    required=False,
-                    description="Number of rooms to skip before starting the result set.",
-                ),
-            ],
-            responses={
-                200: inline_serializer(
-                    name="SearchRoomsResponse",
-                    fields={
-                        "ok": serializers.BooleanField(),
-                        "data": inline_serializer(
-                            name="SearchRoomsPaginatedData",
-                            fields={
-                                "count": serializers.IntegerField(),
-                                "next": serializers.CharField(allow_null=True),
-                                "previous": serializers.CharField(allow_null=True),
-                                "results": RoomSerializer(many=True),
-                            },
-                        ),
-                    },
-                ),
-                400: inline_serializer(
-                name="SearchRoomsBadRequestResponse",
-                fields={
-                    "detail": serializers.CharField(required=False),
-                    "postcode": serializers.CharField(required=False),
-                    "min_price": serializers.CharField(required=False),
-                    "max_price": serializers.CharField(required=False),
-                    "rooms_min": serializers.CharField(required=False),
-                    "rooms_max": serializers.CharField(required=False),
-                    "move_in_date": serializers.CharField(required=False),
-                    "min_rating": serializers.CharField(required=False),
-                    "max_rating": serializers.CharField(required=False),
-                    "max_occupants": serializers.CharField(required=False),
-                    "household_bedrooms_min": serializers.CharField(required=False),
-                    "household_bedrooms_max": serializers.CharField(required=False),
-                    "posted_within_days": serializers.CharField(required=False),
-                    "min_age": serializers.CharField(required=False),
-                    "max_age": serializers.CharField(required=False),
-                    "min_stay_months": serializers.CharField(required=False),
-                    "max_stay_months": serializers.CharField(required=False),
-                },
+            OpenApiParameter(
+                name="q",
+                type=str,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Free-text search across title, description, and location.",
             ),
-            },
-            description="Search rooms with filters, sorting, postcode radius search, and limit/offset pagination.",
-            ) 
+            OpenApiParameter(
+                name="min_price",
+                type=int,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Minimum monthly price.",
+            ),
+            OpenApiParameter(
+                name="max_price",
+                type=int,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Maximum monthly price.",
+            ),
+            OpenApiParameter(
+                name="postcode",
+                type=str,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="UK postcode centre for radius search.",
+            ),
+            OpenApiParameter(
+                name="radius_miles",
+                type=int,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Search radius in miles around postcode.",
+            ),
+            OpenApiParameter(
+                name="ordering",
+                type=str,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Sort order. Supported values include default, newest, last_updated, price_asc, price_desc, distance.",
+            ),
+            OpenApiParameter(
+                name="property_types",
+                type=str,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                many=True,
+                description="Property types filter.",
+            ),
+            OpenApiParameter(
+                name="rooms_min",
+                type=int,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Minimum number of bedrooms.",
+            ),
+            OpenApiParameter(
+                name="rooms_max",
+                type=int,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Maximum number of bedrooms.",
+            ),
+            OpenApiParameter(
+                name="move_in_date",
+                type=OpenApiTypes.DATE,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Earliest acceptable move-in date in YYYY-MM-DD format.",
+            ),
+            OpenApiParameter(
+                name="min_rating",
+                type=float,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Minimum average rating from 1 to 5.",
+            ),
+            OpenApiParameter(
+                name="max_rating",
+                type=float,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Maximum average rating from 1 to 5.",
+            ),
+            OpenApiParameter(
+                name="street",
+                type=str,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Street filter.",
+            ),
+            OpenApiParameter(
+                name="city",
+                type=str,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="City filter.",
+            ),
+            OpenApiParameter(
+                name="furnished",
+                type=bool,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Filter by furnished true/false.",
+            ),
+            OpenApiParameter(
+                name="bills_included",
+                type=bool,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Filter by bills included true/false.",
+            ),
+            OpenApiParameter(
+                name="parking_available",
+                type=bool,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Filter by parking available true/false.",
+            ),
+            OpenApiParameter(
+                name="bathroom_type",
+                type=str,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Bathroom type filter.",
+            ),
+            OpenApiParameter(
+                name="shared_living_space",
+                type=str,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Shared living space filter.",
+            ),
+            OpenApiParameter(
+                name="smoking_allowed_in_property",
+                type=str,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Smoking allowed filter.",
+            ),
+            OpenApiParameter(
+                name="suitable_for",
+                type=str,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Suitable for filter.",
+            ),
+            OpenApiParameter(
+                name="max_occupants",
+                type=int,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Maximum occupants filter.",
+            ),
+            OpenApiParameter(
+                name="household_bedrooms_min",
+                type=int,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Minimum household bedrooms filter.",
+            ),
+            OpenApiParameter(
+                name="household_bedrooms_max",
+                type=int,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Maximum household bedrooms filter.",
+            ),
+            OpenApiParameter(
+                name="household_type",
+                type=str,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Household type filter.",
+            ),
+            OpenApiParameter(
+                name="household_environment",
+                type=str,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Household environment filter.",
+            ),
+            OpenApiParameter(
+                name="pets_allowed",
+                type=str,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Pets allowed filter.",
+            ),
+            OpenApiParameter(
+                name="inclusive_household",
+                type=str,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Inclusive household filter.",
+            ),
+            OpenApiParameter(
+                name="accessible_entry",
+                type=str,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Accessible entry filter.",
+            ),
+            OpenApiParameter(
+                name="free_to_contact",
+                type=bool,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Filter by free to contact true/false.",
+            ),
+            OpenApiParameter(
+                name="photos_only",
+                type=bool,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Only return rooms with photos.",
+            ),
+            OpenApiParameter(
+                name="verified_advertisers_only",
+                type=bool,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Only return verified advertisers.",
+            ),
+            OpenApiParameter(
+                name="advert_by_household",
+                type=str,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Advert by household filter.",
+            ),
+            OpenApiParameter(
+                name="posted_within_days",
+                type=int,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Only return rooms posted within the given number of days.",
+            ),
+            OpenApiParameter(
+                name="include_shared",
+                type=bool,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Only include shared rooms.",
+            ),
+            OpenApiParameter(
+                name="min_age",
+                type=int,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Minimum suitable age.",
+            ),
+            OpenApiParameter(
+                name="max_age",
+                type=int,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Maximum suitable age.",
+            ),
+            OpenApiParameter(
+                name="min_stay_months",
+                type=int,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Minimum stay in months.",
+            ),
+            OpenApiParameter(
+                name="max_stay_months",
+                type=int,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Maximum stay in months.",
+            ),
+            OpenApiParameter(
+                name="room_for",
+                type=str,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Room for filter.",
+            ),
+            OpenApiParameter(
+                name="room_size",
+                type=str,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Room size filter.",
+            ),
+            OpenApiParameter(
+                name="limit",
+                type=int,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Maximum number of rooms to return.",
+            ),
+            OpenApiParameter(
+                name="offset",
+                type=int,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Number of rooms to skip before starting the result set.",
+            ),
+        ],
+        responses={
+            200: standard_paginated_response_serializer(
+                "SearchRoomsResponse",
+                RoomSerializer,
+            ),
+            400: OpenApiResponse(response=StandardErrorResponseSerializer),
+        },
+        description="Search rooms with filters, sorting, postcode radius search, and limit/offset pagination.",
+    )
     def list(self, request, *args, **kwargs):
         """
         Preserve distance ordering (when postcode/radius search is used)
@@ -4129,11 +4183,14 @@ class InboxListView(APIView):
         merged = notif_items + thread_items
         merged.sort(key=lambda x: (x["created_at"] is None, x["created_at"]), reverse=True)
 
-        ser = InboxItemSerializer(merged[:250], many=True)
-        return ok_response(
-            ser.data,
-            message="Inbox retrieved successfully",
-            status_code=status.HTTP_200_OK
+        items = merged[:250]
+
+        paginator = self.pagination_class()
+        page = paginator.paginate_queryset(items, request, view=self)
+        ser = InboxItemSerializer(page, many=True)
+
+        return _wrap_response_success(
+            paginator.get_paginated_response(ser.data)
         )
 
 
@@ -4195,6 +4252,18 @@ def _fetch_ideal_postcodes_suggestions(postcode: str):
     return addresses
 
 
+class FindAddressResponseDataSerializer(serializers.Serializer):
+    addresses = serializers.ListField(
+        child=inline_serializer(
+            name="FindAddressItem",
+            fields={
+                "id": serializers.CharField(),
+                "label": serializers.CharField(),
+            },
+        )
+    )
+
+
 class FindAddressView(APIView):
     permission_classes = [permissions.AllowAny]
     versioning_class = None
@@ -4210,23 +4279,14 @@ class FindAddressView(APIView):
             )
         ],
         responses={
-            200: inline_serializer(
-                name="FindAddressResponse",
-                fields={
-                    "addresses": serializers.ListField(
-                        child=inline_serializer(
-                            name="FindAddressItem",
-                            fields={
-                                "id": serializers.CharField(),
-                                "label": serializers.CharField(),
-                            },
-                        )
-                    )
-                },
+            200: standard_response_serializer(
+                "FindAddressResponse",
+                FindAddressResponseDataSerializer,
             ),
-            400: OpenApiResponse(description="Invalid or missing postcode."),
-            502: OpenApiResponse(description="Address provider error."),
-            503: OpenApiResponse(description="Address lookup not configured."),
+            400: OpenApiResponse(response=StandardErrorResponseSerializer),
+            429: OpenApiResponse(response=StandardErrorResponseSerializer),
+            502: OpenApiResponse(response=StandardErrorResponseSerializer),
+            503: OpenApiResponse(response=StandardErrorResponseSerializer),
         },
         auth=[],
         description="Return real address suggestions for a UK postcode via getAddress.",
@@ -4236,7 +4296,10 @@ class FindAddressView(APIView):
 
         if not postcode:
             return Response(
-                {"detail": "Query param 'postcode' is required."},
+                {
+                    "ok": False,
+                    "message": "Query param 'postcode' is required.",
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -4244,56 +4307,81 @@ class FindAddressView(APIView):
             addresses = _fetch_ideal_postcodes_suggestions(postcode)
         except RuntimeError:
             return Response(
-                {"detail": "Address lookup is not configured."},
+                {
+                    "ok": False,
+                    "message": "Address lookup is not configured.",
+                },
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
         except HTTPError as exc:
             if exc.code == 400:
                 return Response(
-                    {"detail": "Invalid postcode."},
+                    {
+                        "ok": False,
+                        "message": "Invalid postcode.",
+                    },
                     status=status.HTTP_400_BAD_REQUEST,
                 )
             if exc.code == 404:
-                return Response(
+                return ok_response(
                     {"addresses": []},
-                    status=status.HTTP_200_OK,
+                    message="Address suggestions retrieved successfully.",
+                    status_code=status.HTTP_200_OK,
                 )
             if exc.code == 401:
                 return Response(
-                    {"detail": "Address provider authentication failed."},
+                    {
+                        "ok": False,
+                        "message": "Address provider authentication failed.",
+                    },
                     status=status.HTTP_502_BAD_GATEWAY,
                 )
             if exc.code == 402:
                 return Response(
-                    {"detail": "Address lookup credits exhausted."},
+                    {
+                        "ok": False,
+                        "message": "Address lookup credits exhausted.",
+                    },
                     status=status.HTTP_502_BAD_GATEWAY,
                 )
             if exc.code == 429:
                 return Response(
-                    {"detail": "Address lookup rate limited."},
+                    {
+                        "ok": False,
+                        "message": "Address lookup rate limited.",
+                    },
                     status=status.HTTP_429_TOO_MANY_REQUESTS,
                 )
 
             return Response(
-                {"detail": "Address provider error."},
+                {
+                    "ok": False,
+                    "message": "Address provider error.",
+                },
                 status=status.HTTP_502_BAD_GATEWAY,
             )
         except URLError:
             return Response(
-                {"detail": "Address provider unavailable."},
+                {
+                    "ok": False,
+                    "message": "Address provider unavailable.",
+                },
                 status=status.HTTP_502_BAD_GATEWAY,
             )
         except Exception:
             return Response(
-                {"detail": "Address lookup failed."},
+                {
+                    "ok": False,
+                    "message": "Address lookup failed.",
+                },
                 status=status.HTTP_502_BAD_GATEWAY,
             )
 
-        return Response(
+        return ok_response(
             {"addresses": addresses},
-            status=status.HTTP_200_OK,
+            message="Address suggestions retrieved successfully.",
+            status_code=status.HTTP_200_OK,
         )
-
 
 class NearbyRoomsView(generics.ListAPIView):
     """
@@ -4448,29 +4536,24 @@ class RoomSaveView(APIView):
         return ok_response({"saved": True}, status_code=status.HTTP_201_CREATED)
 
     @extend_schema(
-        request=None,
-        responses={
-            200: inline_serializer(
-                name="RoomUnsaveOkResponse",
-                fields={
-                    "ok": serializers.BooleanField(),
-                    "message": serializers.CharField(required=False, allow_null=True),
-                    "data": inline_serializer(
-                        name="RoomUnsaveData",
-                        fields={
-                            "saved": serializers.BooleanField(),
-                        },
-                    ),
-                },
-            ),
-            404: DetailResponseSerializer,
-        },
-        description="Remove a saved room for the authenticated user. Returns ok_response envelope.",
+    responses={
+        200: standard_response_serializer(
+            "RoomSaveDeleteResponse",
+            EmptyDataSerializer,
+        ),
+        401: OpenApiResponse(response=StandardErrorResponseSerializer),
+        404: OpenApiResponse(response=StandardErrorResponseSerializer),
+    },
+        description="Remove a saved room for the authenticated user.",
     )
     def delete(self, request, pk, *args, **kwargs):
         room = get_object_or_404(Room.objects.alive(), pk=pk)
         SavedRoom.objects.filter(user=request.user, room=room).delete()
-        return ok_response({"saved": False}, status_code=status.HTTP_200_OK)
+        return ok_response(
+            {},
+            message="Saved room removed successfully.",
+            status_code=status.HTTP_200_OK,
+        )
 
 
 # views.py
@@ -4508,8 +4591,14 @@ class RoomSaveToggleView(APIView):
         )
 
     @extend_schema(
-        request=None,
-        responses={200: OpenApiTypes.OBJECT},
+    responses={
+        200: standard_response_serializer(
+            "RoomSaveToggleDeleteResponse",
+            EmptyDataSerializer,
+        ),
+        401: OpenApiResponse(response=StandardErrorResponseSerializer),
+        404: OpenApiResponse(response=StandardErrorResponseSerializer),
+    },
     )
     def delete(self, request, pk):
         room = get_object_or_404(Room, pk=pk)
@@ -4517,10 +4606,10 @@ class RoomSaveToggleView(APIView):
         SavedRoom.objects.filter(user=request.user, room=room).delete()
 
         return ok_response(
-            {"saved": False, "saved_at": None},
+            {},
+            message="Saved room removed successfully.",
             status_code=status.HTTP_200_OK,
         )
-
 
 
 
@@ -5695,9 +5784,12 @@ class BookingDetailView(generics.RetrieveAPIView):
 
     @extend_schema(
         responses={
-            200: BookingResponseEnvelopeSerializer,
-            401: OpenApiResponse(description="Authentication required."),
-            404: OpenApiResponse(description="Booking not found."),
+            200: standard_response_serializer(
+                "BookingDetailResponse",
+                BookingSerializer,
+            ),
+            401: OpenApiResponse(response=StandardErrorResponseSerializer),
+            404: OpenApiResponse(response=StandardErrorResponseSerializer),
         },
         description="Retrieve a booking owned by the authenticated user.",
     )
@@ -5721,7 +5813,7 @@ class BookingCancelView(APIView):
         request=None,
         responses={
             200: inline_serializer(
-                name="BookingCancelOkResponse",
+                name="BookingCancelResponse",
                 fields={
                     "ok": serializers.BooleanField(),
                     "message": serializers.CharField(required=False, allow_null=True),
@@ -5734,9 +5826,9 @@ class BookingCancelView(APIView):
                     ),
                 },
             ),
-            400: OpenApiResponse(description="Validation error."),
-            401: OpenApiResponse(description="Authentication required."),
-            404: OpenApiResponse(description="Not found."),
+            400: OpenApiResponse(response=StandardErrorResponseSerializer),
+            401: OpenApiResponse(response=StandardErrorResponseSerializer),
+            404: OpenApiResponse(response=StandardErrorResponseSerializer),
         },
         description="Cancel a booking. Returns ok_response envelope.",
     )
@@ -5785,7 +5877,7 @@ class BookingSuspendView(APIView):
         request=None,
         responses={
             200: inline_serializer(
-                name="BookingSuspendOkResponse",
+                name="BookingSuspendResponse",
                 fields={
                     "ok": serializers.BooleanField(),
                     "message": serializers.CharField(required=False, allow_null=True),
@@ -5799,10 +5891,10 @@ class BookingSuspendView(APIView):
                     ),
                 },
             ),
-            400: OpenApiResponse(description="Validation error."),
-            401: OpenApiResponse(description="Authentication required."),
-            403: OpenApiResponse(description="Forbidden."),
-            404: OpenApiResponse(description="Not found."),
+            400: OpenApiResponse(response=StandardErrorResponseSerializer),
+            401: OpenApiResponse(response=StandardErrorResponseSerializer),
+            403: OpenApiResponse(response=StandardErrorResponseSerializer),
+            404: OpenApiResponse(response=StandardErrorResponseSerializer),
         },
         description="Suspend a booking. Returns ok_response envelope.",
     )
@@ -5811,9 +5903,12 @@ class BookingSuspendView(APIView):
 
         if booking.user != request.user:
             return Response(
-                {"detail": "You are not allowed to suspend this booking."},
-                status=status.HTTP_403_FORBIDDEN,
-            )
+                    {
+                        "ok": False,
+                        "message": "You are not allowed to suspend this booking.",
+                    },
+                    status=status.HTTP_403_FORBIDDEN,
+                )
 
         # idempotent
         if booking.status != Booking.STATUS_SUSPENDED:
@@ -5838,32 +5933,20 @@ class BookingDeleteView(APIView):
     permission_classes = [IsAuthenticated]
 
     @extend_schema(
-    request=None,
-    responses={
-        204: OpenApiResponse(description="Deleted."),
-        200: inline_serializer(
-            name="BookingDeleteOkResponse",
-            fields={
-                "ok": serializers.BooleanField(),
-                "data": inline_serializer(
-                    name="BookingDeleteData",
-                    fields={"detail": serializers.CharField()},
-                ),
-            },
-        ),
-        401: OpenApiResponse(description="Authentication required."),
-        404: OpenApiResponse(description="Not found."),
+        responses={
+            200: standard_response_serializer(
+                "BookingDeleteResponse",
+                EmptyDataSerializer,
+            ),
+            400: OpenApiResponse(response=StandardErrorResponseSerializer),
+            401: OpenApiResponse(response=StandardErrorResponseSerializer),
+            404: OpenApiResponse(response=StandardErrorResponseSerializer),
     },
-    description="Delete a booking. Returns 204 or ok_response envelope depending on implementation.",
+    description="Delete a booking.",
     )
     def delete(self, request, pk, *args, **kwargs):
-
         qs = Booking.objects.filter(is_deleted=False)
 
-        # Only staff can delete any booking.
-        # Normal users can only delete:
-        # - their own booking (booking.user == request.user)
-        # - OR bookings on rooms they own (room.property_owner == request.user)
         if not request.user.is_staff:
             qs = qs.filter(
                 Q(user=request.user) | Q(room__property_owner=request.user)
@@ -5874,7 +5957,10 @@ class BookingDeleteView(APIView):
         now = timezone.now()
         if booking.start and booking.start <= now:
             return Response(
-                {"detail": "Cannot delete a booking that has started."},
+                {
+                    "ok": False,
+                    "message": "Cannot delete a booking that has started.",
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -5882,8 +5968,11 @@ class BookingDeleteView(APIView):
         booking.deleted_at = timezone.now()
         booking.save(update_fields=["is_deleted", "deleted_at"])
 
-        return Response(status=status.HTTP_204_NO_CONTENT)
-
+        return ok_response(
+            {},
+            message="Booking deleted successfully.",
+            status_code=status.HTTP_200_OK,
+        )
 
 
 # --------------------
@@ -6601,18 +6690,14 @@ class CreateListingCheckoutSessionView(APIView):
     @extend_schema(
         request=StripeCheckoutSessionCreateRequestSerializer,
         responses={
-            200: inline_serializer(
-                name="CreateListingCheckoutSessionOkResponse",
-                fields={
-                    "ok": serializers.BooleanField(),
-                    "message": serializers.CharField(required=False, allow_null=True),
-                    "data": StripeCheckoutRedirectResponseSerializer(),
-                },
+            200: standard_response_serializer(
+                "CreateListingCheckoutSessionResponse",
+                StripeCheckoutRedirectResponseSerializer,
             ),
-            400: OpenApiResponse(description="Invalid request or validation error."),
-            401: OpenApiResponse(description="Authentication required."),
-            403: OpenApiResponse(description="Forbidden (not the room owner)."),
-            404: OpenApiResponse(description="Room not found."),
+            400: OpenApiResponse(response=StandardErrorResponseSerializer),
+            401: OpenApiResponse(response=StandardErrorResponseSerializer),
+            403: OpenApiResponse(response=StandardErrorResponseSerializer),
+            404: OpenApiResponse(response=StandardErrorResponseSerializer),
         },
         description=(
             "Creates a Stripe Checkout Session for the specified room listing fee. "
@@ -6626,7 +6711,10 @@ class CreateListingCheckoutSessionView(APIView):
         # Only the property owner can pay to list this room
         if room.property_owner != request.user:
             return Response(
-                {"detail": "You are not allowed to pay for this listing."},
+                {
+                    "ok": False,
+                    "message": "You are not allowed to pay for this listing.",
+                },
                 status=status.HTTP_403_FORBIDDEN,
             )
 
@@ -6720,6 +6808,7 @@ class CreateListingCheckoutSessionView(APIView):
                 "checkout_url": checkout_url,
                 "session_id": str(session_id) if session_id else None,
             },
+            message="Checkout session created successfully.",
             status_code=status.HTTP_200_OK,
         )
 
@@ -6742,7 +6831,7 @@ class CreateListingCheckoutSessionView(APIView):
                 ),
             },
         ),
-        400: DetailResponseSerializer,
+        400: OpenApiResponse(response=StandardErrorResponseSerializer),
     },
     parameters=[
         OpenApiParameter(
@@ -6776,13 +6865,20 @@ def stripe_webhook(request):
     except (ValueError, stripe.error.SignatureVerificationError):
         logger.warning("stripe_webhook_signature_failed")
         return Response(
-            {"detail": "Invalid payload or invalid Stripe signature."},
+            {
+                "ok": False,
+                "message": "Invalid payload or invalid Stripe signature.",
+            },
             status=status.HTTP_400_BAD_REQUEST,
         )
+        
     except Exception:
         logger.exception("stripe_webhook_construct_event_failed")
         return Response(
-            {"detail": "Unable to construct Stripe event."},
+            {
+                "ok": False,
+                "message": "Unable to construct Stripe event.",
+            },
             status=status.HTTP_400_BAD_REQUEST,
         )
 
@@ -7108,8 +7204,8 @@ class PaymentTransactionsListView(ListAPIView):
                 name="PaginatedPaymentTransactionListResponse",
                 fields={
                     "count": serializers.IntegerField(),
-                    "next": serializers.CharField(required=False, allow_null=True),
-                    "previous": serializers.CharField(required=False, allow_null=True),
+                    "next": serializers.URLField(required=False, allow_null=True),
+                    "previous": serializers.URLField(required=False, allow_null=True),
                     "results": PaymentTransactionListSerializer(many=True),
                 },
             )
@@ -7159,11 +7255,11 @@ class PaymentTransactionsListView(ListAPIView):
             ),
         ],
         description="List payment transactions in DRF paginated format (count/next/previous/results). Supports search and date-range filtering.",
-    )
+        )
     def list(self, request, *args, **kwargs):
         return super().list(request, *args, **kwargs)
-    
-    
+        
+        
     
 
 class PaymentTransactionDetailView(RetrieveAPIView):
@@ -7313,7 +7409,10 @@ class StripeSuccessView(APIView):
     @extend_schema(
         request=None,
         responses={
-            200: StripeSuccessResponseSerializer,
+            200: standard_response_serializer(
+                "StripeSuccessResponse",
+                StripeSuccessResponseSerializer,
+            ),
         },
         parameters=[
             OpenApiParameter(
@@ -7348,6 +7447,7 @@ class StripeSuccessView(APIView):
                 "session_id": session_id,
                 "payment_id": payment_id,
             },
+            message="Stripe success redirect received.",
             status_code=status.HTTP_200_OK,
         )
 
@@ -7358,7 +7458,10 @@ class StripeCancelView(APIView):
     @extend_schema(
         request=None,
         responses={
-            200: StripeCancelResponseSerializer,
+            200: standard_response_serializer(
+                "StripeCancelResponse",
+                StripeCancelResponseSerializer,
+            ),
         },
         parameters=[
             OpenApiParameter(
@@ -7380,6 +7483,7 @@ class StripeCancelView(APIView):
                 "detail": "Payment cancelled.",
                 "payment_id": payment_id,
             },
+            message="Stripe cancel redirect received.",
             status_code=status.HTTP_200_OK,
         )
 
@@ -7427,7 +7531,7 @@ class ReportCreateView(generics.CreateAPIView):
 class ModerationReportListView(generics.ListAPIView):
     """GET /api/moderation/reports/?status=open|in_review|resolved|rejected — staff only."""
     serializer_class = ReportSerializer
-    permission_classes = [IsAdminUser]
+    permission_classes = [IsModerationAdmin]
     pagination_class = StandardLimitOffsetPagination
 
     def get_queryset(self):
@@ -7470,7 +7574,7 @@ class ModerationReportUpdateView(generics.UpdateAPIView):
     Body (any subset): {"status": "...", "resolution_notes": "...", "hide_room": true}
     """
     serializer_class = ReportSerializer
-    permission_classes = [IsAdminUser]
+    permission_classes = [IsModerationAdmin]
     queryset = Report.objects.all()
 
     @extend_schema(
@@ -7543,7 +7647,7 @@ class ModerationReportUpdateView(generics.UpdateAPIView):
 
 
 class ModerationReportModerateActionView(APIView):
-    permission_classes = [IsAdminUser]
+    permission_classes = [IsModerationAdmin]
 
     @extend_schema(
         request=inline_serializer(
@@ -7660,7 +7764,7 @@ class RoomModerationStatusView(APIView):
     PATCH /api/moderation/rooms/<id>/status/
     Body: {"status": "active"|"hidden"} — staff only.
     """
-    permission_classes = [IsAdminUser]
+    permission_classes = [IsModerationAdmin]
 
     @extend_schema(
         request=RoomModerationStatusUpdateSerializer,
@@ -7707,10 +7811,15 @@ class OpsStatsView(APIView):
     GET /api/ops/stats/ — admin-only operational snapshot.
     Amounts reported in **GBP** (Payment.amount is stored in GBP).
     """
-    permission_classes = [IsAdminUser]
+    permission_classes = [IsOpsAdmin]
 
     @extend_schema(
-        responses={200: OpsStatsResponseSerializer},
+        responses={
+            200: standard_response_serializer(
+                "OpsStatsResponse",
+                OpsStatsResponseSerializer,
+            ),
+        },
         description="Operational statistics for the platform."
     )
     def get(self, request):
@@ -7803,8 +7912,12 @@ class OpsStatsView(APIView):
             "reports": {"open": reports_open, "in_review": reports_in_review},
             "categories": {"top_active": top_categories},
         }
-        return Response(data)
-    
+
+        return ok_response(
+            data,
+            message="Operational statistics retrieved successfully.",
+            status_code=status.HTTP_200_OK,
+        )
     
 # --- GDPR / Privacy ---
 class DataExportStartView(APIView):
@@ -8045,6 +8158,7 @@ class AccountDeleteConfirmView(APIView):
 # --------------------
 class NotificationListView(APIView):
     permission_classes = [IsAuthenticated]
+    pagination_class = StandardLimitOffsetPagination
 
     @extend_schema(
         responses={
@@ -8062,8 +8176,14 @@ class NotificationListView(APIView):
     )
     def get(self, request):
         qs = Notification.objects.filter(user=request.user).order_by("is_read", "-created_at")
-        data = NotificationSerializer(qs, many=True).data
-        return ok_response(data, status_code=status.HTTP_200_OK)
+
+        paginator = self.pagination_class()
+        page = paginator.paginate_queryset(qs, request, view=self)
+        data = NotificationSerializer(page, many=True).data
+
+        return _wrap_response_success(
+            paginator.get_paginated_response(data)
+        )
     
     
 

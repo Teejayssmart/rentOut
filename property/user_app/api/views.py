@@ -18,19 +18,61 @@ from propertylist_app.api.schema_helpers import (
 from rest_framework import filters  # if not already imported
 from propertylist_app.api.pagination import RoomPagination, RoomCPagination, RoomLOPagination
 
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.response import Response
+from rest_framework.authtoken.models import Token
+from rest_framework import status
+
+
+
+
+from propertylist_app.api.schema_serializers import (
+    StandardErrorResponseSerializer,
+    EmptyDataSerializer,
+)
+from propertylist_app.api.schema_helpers import (
+    standard_response_serializer,
+    standard_list_response_serializer,
+    standard_paginated_response_serializer,
+)
+
+from rest_framework import filters
+from propertylist_app.api.pagination import RoomPagination, RoomCPagination, RoomLOPagination
+
+
+@extend_schema(
+    request=None,
+    responses={
+        200: standard_response_serializer("LogoutResponse", EmptyDataSerializer),
+        400: OpenApiResponse(response=StandardErrorResponseSerializer),
+    },
+)
 @api_view(["POST"])
+@permission_classes([IsAuthenticated])
 def logout_view(request):
     if hasattr(request.user, "auth_token"):
         request.user.auth_token.delete()
 
     return Response(
-        {"detail": "Logged out successfully."},
+        {
+            "ok": True,
+            "message": "Logged out successfully.",
+            "data": {},
+        },
         status=status.HTTP_200_OK,
     )
 
 
-
+@extend_schema(
+    request=RegistrationSerializer,
+    responses={
+        201: standard_response_serializer("RegistrationResponse", RegistrationSerializer),
+        400: OpenApiResponse(response=StandardErrorResponseSerializer),
+    },
+)
 @api_view(["POST"])
+@permission_classes([AllowAny])
 def registration_view(request):
     serializer = RegistrationSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
@@ -39,11 +81,16 @@ def registration_view(request):
     token = Token.objects.get(user=account).key
 
     data = {
-        "response": "Registration successful.",
         "username": account.username,
         "email": account.email,
         "token": token,
     }
 
-    return Response(data, status=status.HTTP_201_CREATED)
-                      
+    return Response(
+        {
+            "ok": True,
+            "message": "Registration successful.",
+            "data": data,
+        },
+        status=status.HTTP_201_CREATED,
+    )
