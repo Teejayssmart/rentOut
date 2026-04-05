@@ -239,23 +239,34 @@ REST_FRAMEWORK = {
         "rest_framework.throttling.AnonRateThrottle",
         "rest_framework.throttling.ScopedRateThrottle",
     ],
+    
     "DEFAULT_THROTTLE_RATES": {
-        "user": "10000/hour",
-        "anon": "10000/hour",
-        "login": "10000/hour",
-        "register": "10000/hour",
-        "register_anon": "10000/hour",
-        "message_user": "10000/hour",
-        "messaging": "10000/hour",
-        "review-create": "10000/hour",
-        "review-detail": "10000/hour",
-        "password-reset": "10000/hour",
-        "password-reset-confirm": "10000/hour",
-        "report-create": "10000/hour",
-        "moderation": "10000/hour",
-        "otp-verify": "10000/hour",
-        "otp-resend": "10000/hour",
+    "user": "300/hour",
+    "anon": "100/hour",
+
+    "login": "5/10min",
+    "register": "10/hour",
+    "register_anon": "5/hour",
+
+    "message_user": "30/hour",
+    "messaging": "60/hour",
+
+    "review-create": "10/hour",
+    "review-detail": "120/hour",
+
+    "password-reset": "5/hour",
+    "password-reset-confirm": "10/hour",
+
+    "report-create": "5/hour",
+    "moderation": "60/hour",
+
+    "otp-verify": "10/15min",
+    "otp-resend": "3/hour",
     },
+        
+        
+        
+    
     "DEFAULT_FILTER_BACKENDS": [
         "django_filters.rest_framework.DjangoFilterBackend",
         "rest_framework.filters.OrderingFilter",
@@ -266,13 +277,17 @@ REST_FRAMEWORK = {
         "propertylist_app.api.renderers.EnvelopeJSONRenderer",
     ),
     "DEFAULT_VERSIONING_CLASS": "rest_framework.versioning.URLPathVersioning",
-    "DEFAULT_VERSION": None,   
     "ALLOWED_VERSIONS": ["v1"],
     "VERSION_PARAM": "version",
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     "EXCEPTION_HANDLER": "propertylist_app.api.exceptions.custom_exception_handler",
     "DEFAULT_VERSION": "v1",
 }
+
+
+OTP_EXPIRY_MINUTES = 10
+OTP_MAX_ATTEMPTS = 5
+OTP_RESEND_COOLDOWN_SECONDS = 60
 
 
 
@@ -405,12 +420,15 @@ WEBHOOK_SECRETS = {
 # -----------------------------
 CACHES = {
     "default": {
-        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
-        "LOCATION": "throttle-cache",
+        "BACKEND": "django.core.cache.backends.redis.RedisCache",
+        "LOCATION": os.getenv("REDIS_CACHE_URL", "redis://127.0.0.1:6379/2"),
+        "KEY_PREFIX": "rentcrib",
     }
 }
 
-CACHE_KEY_PREFIX = "rentout"
+CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "redis://127.0.0.1:6379/0")
+CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", "redis://127.0.0.1:6379/1")
+
 CACHE_DEFAULT_TTL = 60
 CACHE_SEARCH_TTL = 120
 
@@ -426,8 +444,7 @@ GDPR_HASH_SALT = os.getenv("GDPR_HASH_SALT", "change-this-in-prod")
 # Celery (single canonical configuration)
 # NOTE: Beat schedule must live in celery_app.py (NOT here)
 # -----------------------------
-CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "redis://127.0.0.1:6379/0")
-CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", "redis://127.0.0.1:6379/1")
+
 CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
 
 # Celery routing safety: even if django-celery-beat PeriodicTask queue/routing_key are NULL,

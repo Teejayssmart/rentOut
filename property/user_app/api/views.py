@@ -1,3 +1,15 @@
+
+"""
+Legacy auth endpoints.
+
+These routes are not the canonical production API.
+Use /api/v1/auth/... endpoints from propertylist_app.api.urls instead.
+
+Kept only for reference during migration.
+Do not include this URLConf in production routing.
+"""
+
+
 from rest_framework.decorators import api_view  #,  permission_classes
 # from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
