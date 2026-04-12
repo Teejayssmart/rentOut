@@ -6,7 +6,7 @@ from celery.schedules import crontab
 DEBUG = True
 ENABLE_CAPTCHA = False  # tests toggle this explicitly where needed
 
-ENABLE_SOCIAL_AUTH_STUB = True
+
 
 
 

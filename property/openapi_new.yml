@@ -195,20 +195,20 @@ paths:
   /api/v1/auth/register/apple/:
     post:
       operationId: auth_register_apple_create
-      description: Mock Google register/login. Returns refresh and access tokens.
+      description: Register or log in with an Apple identity token. Returns JWT refresh and access tokens.
       tags:
       - auth
       requestBody:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GoogleRegisterRequest'
+              $ref: '#/components/schemas/AppleRegisterRequest'
           application/x-www-form-urlencoded:
             schema:
-              $ref: '#/components/schemas/GoogleRegisterRequest'
+              $ref: '#/components/schemas/AppleRegisterRequest'
           multipart/form-data:
             schema:
-              $ref: '#/components/schemas/GoogleRegisterRequest'
+              $ref: '#/components/schemas/AppleRegisterRequest'
         required: true
       responses:
         '200':
@@ -223,55 +223,53 @@ paths:
                     type: string
                     nullable: true
                   data:
-                    $ref: '#/components/schemas/GoogleRegisterResponse'
+                    $ref: '#/components/schemas/AppleRegisterResponse'
                 required:
                 - ok
                 - data
           description: ''
         '400':
-          description: Missing email.
+          description: Missing or invalid Apple identity token.
         '501':
-          description: Google sign-up not implemented.
+          description: Missing or invalid Apple identity token.
   /api/v1/auth/register/google/:
-    post:
-      operationId: auth_register_google_create
-      description: Mock Google register/login. Returns refresh and access tokens.
-      tags:
-      - auth
-      requestBody:
+  post:
+    operationId: auth_register_google_create
+    description: Register or log in with a Google ID token. Returns JWT refresh and access tokens.
+    tags:
+    - auth
+    requestBody:
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/GoogleRegisterRequest'
+        application/x-www-form-urlencoded:
+          schema:
+            $ref: '#/components/schemas/GoogleRegisterRequest'
+        multipart/form-data:
+          schema:
+            $ref: '#/components/schemas/GoogleRegisterRequest'
+      required: true
+    responses:
+      '200':
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GoogleRegisterRequest'
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/GoogleRegisterRequest'
-          multipart/form-data:
-            schema:
-              $ref: '#/components/schemas/GoogleRegisterRequest'
-        required: true
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  ok:
-                    type: boolean
-                  message:
-                    type: string
-                    nullable: true
-                  data:
-                    $ref: '#/components/schemas/GoogleRegisterResponse'
-                required:
-                - ok
-                - data
-          description: ''
-        '400':
-          description: Missing email.
-        '501':
-          description: Google sign-up not implemented.
+              type: object
+              properties:
+                ok:
+                  type: boolean
+                message:
+                  type: string
+                  nullable: true
+                data:
+                  $ref: '#/components/schemas/GoogleRegisterResponse'
+              required:
+              - ok
+              - data
+        description: ''
+      '400':
+        description: Missing or invalid Google token.
   /api/v1/auth/resend-otp/:
     post:
       operationId: auth_resend_otp_create

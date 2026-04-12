@@ -107,6 +107,21 @@ def sanitize_search_text(text: str, *, max_len: int = 200) -> str:
     return text
 
 
+
+def sanitize_plain_text(value: str, *, max_len: int | None = None) -> str:
+    value = (value or "").strip()
+    value = re.sub(r"[\x00-\x1f\x7f]", "", value)
+    value = re.sub(r"\s+", " ", value)
+    if max_len is not None and len(value) > max_len:
+        value = value[:max_len].rstrip()
+    return value
+
+
+def normalise_email(value: str) -> str:
+    return (value or "").strip().lower()
+
+
+
 NAME_RE = re.compile(r"^[A-Za-zÀ-ÖØ-öø-ÿ' -]{2,100}$")  # supports accents, spaces, hyphens, apostrophes
 UK_POSTCODE_RE = re.compile(r"^[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}$", re.I)
 

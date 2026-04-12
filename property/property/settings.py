@@ -339,7 +339,7 @@ SIMPLE_JWT = {
 # Security / Abuse controls
 # -----------------------------
 ENABLE_CAPTCHA = os.getenv("ENABLE_CAPTCHA", "false").lower() in {"1", "true", "yes"}
-ENABLE_SOCIAL_AUTH_STUB = False
+
 
 ACCOUNT_DELETION_GRACE_DAYS = 7
 

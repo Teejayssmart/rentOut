@@ -3,10 +3,10 @@ app_name = "api"
 
 from django.conf import settings
 from django.conf.urls.static import static
-from django.urls import path, include
+from django.urls import path
 from drf_spectacular.utils import extend_schema
 
-from rest_framework.routers import DefaultRouter
+#from rest_framework.routers import DefaultRouter
 
 from django.views.decorators.cache import cache_page
 from django.views.decorators.csrf import csrf_exempt
@@ -14,12 +14,12 @@ from django.views.decorators.csrf import csrf_exempt
 from propertylist_app.api import views
 
 from .views import EmailOTPVerifyView, EmailOTPResendView,PhoneOTPStartView, PhoneOTPVerifyView
-
+from .views.profile import DeleteAccountRequestView, DeleteAccountCancelView
 
 from propertylist_app.api.views import (
     # Rooms & Categories
     RoomAV, RoomDetailAV, RoomListGV, ModerationReportModerateActionView,
-    RoomCategorieAV, RoomCategorieDetailAV, RoomCategorieVS, RoomPreviewView, 
+    RoomCategorieAV, RoomCategorieDetailAV, RoomPreviewView, 
 
     # Reviews
     UserReviewsView,UserReviewSummaryView, ReviewCreateView, ReviewListView, ReviewDetailView,
@@ -60,7 +60,7 @@ from propertylist_app.api.views import (
     RoomSoftDeleteView,RoomUnpublishView,
     
     #Account deletion
-    DeleteAccountRequestView,DeleteAccountCancelView,
+    #DeleteAccountRequestView,DeleteAccountCancelView,
 
     # Payments
     CreateListingCheckoutSessionView, stripe_webhook, StripeSuccessView, StripeCancelView, SavedCardsListView, CreateSetupIntentView,DetachSavedCardView,
@@ -94,8 +94,8 @@ from propertylist_app.api.views import (
 
 
 
-router = DefaultRouter()
-router.register("category", RoomCategorieVS, basename="roomcategory")  # DRF ViewSet routes
+# router = DefaultRouter()
+# router.register("category", RoomCategorieVS, basename="roomcategory")  # DRF ViewSet routes
 
 urlpatterns = [
     
@@ -106,7 +106,7 @@ urlpatterns = [
     
     # Cached alt list
     path("rooms-alt/", cache_page(60)(RoomListGV.as_view()), name="room-list-alt"),
-    path("", include(router.urls)),
+    
 
     # Room categories
     path("room-categories/",           RoomCategorieAV.as_view(),         name="roomcategory-list"),
@@ -125,8 +125,7 @@ urlpatterns = [
     path("tenancies/<int:tenancy_id>/reviews/", TenancyReviewCreateView.as_view(), name="tenancy-review-create"),
 
 
-    # Tenancy (rental confirmation)
-    path("tenancies/<int:tenancy_id>/respond/", TenancyRespondView.as_view(), name="tenancy-respond"),
+
     # Tenancy (rental confirmation)
     path("tenancies/propose/", TenancyProposeView.as_view(), name="tenancy-propose"),
     path("tenancies/<int:tenancy_id>/respond/", TenancyRespondView.as_view(), name="tenancy-respond"),
@@ -192,8 +191,7 @@ urlpatterns = [
 
 
     
-    # --- Bookings / cancelled ---
-    path("bookings/<int:pk>/delete/", BookingDeleteView.as_view(), name="booking-delete"),
+    
 
     # Landlord manage slots
     path("rooms/<int:pk>/availability/slots/",               RoomAvailabilitySlotListCreateView.as_view(), name="room-slots"),

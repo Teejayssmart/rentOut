@@ -55,6 +55,9 @@ from .security import (
     normalise_name,
     enforce_user_caps,
     assert_not_duplicate_listing,
+    
+    sanitize_plain_text,
+    normalise_email,
 )
 
 # ---- Aliases to cover US/UK spelling imports ----

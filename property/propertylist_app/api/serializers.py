@@ -32,10 +32,10 @@ from propertylist_app.validators import (
     validate_price, validate_available_from, validate_choice,
     validate_listing_photos, sanitize_search_text, validate_numeric_range,
     validate_radius_miles, validate_pagination, validate_ordering,
-    normalise_price, normalise_phone, normalise_name,
+    normalise_price, normalise_phone, normalise_name, normalise_email,
+    sanitize_plain_text,
     assert_not_duplicate_listing, assert_no_duplicate_files,
     enforce_user_caps,
-
 )
 
 from django.utils import timezone
@@ -1344,6 +1344,19 @@ class SearchFiltersSerializer(serializers.Serializer):
     page = serializers.IntegerField(required=False)
     offset = serializers.IntegerField(required=False)
     ordering = serializers.CharField(required=False)
+    
+    def validate_q(self, value):
+        return sanitize_search_text(value, max_len=200)
+
+    def validate_postcode(self, value):
+        value = sanitize_plain_text(value, max_len=20).upper()
+        return normalize_uk_postcode(value)
+
+    def validate_street(self, value):
+        return sanitize_plain_text(value, max_len=120)
+
+    def validate_city(self, value):
+        return sanitize_plain_text(value, max_len=80)
 
     # property type filters (basic & advanced)
     property_types = serializers.ListField(
@@ -2034,6 +2047,12 @@ class ProfilePageSerializer(serializers.Serializer):
 class MessageCreateSerializer(serializers.Serializer):
     body = serializers.CharField(allow_blank=False, trim_whitespace=True)
 
+    def validate_body(self, value):
+        value = sanitize_plain_text(value, max_len=5000)
+        if not value:
+            raise serializers.ValidationError("Message body cannot be empty.")
+        return value
+
    
 
 class ContactMessageSerializer(serializers.ModelSerializer):
@@ -2048,6 +2067,25 @@ class ContactMessageSerializer(serializers.ModelSerializer):
             "created_at",
         ]
         read_only_fields = ["id", "created_at"]
+
+    def validate_name(self, value):
+        value = normalise_name(value)
+        return validate_person_name(value)
+
+    def validate_email(self, value):
+        return normalise_email(value)
+
+    def validate_subject(self, value):
+        value = sanitize_plain_text(value, max_len=200)
+        if not value:
+            raise serializers.ValidationError("Subject is required.")
+        return value
+
+    def validate_message(self, value):
+        value = sanitize_plain_text(value, max_len=5000)
+        if not value:
+            raise serializers.ValidationError("Message is required.")
+        return value
 
 
 # --------------------
@@ -2662,13 +2700,8 @@ class EmailOTPResendSerializer(serializers.Serializer):
     Used by /api/auth/resend-otp/
     """
     user_id = serializers.IntegerField()
-
-    def validate_user_id(self, value):
-        UserModel = get_user_model()
-        if not UserModel.objects.filter(pk=value).exists():
-            raise serializers.ValidationError("User not found.")
-        return value
-
+    confirm = serializers.BooleanField()
+    
 
 class OnboardingCompleteSerializer(serializers.Serializer):
     confirm = serializers.BooleanField()
@@ -2679,11 +2712,10 @@ class PhoneOTPStartSerializer(serializers.Serializer):
     phone = serializers.CharField()
 
     def validate_phone(self, value):
-        v = (value or "").strip()
+        v = normalise_phone(value)
         if v == "":
             raise serializers.ValidationError("Phone number is required.")
-        # keep simple to match UI; you can tighten later (E.164 etc.)
-        if len(v) < 8:
+        if len(v.replace("+", "")) < 8:
             raise serializers.ValidationError("Phone number looks too short.")
         return v
 
@@ -2693,7 +2725,7 @@ class PhoneOTPVerifySerializer(serializers.Serializer):
     code = serializers.CharField()
 
     def validate_phone(self, value):
-        v = (value or "").strip()
+        v = normalise_phone(value)
         if v == "":
             raise serializers.ValidationError("Phone number is required.")
         return v
@@ -2702,7 +2734,8 @@ class PhoneOTPVerifySerializer(serializers.Serializer):
         v = (value or "").strip()
         if len(v) != 6 or not v.isdigit():
             raise serializers.ValidationError("OTP must be 6 digits.")
-        return v
+        return v   
+    
     
     
 class NotificationPreferencesSerializer(serializers.ModelSerializer):
@@ -2763,8 +2796,10 @@ class CreatePasswordRequestSerializer(serializers.Serializer):
     
 class ChangeEmailRequestSerializer(serializers.Serializer):
     current_password = serializers.CharField()
-    new_email = serializers.EmailField()   
-    
+    new_email = serializers.EmailField()
+
+    def validate_new_email(self, value):
+        return normalise_email(value)
     
     
 class LogoutRequestSerializer(serializers.Serializer):

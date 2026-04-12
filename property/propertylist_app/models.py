@@ -1418,7 +1418,16 @@ class EmailOTP(models.Model):
         self.save(update_fields=["used_at"])
 
     @classmethod
-    def create_for(cls, user, code: str, ttl_minutes: int = 10, purpose: str = PURPOSE_EMAIL_VERIFY):
+    def create_for(
+        cls,
+        user,
+        code: str,
+        ttl_minutes: int | None = None,
+        purpose: str = PURPOSE_EMAIL_VERIFY,
+    ):
+        ttl_minutes = (
+            settings.OTP_EXPIRY_MINUTES if ttl_minutes is None else ttl_minutes
+        )
         expires_at = timezone.now() + timedelta(minutes=ttl_minutes)
         return cls.objects.create(
             user=user,
@@ -1426,8 +1435,6 @@ class EmailOTP(models.Model):
             code=str(code).strip(),
             expires_at=expires_at,
         )
-
-
 
 # -----
 # PhoneOTP
