@@ -4,7 +4,10 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.parsers import MultiPartParser, FormParser
 
+
+
 from django.contrib.auth import authenticate, get_user_model
+from django.core.exceptions import ValidationError as DjangoValidationError
 
 from drf_spectacular.utils import extend_schema, OpenApiResponse, inline_serializer
 
@@ -24,6 +27,7 @@ from propertylist_app.api.serializers import (
 )
 from propertylist_app.api.schema_serializers import ErrorResponseSerializer
 from propertylist_app.api.schema_helpers import standard_response_serializer
+from propertylist_app.validators import validate_avatar_image
 
 from .common import ok_response
 

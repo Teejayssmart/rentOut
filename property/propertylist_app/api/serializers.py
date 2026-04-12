@@ -2043,7 +2043,6 @@ class ProfilePageSerializer(serializers.Serializer):
         reviews_preview = ReviewCardSerializer(many=True)    
             
 
-
 class MessageCreateSerializer(serializers.Serializer):
     body = serializers.CharField(allow_blank=False, trim_whitespace=True)
 
@@ -2052,6 +2051,9 @@ class MessageCreateSerializer(serializers.Serializer):
         if not value:
             raise serializers.ValidationError("Message body cannot be empty.")
         return value
+
+    def create(self, validated_data):
+        return Message.objects.create(**validated_data)
 
    
 

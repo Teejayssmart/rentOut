@@ -29,7 +29,7 @@ class OnboardingFlowTests(APITestCase):
         resp = self.client.post(url, payload, format="json")
         self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
 
-        user_id = resp.data["id"]
+        user_id = resp.data["data"]["id"]
         user = User.objects.get(pk=user_id)
         return user, resp
 

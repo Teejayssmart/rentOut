@@ -813,8 +813,49 @@ class Booking(models.Model):
     is_deleted = models.BooleanField(default=False)
     deleted_at = models.DateTimeField(null=True, blank=True)
 
+
+    def can_transition_to(self, new_status: str) -> bool:
+        """
+        Allowed transitions:
+        - active -> cancelled
+        - active -> suspended
+        Terminal states:
+        - cancelled
+        - suspended
+        Deleted bookings are not allowed to transition.
+        """
+        if self.is_deleted:
+            return False
+
+        if self.status == self.STATUS_ACTIVE:
+            return new_status in {self.STATUS_CANCELLED, self.STATUS_SUSPENDED}
+
+        if self.status in {self.STATUS_CANCELLED, self.STATUS_SUSPENDED}:
+            return False
+
+        return False
+
+
     def __str__(self):
         return f"Booking #{self.id} for {self.room} by {self.user}"
+
+    
+    def can_transition_to(self, new_status: str) -> bool:
+        """
+        Enforce booking state machine.
+        """
+        if self.is_deleted:
+            return False
+
+        if self.status == self.STATUS_ACTIVE:
+            return new_status in {self.STATUS_CANCELLED, self.STATUS_SUSPENDED}
+
+        # terminal states
+        if self.status in {self.STATUS_CANCELLED, self.STATUS_SUSPENDED}:
+            return False
+
+        return False
+
 
     def cancel(self):
         self.status = self.STATUS_CANCELLED
@@ -1104,12 +1145,18 @@ class Review(models.Model):
 # ---------------
 # WebhookReceipt
 # ---------------
+# WebhookReceipt is the canonical store for webhook idempotency.
+# We use unique event_id values here to prevent duplicate processing
+# of the same provider webhook event, including Stripe retries.
+
 class WebhookReceipt(models.Model):
     source = models.CharField(max_length=50, db_index=True)
     event_id = models.CharField(max_length=255, unique=True)
     received_at = models.DateTimeField(auto_now_add=True)
     payload = models.JSONField(null=True, blank=True)
     headers = models.JSONField(null=True, blank=True)
+    processed = models.BooleanField(default=False)
+    processed_at = models.DateTimeField(null=True, blank=True)
 
 
 # ---------

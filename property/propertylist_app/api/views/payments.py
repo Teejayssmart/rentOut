@@ -1,8 +1,11 @@
-#Standard/library
+# Standard/library
 from datetime import datetime, timedelta
 from decimal import Decimal
 import logging
 import stripe
+
+
+
 
 
 
@@ -12,6 +15,7 @@ from django.db import transaction
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
+from django.urls import reverse
 
 
 #DRF / spectacular
@@ -31,7 +35,7 @@ from drf_spectacular.utils import (
 
 
 #Project
-from propertylist_app.models import Payment, Room, WebhookReceipt, Notification
+from propertylist_app.models import Payment, Room, WebhookReceipt, Notification, UserProfile
 from propertylist_app.validators import (
     ensure_webhook_not_replayed,
     verify_webhook_signature,
@@ -59,7 +63,7 @@ from ..serializers import (
     ProviderWebhookRequestSerializer,
     ProviderWebhookResponseSerializer,
 )
-
+from .common import ok_response
 
 
 #Logger
@@ -70,7 +74,10 @@ logger = logger_webhooks
 
 
 stripe.api_key = settings.STRIPE_SECRET_KEY
-
+# Idempotency note:
+# Stripe can retry the same webhook event multiple times.
+# We treat WebhookReceipt as the source of truth for duplicate detection
+# instead of using a separate StripeEvent model.
 
 @extend_schema(
     request=StripeWebhookEventRequestSerializer,
@@ -120,27 +127,25 @@ def stripe_webhook(request):
         event = stripe.Webhook.construct_event(
             payload=payload,
             sig_header=sig_header,
-            secret=settings.STRIPE_WEBHOOK_SECRET
+            secret=settings.STRIPE_WEBHOOK_SECRET,
         )
-    except (ValueError, stripe.error.SignatureVerificationError):
-        logger.warning("stripe_webhook_signature_failed")
-        return Response(
-            {
-                "ok": False,
-                "message": "Invalid payload or invalid Stripe signature.",
-            },
-            status=status.HTTP_400_BAD_REQUEST,
-        )
-        
     except Exception:
-        logger.exception("stripe_webhook_construct_event_failed")
-        return Response(
-            {
-                "ok": False,
-                "message": "Unable to construct Stripe event.",
-            },
-            status=status.HTTP_400_BAD_REQUEST,
-        )
+        # allow tests to use mocked construct_event
+        try:
+            event = stripe.Webhook.construct_event(
+                payload=payload,
+                sig_header=sig_header,
+                secret=settings.STRIPE_WEBHOOK_SECRET,
+            )
+        except Exception:
+            logger.warning("stripe_webhook_signature_failed")
+            return Response(
+                {
+                    "ok": False,
+                    "message": "Invalid payload or invalid Stripe signature.",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
     logger.info(
         "stripe_webhook_received event_id=%s type=%s",
@@ -148,18 +153,23 @@ def stripe_webhook(request):
         event.get("type"),
     )
 
-    # Build a compact, storage-friendly payload for audit/debug.
+    event_id = event.get("id") or ""
+    evt_type = event.get("type")
+    evt_created = event.get("created")
+    evt_livemode = event.get("livemode")
+
+    data_obj = ((event.get("data") or {}).get("object") or {})
+    obj_id = data_obj.get("id")
+    payment_intent = data_obj.get("payment_intent")
+    metadata = data_obj.get("metadata") or {}
+
+    # Metadata is the source of truth for linking Stripe events
+    # back to our internal payment/user/room records.
+    payment_id = metadata.get("payment_id")
+    room_id = metadata.get("room_id")
+    user_id = metadata.get("user_id")
+
     try:
-        event_id = event.get("id") or ""
-        evt_type = event.get("type")
-        evt_created = event.get("created")
-        evt_livemode = event.get("livemode")
-
-        data_obj = ((event.get("data") or {}).get("object") or {})
-        obj_id = data_obj.get("id")
-        payment_intent = data_obj.get("payment_intent")
-        metadata = data_obj.get("metadata") or {}
-
         payload_compact = {
             "id": event_id,
             "type": evt_type,
@@ -171,97 +181,167 @@ def stripe_webhook(request):
                 "metadata": metadata,
             },
         }
-
         payload_compact = json.loads(json.dumps(payload_compact))
     except Exception:
-        event_id = event.get("id") or ""
-        payload_compact = {"id": event_id, "type": event.get("type")}
+        payload_compact = {"id": event_id, "type": evt_type}
 
+
+    receipt = None
     if event_id:
         try:
             with transaction.atomic():
-                WebhookReceipt.objects.create(
+                receipt, created = WebhookReceipt.objects.get_or_create(
                     source="stripe",
                     event_id=event_id,
-                    payload=payload_compact,
-                    headers={
-                        "Stripe-Signature": request.META.get("HTTP_STRIPE_SIGNATURE", ""),
-                        "User-Agent": request.META.get("HTTP_USER_AGENT", ""),
-                        "Content-Type": request.META.get("CONTENT_TYPE", ""),
+                    defaults={
+                        "payload": payload_compact,
+                        "headers": {
+                            "Stripe-Signature": request.META.get("HTTP_STRIPE_SIGNATURE", ""),
+                            "User-Agent": request.META.get("HTTP_USER_AGENT", ""),
+                            "Content-Type": request.META.get("CONTENT_TYPE", ""),
+                        },
                     },
-                )
-        except IntegrityError:
-            logger.info("stripe_webhook_duplicate event_id=%s", event_id)
+                ) 
+        except Exception:
+            receipt = None
+
+        if receipt and receipt.processed:
+            logger.info("stripe_webhook_already_processed event_id=%s", event_id)
             return ok_response(
                 {
-                    "detail": "duplicate",
+                    "detail": "already processed",
                     "event_id": event_id,
-                    "event_type": event.get("type"),
+                    "event_type": evt_type,
                 },
                 status_code=status.HTTP_200_OK,
             )
-        except Exception:
-            try:
-                with transaction.atomic():
-                    WebhookReceipt.objects.create(source="stripe", event_id=event_id)
-            except Exception:
-                pass
 
-    evt_type = event.get("type")
 
     if evt_type == "checkout.session.completed":
         session = (event.get("data") or {}).get("object") or {}
         metadata = session.get("metadata") or {}
 
         payment_id = metadata.get("payment_id")
+        room_id = metadata.get("room_id")
+        user_id = metadata.get("user_id")
         payment_intent = session.get("payment_intent")
 
-        if payment_id:
-            try:
-                with transaction.atomic():
-                    updated = (
-                        Payment.objects
-                        .filter(id=payment_id)
-                        .exclude(status="succeeded")
-                        .update(
-                            status="succeeded",
-                            stripe_payment_intent_id=str(payment_intent or ""),
-                        )
+        if not payment_id:
+            logger.warning(
+                "stripe_webhook_missing_payment_metadata event_id=%s",
+                event_id,
+            )
+            return Response(
+                {
+                    "ok": False,
+                    "message": "Missing payment metadata.",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            payment = Payment.objects.select_related("room", "user").get(id=payment_id)
+        except Payment.DoesNotExist:
+            logger.warning(
+                "stripe_webhook_invalid_payment_id event_id=%s payment_id=%s",
+                event_id,
+                payment_id,
+            )
+            return Response(
+                {
+                    "ok": False,
+                    "message": "Invalid payment metadata.",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Optional but important safety checks:
+        # ensure webhook metadata still matches the payment we are about to update.
+        if user_id and str(payment.user_id) != str(user_id):
+            logger.warning(
+                "stripe_webhook_user_mismatch event_id=%s payment_id=%s metadata_user_id=%s actual_user_id=%s",
+                event_id,
+                payment_id,
+                user_id,
+                payment.user_id,
+            )
+            return Response(
+                {
+                    "ok": False,
+                    "message": "Webhook metadata user mismatch.",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if room_id:
+            actual_room_id = payment.room_id
+            if str(actual_room_id or "") != str(room_id):
+                logger.warning(
+                    "stripe_webhook_room_mismatch event_id=%s payment_id=%s metadata_room_id=%s actual_room_id=%s",
+                    event_id,
+                    payment_id,
+                    room_id,
+                    actual_room_id,
+                )
+                return Response(
+                    {
+                        "ok": False,
+                        "message": "Webhook metadata room mismatch.",
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        try:
+            with transaction.atomic():
+                updated = (
+                    Payment.objects
+                    .filter(id=payment.id)
+                    .exclude(status="succeeded")
+                    .update(
+                        status="succeeded",
+                        stripe_payment_intent_id=str(payment_intent or ""),
+                    )
+                )
+
+                if updated == 1:
+                    logger.info(
+                        "stripe_webhook_payment_succeeded payment_id=%s payment_intent=%s",
+                        payment.id,
+                        (payment_intent or ""),
                     )
 
-                    if updated == 1:
-                        logger.info(
-                            "stripe_webhook_payment_succeeded payment_id=%s payment_intent=%s",
-                            payment_id,
-                            (payment_intent or ""),
-                        )
+                    payment.refresh_from_db(fields=["status", "stripe_payment_intent_id"])
+                    room = payment.room
 
-                        payment = Payment.objects.select_related("room").get(id=payment_id)
-                        room = payment.room
+                    if room:
+                        today = timezone.now().date()
+                        base = room.paid_until if (room.paid_until and room.paid_until > today) else today
+                        room.paid_until = base + timedelta(days=30)
+                        room.save(update_fields=["paid_until"])
 
-                        if room:
-                            today = timezone.now().date()
-                            base = room.paid_until if (room.paid_until and room.paid_until > today) else today
-                            room.paid_until = base + timedelta(days=30)
-                            room.save(update_fields=["paid_until"])
+                    Notification.objects.create(
+                        user=payment.user,
+                        type="confirmation",
+                        title="Payment confirmed",
+                        body="Your listing payment was successful.",
+                        target_type="payment",
+                        target_id=payment.id,
+                    )
+        except Exception:
+            logger.exception("stripe_webhook_payment_success_failed")
 
-                        Notification.objects.create(
-                            user=payment.user,
-                            type="confirmation",
-                            title="Payment confirmed",
-                            body="Your listing payment was successful.",
-                            target_type="payment",
-                            target_id=payment.id,
-                        )
-            except Exception:
-                logger.exception("stripe_webhook_payment_success_failed")
 
+
+        if receipt:
+            receipt.processed = True
+            receipt.processed_at = timezone.now()
+            receipt.save(update_fields=["processed", "processed_at"])
         return ok_response(
             {
                 "detail": "checkout.session.completed processed",
                 "event_id": event_id,
                 "event_type": evt_type,
-                "payment_id": str(payment_id) if payment_id else None,
+                "payment_id": str(payment_id),
             },
             status_code=status.HTTP_200_OK,
         )
@@ -283,17 +363,23 @@ def stripe_webhook(request):
                     "stripe_webhook_session_expired payment_id=%s",
                     payment_id,
                 )
-
+        
+        if receipt:
+            receipt.processed = True
+            receipt.processed_at = timezone.now()
+            receipt.save(update_fields=["processed", "processed_at"])
+                
+        
         return ok_response(
             {
-                "detail": "checkout.session.completed processed",
+                "detail": "checkout.session.expired processed",
                 "event_id": event_id,
                 "event_type": evt_type,
                 "payment_id": str(payment_id) if payment_id else None,
             },
             status_code=status.HTTP_200_OK,
         )
-
+    
     return ok_response(
         {
             "detail": f"ignored event {evt_type}",
@@ -302,6 +388,7 @@ def stripe_webhook(request):
         },
         status_code=status.HTTP_200_OK,
     )
+    
     
     
 class ProviderWebhookView(APIView):

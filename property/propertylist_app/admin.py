@@ -524,7 +524,7 @@ class PaymentAdmin(admin.ModelAdmin):
     )
     readonly_fields = ("created_at",)
 
-
+# Stores provider webhook receipts and prevents duplicate event processing.
 @admin.register(WebhookReceipt)
 class WebhookReceiptAdmin(ReadOnlyAdmin):
     list_display = ("source", "event_id", "received_at")

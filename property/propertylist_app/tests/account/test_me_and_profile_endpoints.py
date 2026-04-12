@@ -28,7 +28,7 @@ def test_patch_profile_normalises_postcode_and_accepts_gender(auth_client):
     resp = auth_client.patch(url, data=payload, format="json")
     assert resp.status_code == 200
     # if your serializer normalises postcode, keep this check
-    assert resp.data.get("postcode") in ("SW1A 1AA", "SW1A1AA")
+    assert resp.data.get("data", {}).get("postcode") in ("SW1A 1AA", "SW1A1AA")
 
 
 def test_patch_profile_rejects_invalid_postcode(auth_client):
@@ -36,7 +36,7 @@ def test_patch_profile_rejects_invalid_postcode(auth_client):
     payload = {"postcode": "NOT_A_POSTCODE"}
     resp = auth_client.patch(url, data=payload, format="json")
     assert resp.status_code == 400
-    assert "postcode" in resp.data
+    assert "postcode" in resp.data["field_errors"]
 
 
 def test_patch_profile_rejects_under_18_dob(auth_client):
@@ -46,4 +46,4 @@ def test_patch_profile_rejects_under_18_dob(auth_client):
     payload = {"date_of_birth": dob.isoformat()}
     resp = auth_client.patch(url, data=payload, format="json")
     assert resp.status_code == 400
-    assert "date_of_birth" in resp.data
+    assert "date_of_birth" in resp.data["field_errors"]

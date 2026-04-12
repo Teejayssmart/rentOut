@@ -69,7 +69,7 @@ if not DEBUG:
     # HSTS (start low; increase later once confirmed stable)
     SECURE_HSTS_SECONDS = int(os.getenv("SECURE_HSTS_SECONDS", "3600"))  # 1 hour
     SECURE_HSTS_INCLUDE_SUBDOMAINS = True
-    SECURE_HSTS_PRELOAD = False
+    SECURE_HSTS_PRELOAD = True
 
 
 
@@ -81,7 +81,13 @@ def _csv_env(name: str, default: str = ""):
 # ALLOWED_HOSTS:
 # - production/staging (DEBUG=False): must be explicit and strict (no wildcard)
 # - local/dev (DEBUG=True): allow local + convenience wildcard for Render previews if needed
-ALLOWED_HOSTS = _csv_env("DJANGO_ALLOWED_HOSTS", "127.0.0.1,localhost")
+ALLOWED_HOSTS = _csv_env(
+    "DJANGO_ALLOWED_HOSTS",
+    "127.0.0.1,localhost" if DEBUG else "",
+)
+
+if not DEBUG and not ALLOWED_HOSTS:
+    raise ImproperlyConfigured("DJANGO_ALLOWED_HOSTS must be set in production")
 
 if DEBUG:
     # Convenience for dev only (never in production)
@@ -231,8 +237,8 @@ REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
         "rest_framework_simplejwt.authentication.JWTAuthentication",
     ],
-    "DEFAULT_PERMISSION_CLASSES": [
-         "rest_framework.permissions.IsAuthenticatedOrReadOnly",
+        "DEFAULT_PERMISSION_CLASSES": [
+        "rest_framework.permissions.IsAuthenticated",
     ],
     "DEFAULT_THROTTLE_CLASSES": [
         "rest_framework.throttling.UserRateThrottle",
@@ -241,28 +247,29 @@ REST_FRAMEWORK = {
     ],
     
     "DEFAULT_THROTTLE_RATES": {
-    "user": "300/hour",
-    "anon": "100/hour",
+        
+        "user": "120/hour",
+        "anon": "30/hour",
 
-    "login": "5/10min",
-    "register": "10/hour",
-    "register_anon": "5/hour",
+        "login": "5/10min",
+        "register": "5/hour",
+        "register_anon": "3/hour",
 
-    "message_user": "30/hour",
-    "messaging": "60/hour",
+        "message_user": "12/hour",
+        "messaging": "24/hour",
 
-    "review-create": "10/hour",
-    "review-detail": "120/hour",
+        "review-create": "5/hour",
 
-    "password-reset": "5/hour",
-    "password-reset-confirm": "10/hour",
+        "password-reset": "3/hour",
+        "password-reset-confirm": "5/hour",
 
-    "report-create": "5/hour",
-    "moderation": "60/hour",
+        "report-create": "3/hour",
+        "moderation": "30/hour",
 
-    "otp-verify": "10/15min",
-    "otp-resend": "3/hour",
+        "otp-verify": "5/15min",
+        "otp-resend": "2/hour",
     },
+    
         
         
         
@@ -338,13 +345,16 @@ SIMPLE_JWT = {
 # -----------------------------
 # Security / Abuse controls
 # -----------------------------
-ENABLE_CAPTCHA = os.getenv("ENABLE_CAPTCHA", "false").lower() in {"1", "true", "yes"}
+ENABLE_CAPTCHA = os.getenv("ENABLE_CAPTCHA", "true" if not DEBUG else "false").lower() in {"1", "true", "yes"}
+CAPTCHA_PROVIDER = os.getenv("CAPTCHA_PROVIDER", "recaptcha")
+CAPTCHA_SECRET = os.getenv("CAPTCHA_SECRET", "")
+
+if ENABLE_CAPTCHA and not CAPTCHA_SECRET:
+    raise ImproperlyConfigured("CAPTCHA_SECRET must be set when CAPTCHA is enabled")
 
 
 ACCOUNT_DELETION_GRACE_DAYS = 7
 
-CAPTCHA_PROVIDER = os.getenv("CAPTCHA_PROVIDER", "recaptcha")
-CAPTCHA_SECRET = os.getenv("CAPTCHA_SECRET", "")
 
 LOGIN_FAIL_LIMIT = int(os.getenv("LOGIN_FAIL_LIMIT", "5"))
 LOGIN_LOCKOUT_SECONDS = int(os.getenv("LOGIN_LOCKOUT_SECONDS", "900"))
@@ -355,20 +365,46 @@ LOGIN_LOCKOUT_SECONDS = int(os.getenv("LOGIN_LOCKOUT_SECONDS", "900"))
 # -----------------------------
 CORS_ALLOWED_ORIGINS = _csv_env(
     "CORS_ALLOWED_ORIGINS",
-    "http://localhost:3000,http://127.0.0.1:3000",
+    "http://localhost:3000,http://127.0.0.1:3000" if DEBUG else "",
 )
+
+if not DEBUG and not CORS_ALLOWED_ORIGINS:
+    raise ImproperlyConfigured("CORS_ALLOWED_ORIGINS must be set in production")
 
 CSRF_TRUSTED_ORIGINS = _csv_env(
     "CSRF_TRUSTED_ORIGINS",
-    "http://localhost:3000,http://127.0.0.1:3000",
+    "http://localhost:3000,http://127.0.0.1:3000" if DEBUG else "",
 )
+
+if not DEBUG and not CSRF_TRUSTED_ORIGINS:
+    raise ImproperlyConfigured("CSRF_TRUSTED_ORIGINS must be set in production")
 # -----------------------------
 # Email
 # -----------------------------
 EMAIL_BACKEND = os.getenv(
-    "EMAIL_BACKEND", "django.core.mail.backends.console.EmailBackend"
+    "EMAIL_BACKEND",
+    "django.core.mail.backends.smtp.EmailBackend" if not DEBUG else "django.core.mail.backends.console.EmailBackend",
 )
+
+EMAIL_HOST = os.getenv("EMAIL_HOST", "")
+EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
+EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "true").lower() == "true"
+EMAIL_USE_SSL = os.getenv("EMAIL_USE_SSL", "false").lower() == "true"
+EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "")
+EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
+
 DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", "no-reply@rentout.local")
+SERVER_EMAIL = os.getenv("SERVER_EMAIL", DEFAULT_FROM_EMAIL)
+
+if not DEBUG:
+    missing_email = [
+        k for k in ["EMAIL_HOST", "EMAIL_HOST_USER", "EMAIL_HOST_PASSWORD"]
+        if not os.getenv(k)
+    ]
+    if missing_email:
+        raise ImproperlyConfigured(
+            f"Missing required email env vars in production: {', '.join(missing_email)}"
+        )
 
 # -----------------------------
 # Media policy knobs used by validators
@@ -418,10 +454,15 @@ WEBHOOK_SECRETS = {
 # -----------------------------
 # Caching
 # -----------------------------
+REDIS_URL = os.getenv("REDIS_CACHE_URL")
+
+if not REDIS_URL and not DEBUG:
+    raise ImproperlyConfigured("REDIS_CACHE_URL must be set in production")
+
 CACHES = {
     "default": {
         "BACKEND": "django.core.cache.backends.redis.RedisCache",
-        "LOCATION": os.getenv("REDIS_CACHE_URL", "redis://127.0.0.1:6379/2"),
+        "LOCATION": REDIS_URL or "redis://127.0.0.1:6379/2",
         "KEY_PREFIX": "rentcrib",
     }
 }
@@ -438,7 +479,10 @@ CACHE_SEARCH_TTL = 120
 GDPR_RETENTION = {
     "export_link_days": 7,
 }
-GDPR_HASH_SALT = os.getenv("GDPR_HASH_SALT", "change-this-in-prod")
+GDPR_HASH_SALT = os.getenv("GDPR_HASH_SALT", "dev-insecure-salt")
+
+if not DEBUG and GDPR_HASH_SALT == "dev-insecure-salt":
+    raise ImproperlyConfigured("GDPR_HASH_SALT must be set in production")
 
 # -----------------------------
 # Celery (single canonical configuration)

@@ -1,8 +1,17 @@
+import random
+
 import json
+
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
+
+
 from django.conf import settings
+from django.utils import timezone
+
+
+from datetime import timedelta
 
 
 from rest_framework import generics
@@ -22,7 +31,7 @@ from drf_spectacular.types import OpenApiTypes
 
 
  
- 
+from propertylist_app.services.captcha import verify_captcha
 from propertylist_app.services.geo import geocode_postcode_cached
 from propertylist_app.api.schema_serializers import ErrorResponseSerializer
 from propertylist_app.api.schema_helpers import (
@@ -1424,6 +1433,14 @@ class EmailOTPResendView(APIView):
         ser = EmailOTPResendSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
 
+        if getattr(settings, "ENABLE_CAPTCHA", False):
+            token = (request.data.get("captcha_token") or "").strip()
+            if not verify_captcha(token, request.META.get("REMOTE_ADDR", "")):
+                return Response(
+                    {"detail": "CAPTCHA verification failed."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
         generic_response = ok_response(
             {"detail": "If the account exists, a new verification code has been sent."},
             status_code=status.HTTP_200_OK,
@@ -1433,15 +1450,12 @@ class EmailOTPResendView(APIView):
         if not user:
             return generic_response
 
-        # --- Manual per-user throttle: 1 resend per cooldown window ---
         cache_key = f"otp_resend_{user.id}"
         if cache.get(cache_key):
             return generic_response
 
-        # First call in the window -> allow and set key
         cache.set(cache_key, 1, timeout=settings.OTP_RESEND_COOLDOWN_SECONDS)
 
-        # Invalidate previous unused verification OTPs
         EmailOTP.objects.filter(
             user=user,
             purpose=EmailOTP.PURPOSE_EMAIL_VERIFY,
@@ -1472,6 +1486,7 @@ class EmailOTPResendView(APIView):
         )
         
         
+        
 class PhoneOTPStartView(APIView):
     permission_classes = [permissions.IsAuthenticated]
     versioning_class = None
@@ -1493,6 +1508,7 @@ class PhoneOTPStartView(APIView):
             ),
             400: DetailResponseSerializer,
             401: OpenApiResponse(description="Authentication required."),
+            429: DetailResponseSerializer,
         },
         auth=[],
         description="Start phone OTP verification by sending a 6-digit code.",
@@ -1501,11 +1517,18 @@ class PhoneOTPStartView(APIView):
         serializer = PhoneOTPStartSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
+        if getattr(settings, "ENABLE_CAPTCHA", False):
+            token = (request.data.get("captcha_token") or "").strip()
+            if not verify_captcha(token, request.META.get("REMOTE_ADDR", "")):
+                return Response(
+                    {"detail": "CAPTCHA verification failed."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
         phone = serializer.validated_data["phone"]
 
         from django.core.cache import cache
 
-        # cooldown (1 request per 60 seconds)
         cache_key = f"phone_otp_resend_{request.user.id}"
         if cache.get(cache_key):
             return Response(
@@ -1515,13 +1538,11 @@ class PhoneOTPStartView(APIView):
 
         cache.set(cache_key, 1, timeout=settings.OTP_RESEND_COOLDOWN_SECONDS)
 
-        #  invalidate old OTPs
         PhoneOTP.objects.filter(
             user=request.user,
             used_at__isnull=True,
         ).update(used_at=timezone.now())
 
-        # generate 6-digit code
         code = f"{random.randint(0, 999999):06d}"
 
         PhoneOTP.objects.create(
@@ -1535,8 +1556,6 @@ class PhoneOTPStartView(APIView):
             {"detail": "OTP sent to phone."},
             status_code=status.HTTP_200_OK,
         )
-
-
 
 
 

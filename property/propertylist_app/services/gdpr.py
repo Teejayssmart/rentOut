@@ -21,7 +21,7 @@ def _safe_media_read(path: str) -> bytes:
         return b""
 
 def _user_hash(user) -> str:
-    salt = getattr(settings, "GDPR_HASH_SALT", "change-me")
+    salt = settings.GDPR_HASH_SALT
     return hashlib.sha256(f"{salt}:{user.pk}".encode()).hexdigest()
 
 def _retention_days(key, default_days):

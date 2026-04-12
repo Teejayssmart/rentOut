@@ -59,6 +59,7 @@ from propertylist_app.api.throttling import (
 from propertylist_app.api.schema_serializers import (
     ErrorResponseSerializer,
 )
+from propertylist_app.api import views as views_mod
 from propertylist_app.api.schema_helpers import (
     standard_response_serializer,
 )
@@ -293,7 +294,7 @@ class RegistrationView(generics.CreateAPIView):
         # Optional CAPTCHA
         if getattr(settings, "ENABLE_CAPTCHA", False):
             token = (request.data.get("captcha_token") or "").strip()
-            if not verify_captcha(token, request.META.get("REMOTE_ADDR", "")):
+            if not views_mod.verify_captcha(token, request.META.get("REMOTE_ADDR", "")):
                 return Response(
                     {
                         "ok": False,
@@ -392,7 +393,7 @@ class GoogleRegisterView(APIView):
             )
 
         try:
-            idinfo = id_token.verify_oauth2_token(
+            idinfo = views_mod.id_token.verify_oauth2_token(
                 token,
                 google_requests.Request(),
                 settings.GOOGLE_WEB_CLIENT_ID,
@@ -481,7 +482,7 @@ class AppleRegisterView(APIView):
             )
 
         try:
-            payload = _verify_apple_identity_token(identity_token)
+            payload = views_mod._verify_apple_identity_token(identity_token)
         except ValueError as exc:
             return Response(
                 {"ok": False, "message": str(exc), "data": None},
@@ -594,7 +595,7 @@ class LoginView(APIView):
 
             if getattr(settings, "ENABLE_CAPTCHA", False):
                 token = (data.get("captcha_token") or "").strip()
-                if not verify_captcha(token, ip):
+                if not views_mod.verify_captcha(token, ip):
                     logger.warning("login_captcha_failed ip=%s identifier=%s", ip, (identifier_for_lock or "-"))
                     return Response(
                         {"detail": "CAPTCHA verification failed."},
@@ -801,7 +802,7 @@ class PasswordResetRequestView(APIView):
     def post(self, request):
         if settings.ENABLE_CAPTCHA:
             token = (request.data.get("captcha_token") or "").strip()
-            if not verify_captcha(token, request.META.get("REMOTE_ADDR")):
+            if not views_mod.verify_captcha(token, request.META.get("REMOTE_ADDR")):
                 return Response(
                     {"detail": "CAPTCHA verification failed."},
                     status=status.HTTP_400_BAD_REQUEST,

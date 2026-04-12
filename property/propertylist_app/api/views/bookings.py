@@ -1,4 +1,4 @@
-
+import logging
 
 from datetime import datetime
 from django.db import transaction
@@ -34,6 +34,11 @@ from .common import ok_response, _pagination_meta
 
 
 from django_filters.rest_framework import DjangoFilterBackend
+
+
+
+logger = logging.getLogger(__name__)
+
 
 class EmptyDataSerializer(serializers.Serializer):
     pass
@@ -390,13 +395,16 @@ class BookingCancelView(APIView):
 
         booking = get_object_or_404(qs, pk=pk)
 
-        if booking.canceled_at:
-            return ok_response(
-                {
-                    "detail": "Booking already cancelled.",
-                    "canceled_at": booking.canceled_at,
-                },
-                status_code=status.HTTP_200_OK,
+        if booking.status == Booking.STATUS_CANCELLED or booking.canceled_at is not None:
+            return Response(
+                {"detail": "Booking already cancelled."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if booking.status == Booking.STATUS_SUSPENDED:
+            return Response(
+                {"detail": "Suspended bookings cannot be cancelled."},
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         if booking.start <= timezone.now():
@@ -405,9 +413,16 @@ class BookingCancelView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        booking.canceled_at = timezone.now()
         booking.status = Booking.STATUS_CANCELLED
-        booking.save(update_fields=["canceled_at", "status"])
+        booking.canceled_at = timezone.now()
+        booking.save(update_fields=["status", "canceled_at"])
+
+        logger.info(
+            "booking_cancel_success booking_id=%s user_id=%s status=%s",
+            booking.id,
+            request.user.id,
+            booking.status,
+        )
 
         return ok_response(
             {
@@ -416,7 +431,6 @@ class BookingCancelView(APIView):
             },
             status_code=status.HTTP_200_OK,
         )
-
 
 
 
@@ -455,22 +469,47 @@ class BookingSuspendView(APIView):
 
         if booking.user != request.user:
             return Response(
-                    {
-                        "ok": False,
-                        "message": "You are not allowed to suspend this booking.",
-                    },
-                    status=status.HTTP_403_FORBIDDEN,
-                )
+                {
+                    "ok": False,
+                    "message": "You are not allowed to suspend this booking.",
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
-        # idempotent
-        if booking.status != Booking.STATUS_SUSPENDED:
-            booking.status = Booking.STATUS_SUSPENDED
+        if booking.status == Booking.STATUS_SUSPENDED:
+            return Response(
+                {"detail": "Booking already suspended."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-            # if you want suspend to behave like cancel, keep this:
-            if not booking.canceled_at:
-                booking.canceled_at = timezone.now()
+        if booking.status == Booking.STATUS_CANCELLED or booking.canceled_at is not None:
+            return Response(
+                {"detail": "Cancelled bookings cannot be suspended."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-            booking.save(update_fields=["status", "canceled_at"])
+        if booking.start <= timezone.now():
+            return Response(
+                {"detail": "Cannot suspend after booking has started."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if booking.status != Booking.STATUS_ACTIVE:
+            return Response(
+                {"detail": "Only active bookings can be suspended."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        booking.status = Booking.STATUS_SUSPENDED
+        booking.canceled_at = timezone.now()
+        booking.save(update_fields=["status", "canceled_at"])
+
+        logger.info(
+            "booking_suspend_success booking_id=%s user_id=%s status=%s",
+            booking.id,
+            request.user.id,
+            booking.status,
+        )
 
         return ok_response(
             {
@@ -480,8 +519,6 @@ class BookingSuspendView(APIView):
             },
             status_code=status.HTTP_200_OK,
         )
-        
-        
         
 class BookingDeleteView(APIView):
     permission_classes = [IsAuthenticated]
@@ -495,8 +532,8 @@ class BookingDeleteView(APIView):
             400: OpenApiResponse(response=ErrorResponseSerializer),
             401: OpenApiResponse(response=ErrorResponseSerializer),
             404: OpenApiResponse(response=ErrorResponseSerializer),
-    },
-    description="Delete a booking.",
+        },
+        description="Delete a booking.",
     )
     def delete(self, request, pk, *args, **kwargs):
         qs = Booking.objects.filter(is_deleted=False)
@@ -509,6 +546,19 @@ class BookingDeleteView(APIView):
         booking = get_object_or_404(qs, pk=pk)
 
         now = timezone.now()
+
+        if booking.status == Booking.STATUS_SUSPENDED:
+            return Response(
+                {"detail": "Suspended bookings cannot be deleted."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if booking.status == Booking.STATUS_CANCELLED or booking.canceled_at is not None:
+            return Response(
+                {"detail": "Cancelled bookings cannot be deleted."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         if booking.start and booking.start <= now:
             return Response(
                 {
@@ -519,16 +569,21 @@ class BookingDeleteView(APIView):
             )
 
         booking.is_deleted = True
-        booking.deleted_at = timezone.now()
+        booking.deleted_at = now
         booking.save(update_fields=["is_deleted", "deleted_at"])
+
+        logger.info(
+            "booking_delete_success booking_id=%s user_id=%s is_deleted=%s",
+            booking.id,
+            request.user.id,
+            booking.is_deleted,
+        )
 
         return ok_response(
             {},
             message="Booking deleted successfully.",
             status_code=status.HTTP_200_OK,
         )
-
-        
 
 
 
