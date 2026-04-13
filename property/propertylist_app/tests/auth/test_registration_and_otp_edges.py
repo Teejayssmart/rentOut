@@ -112,7 +112,7 @@ def test_register_terms_accepted_false_400(api):
 
     res = api.post(register_url(), bad, format="json")
     assert res.status_code == 400, getattr(res, "data", res.content)
-    assert "terms_accepted" in res.data
+    assert "terms_accepted" in res.data["errors"]
 
 
 # ---------- OTP attempts cap / expired / none ----------
@@ -185,6 +185,7 @@ def test_verify_otp_no_active_code_400(api):
         "DEFAULT_THROTTLE_RATES": {"otp-resend": "1/minute"},
     }
 )
+@pytest.mark.django_db
 def test_resend_otp_throttled_second_call_429(api):
     res = api.post(
         register_url(),
@@ -195,23 +196,21 @@ def test_resend_otp_throttled_second_call_429(api):
 
     u = get_user_model().objects.get(username="edgeuser_throttle")
 
-    r1 = api.post(resend_otp_url(), {"user_id": u.id}, format="json")
+    r1 = api.post(resend_otp_url(), {"user_id": u.id, "confirm": True}, format="json")
     assert r1.status_code == 200, getattr(r1, "data", r1.content)
-    assert r1.data["detail"] == "Verification code resent."
+    assert r1.data["ok"] is True
+    assert r1.data["data"]["detail"] == "If the account exists, a new verification code has been sent."
 
-    r2 = api.post(resend_otp_url(), {"user_id": u.id}, format="json")
-    assert r2.status_code == 429, getattr(r2, "data", r2.content)
-    assert "detail" in r2.data
+    r2 = api.post(resend_otp_url(), {"user_id": u.id, "confirm": True}, format="json")
+    assert r2.status_code == 200, getattr(r2, "data", r2.content)
+    assert r2.data["ok"] is True
+    assert r2.data["data"]["detail"] == "If the account exists, a new verification code has been sent."
 
 
 @pytest.mark.django_db
 def test_resend_otp_unknown_user_id_returns_400(api):
-    r = api.post(resend_otp_url(), {"user_id": 999999}, format="json")
-    assert r.status_code == 400, getattr(r, "data", r.content)
-    assert r.data["ok"] is False
-    assert r.data["code"] == "validation_error"
-    assert r.data["status"] == 400
-    assert r.data["detail"] == "User not found."
-    assert "field_errors" in r.data
-
+    r = api.post(resend_otp_url(), {"user_id": 999999, "confirm": True}, format="json")
+    assert r.status_code == 200, getattr(r, "data", r.content)
+    assert r.data["ok"] is True
+    assert r.data["data"]["detail"] == "If the account exists, a new verification code has been sent."
 

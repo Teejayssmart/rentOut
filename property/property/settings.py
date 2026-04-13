@@ -31,6 +31,10 @@ load_dotenv(BASE_DIR / ".env")
 # Cache TTL for geocode results (seconds)
 GEO_CACHE_TTL_SECONDS = 60 * 60 * 24 * 7  # 7 days
 
+
+OTP_EXPIRY_MINUTES = 10
+
+
 # -----------------------------
 # Core security / environment
 # -----------------------------
@@ -251,7 +255,7 @@ REST_FRAMEWORK = {
         "user": "120/hour",
         "anon": "30/hour",
 
-        "login": "5/10min",
+        "login": "5/minute",
         "register": "5/hour",
         "register_anon": "3/hour",
 
@@ -266,7 +270,7 @@ REST_FRAMEWORK = {
         "report-create": "3/hour",
         "moderation": "30/hour",
 
-        "otp-verify": "5/15min",
+        "otp-verify": "5/minute",
         "otp-resend": "2/hour",
     },
     

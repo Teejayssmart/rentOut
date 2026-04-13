@@ -3,7 +3,8 @@ import logging
 from datetime import datetime
 from django.db import transaction
 from django.shortcuts import get_object_or_404
-
+from django_filters.rest_framework import DjangoFilterBackend
+from django.utils import timezone
 
 from rest_framework import generics, status
 from rest_framework.response import Response
@@ -13,11 +14,12 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.throttling import UserRateThrottle
 from rest_framework import serializers
+from rest_framework.exceptions import ValidationError
 
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiResponse,inline_serializer
 
 from propertylist_app.api.pagination import StandardLimitOffsetPagination
-from propertylist_app.models import Booking, IdempotencyKey, Room, AvailabilitySlot
+from propertylist_app.models import Booking, IdempotencyKey, Room, AvailabilitySlot, UserProfile, Notification
 from propertylist_app.validators import ensure_idempotency, validate_no_booking_conflict
 from propertylist_app.api.schema_serializers import ErrorResponseSerializer
 from propertylist_app.api.schema_helpers import (
@@ -33,7 +35,7 @@ from ..serializers import BookingCreateRequestSerializer, BookingResponseEnvelop
 from .common import ok_response, _pagination_meta
 
 
-from django_filters.rest_framework import DjangoFilterBackend
+
 
 
 

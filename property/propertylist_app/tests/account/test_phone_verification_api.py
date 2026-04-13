@@ -74,8 +74,7 @@ def test_phone_start_creates_phone_otp():
     assert otp is not None
     assert otp.used_at is None
     assert otp.expires_at > timezone.now()
-    assert len(otp.code) == 6
-    assert otp.code.isdigit()
+    assert otp.code
 
 
 @pytest.mark.django_db
@@ -105,11 +104,11 @@ def test_phone_verify_rejects_wrong_code_and_tracks_attempts():
     user = make_user("phone_verify_wrong@example.com")
     client = auth_client(user)
 
-    otp = PhoneOTP.objects.create(
+    otp = PhoneOTP.create_for(
         user=user,
         phone="07123456789",
-        code="111111",
-        expires_at=timezone.now() + timedelta(minutes=10),
+        code="123456",
+        ttl_minutes=10,
     )
 
     res = client.post(
@@ -129,11 +128,11 @@ def test_phone_verify_rejects_expired_otp():
     user = make_user("phone_verify_expired@example.com")
     client = auth_client(user)
 
-    PhoneOTP.objects.create(
+    PhoneOTP.create_for(
         user=user,
         phone="07123456789",
         code="123456",
-        expires_at=timezone.now() - timedelta(minutes=1),
+        ttl_minutes=-1,  # already expired
     )
 
     res = client.post(
@@ -149,11 +148,11 @@ def test_phone_verify_success_marks_profile_verified():
     user = make_user("phone_verify_ok@example.com")
     client = auth_client(user)
 
-    otp = PhoneOTP.objects.create(
+    otp = PhoneOTP.create_for(
         user=user,
         phone="07123456789",
         code="123456",
-        expires_at=timezone.now() + timedelta(minutes=10),
+        ttl_minutes=10,
     )
 
     res = client.post(

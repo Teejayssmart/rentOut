@@ -47,7 +47,8 @@ def _register_payload(role="landlord"):
 def test_register_landlord_ok_sends_otp(api):
     res = api.post(register_url(), _register_payload("landlord"), format="json")
     assert res.status_code == 201, getattr(res, "data", res.content)
-    assert res.data.get("need_otp") is True
+    assert res.data["data"]["need_otp"] is True
+
 
     User = get_user_model()
     u = User.objects.get(username="testuser")
@@ -83,7 +84,7 @@ def test_register_missing_terms_400(api):
 
     res = api.post(register_url(), bad, format="json")
     assert res.status_code == 400
-    assert "terms_accepted" in res.data
+    assert "terms_accepted" in res.data["errors"]
 
 
 @pytest.mark.django_db
@@ -183,9 +184,9 @@ def test_resend_otp_200_and_old_invalidated(api):
     old_active = EmailOTP.objects.filter(user=u, used_at__isnull=True).order_by("-created_at").first()
     assert old_active is not None
 
-    res2 = api.post(resend_otp_url(), {"user_id": u.id}, format="json")
+    res2 = api.post(resend_otp_url(), {"user_id": u.id, "confirm": True}, format="json")
     assert res2.status_code == 200, getattr(res2, "data", res2.content)
-    assert res2.data["detail"] == "Verification code resent."
+    assert res2.data["data"]["detail"] == "If the account exists, a new verification code has been sent."
 
     old_active.refresh_from_db()
     assert old_active.used_at is not None

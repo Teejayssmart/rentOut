@@ -984,6 +984,7 @@ class RoomCategorieVS(viewsets.ModelViewSet):
 class RoomListAlt(CachedAnonymousGETMixin, generics.ListAPIView):
     queryset = Room.objects.alive().order_by("-avg_rating")
     serializer_class = RoomSerializer
+    permission_classes = [AllowAny]
     cache_timeout = 120  # cache this endpoint for 2 minutes
 
     @extend_schema(

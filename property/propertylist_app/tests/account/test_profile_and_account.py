@@ -40,7 +40,7 @@ def test_avatar_upload_happy_path_and_missing_file():
     file = SimpleUploadedFile("tiny.png", _png_bytes(), content_type="image/png")
     r2 = c.post(url, data={"avatar": file}, format="multipart")
     assert r2.status_code == 200
-    assert "avatar" in r2.data  # usually a URL or None depending on storage
+    assert "avatar" in r2.data["data"]  # usually a URL or None depending on storage
 
 
 @pytest.mark.django_db

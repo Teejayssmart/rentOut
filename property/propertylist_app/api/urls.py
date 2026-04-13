@@ -13,7 +13,7 @@ from django.views.decorators.csrf import csrf_exempt
 
 from propertylist_app.api import views
 
-from .views import EmailOTPVerifyView, EmailOTPResendView,PhoneOTPStartView, PhoneOTPVerifyView
+from .views import EmailOTPVerifyView, EmailOTPResendView,PhoneOTPStartView, PhoneOTPVerifyView,RoomListAlt
 from .views.profile import DeleteAccountRequestView, DeleteAccountCancelView
 
 from propertylist_app.api.views import (
@@ -105,7 +105,7 @@ urlpatterns = [
     path("rooms/<int:pk>/preview/",    RoomPreviewView.as_view(),   name="room-preview"), 
     
     # Cached alt list
-    path("rooms-alt/", cache_page(60)(RoomListGV.as_view()), name="room-list-alt"),
+    path("rooms-alt/", cache_page(60)(RoomListAlt.as_view()), name="room-list-alt"),
     
 
     # Room categories

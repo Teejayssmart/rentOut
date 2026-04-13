@@ -14,6 +14,7 @@ from django.db.models import Q, F, CheckConstraint
 from django.db.models.functions import Lower
 from django.utils import timezone
 from django.utils.text import slugify
+from django.contrib.auth.hashers import check_password, make_password
 
 
 # ---------------------------
@@ -1442,7 +1443,7 @@ class EmailOTP(models.Model):
         choices=PURPOSE_CHOICES,
         default=PURPOSE_EMAIL_VERIFY,
     )
-    code = models.CharField(max_length=6)
+    code = models.CharField(max_length=128)
     created_at = models.DateTimeField(auto_now_add=True)
     expires_at = models.DateTimeField()
     used_at = models.DateTimeField(null=True, blank=True)
@@ -1458,7 +1459,10 @@ class EmailOTP(models.Model):
         return timezone.now() >= self.expires_at
 
     def matches(self, value: str) -> bool:
-        return self.code == (value or "").strip()
+        raw = (value or "").strip()
+        if not raw:
+            return False
+        return check_password(raw, self.code)
 
     def mark_used(self) -> None:
         self.used_at = timezone.now()
@@ -1479,7 +1483,7 @@ class EmailOTP(models.Model):
         return cls.objects.create(
             user=user,
             purpose=purpose,
-            code=str(code).strip(),
+            code=make_password(str(code).strip()),
             expires_at=expires_at,
         )
 
@@ -1489,7 +1493,7 @@ class EmailOTP(models.Model):
 class PhoneOTP(models.Model):
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="phone_otps")
     phone = models.CharField(max_length=15)
-    code = models.CharField(max_length=6)
+    code = models.CharField(max_length=128)
     created_at = models.DateTimeField(auto_now_add=True)
     expires_at = models.DateTimeField()
     used_at = models.DateTimeField(null=True, blank=True)
@@ -1508,3 +1512,25 @@ class PhoneOTP(models.Model):
     @property
     def is_used(self) -> bool:
         return self.used_at is not None
+    
+    
+    def matches(self, value: str) -> bool:
+        raw = (value or "").strip()
+        if not raw:
+            return False
+        return check_password(raw, self.code)
+
+    def mark_used(self) -> None:
+        self.used_at = timezone.now()
+        self.save(update_fields=["used_at"])
+
+    @classmethod
+    def create_for(cls, *, user, phone: str, code: str, ttl_minutes: int | None = None):
+        ttl_minutes = settings.OTP_EXPIRY_MINUTES if ttl_minutes is None else ttl_minutes
+        expires_at = timezone.now() + timedelta(minutes=ttl_minutes)
+        return cls.objects.create(
+            user=user,
+            phone=phone,
+            code=make_password(str(code).strip()),
+            expires_at=expires_at,
+        )

@@ -18,6 +18,7 @@ from rest_framework import generics
 from rest_framework import permissions, serializers, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework.exceptions import ValidationError
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.permissions import AllowAny
 from drf_spectacular.utils import (
@@ -28,8 +29,11 @@ from drf_spectacular.utils import (
 )
 from drf_spectacular.types import OpenApiTypes
 
-
-
+from django.contrib.auth import get_user_model
+from django.shortcuts import get_object_or_404
+from django.core.cache import cache
+from django.utils.crypto import get_random_string
+from django.db.models import Q, Exists, OuterRef, Prefetch
  
 from propertylist_app.services.captcha import verify_captcha
 from propertylist_app.services.geo import geocode_postcode_cached
@@ -49,7 +53,7 @@ from propertylist_app.api.serializers import (
     DetailResponseSerializer,
     EmailOTPResendSerializer,
 )
-from propertylist_app.models import Room, UserProfile, PhoneOTP, EmailOTP
+from propertylist_app.models import Room, UserProfile, PhoneOTP, EmailOTP,SavedRoom, RoomImage
 from .common import ok_response, _wrap_response_success
 
 
@@ -649,8 +653,8 @@ class SearchRoomsView(generics.ListAPIView):
 
 
         verified_only = parse_bool(params.get("verified_advertisers_only"))
-        if verified_only:
-            qs = qs.filter(property_owner__profile__advertiser_verified=True)
+        if verified_only is not None:
+            qs = qs.filter(property_owner__profile__advertiser_verified=verified_only)
             
             
         # Advert by household (UserProfile.role_detail)
@@ -1540,16 +1544,17 @@ class PhoneOTPStartView(APIView):
 
         PhoneOTP.objects.filter(
             user=request.user,
+            phone=phone,
             used_at__isnull=True,
         ).update(used_at=timezone.now())
 
-        code = f"{random.randint(0, 999999):06d}"
+        code = get_random_string(6, allowed_chars="0123456789")
 
-        PhoneOTP.objects.create(
+        PhoneOTP.create_for(
             user=request.user,
             phone=phone,
             code=code,
-            expires_at=timezone.now() + timedelta(minutes=settings.OTP_EXPIRY_MINUTES),
+            ttl_minutes=settings.OTP_EXPIRY_MINUTES,
         )
 
         return ok_response(
@@ -1604,20 +1609,22 @@ class PhoneOTPVerifyView(APIView):
             return Response({"detail": "Invalid or expired OTP."}, status=status.HTTP_400_BAD_REQUEST)
         
         
+
         if otp.attempts >= settings.OTP_MAX_ATTEMPTS:
             return Response(
-                {"detail": "Invalid or expired OTP."},
+                {"detail": "Too many attempts. Request a new code."},
                 status=status.HTTP_429_TOO_MANY_REQUESTS,
             )
 
-        otp.attempts = int(otp.attempts or 0) + 1
-        otp.save(update_fields=["attempts"])
+        if not otp.matches(code):
+            otp.attempts = int(otp.attempts or 0) + 1
+            otp.save(update_fields=["attempts"])
+            return Response(
+                {"detail": "Invalid or expired OTP."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-        if otp.code != code:
-            return Response({"detail": "Invalid or expired OTP."}, status=status.HTTP_400_BAD_REQUEST)
-
-        otp.used_at = timezone.now()
-        otp.save(update_fields=["used_at"])
+        otp.mark_used()
 
         # update profile
         profile, _ = UserProfile.objects.get_or_create(user=request.user)

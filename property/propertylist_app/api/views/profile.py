@@ -1,3 +1,7 @@
+from datetime import timedelta
+
+
+
 from rest_framework import generics, serializers, status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -8,10 +12,14 @@ from rest_framework.parsers import MultiPartParser, FormParser
 
 from django.contrib.auth import authenticate, get_user_model
 from django.core.exceptions import ValidationError as DjangoValidationError
+from django.conf import settings
+from django.db.models import Avg
+from django.utils import timezone
+
 
 from drf_spectacular.utils import extend_schema, OpenApiResponse, inline_serializer
 
-from propertylist_app.models import UserProfile, AuditLog, Room
+from propertylist_app.models import UserProfile,Review
 from propertylist_app.api.serializers import (
     UserSerializer,
     UserProfileSerializer,
@@ -24,16 +32,15 @@ from propertylist_app.api.serializers import (
     AvatarUploadResponseSerializer,
     ChangeEmailRequestSerializer,
     ChangePasswordRequestSerializer,
+    UserSerializer,
+    UserProfileSerializer,
+    ReviewSerializer,
 )
 from propertylist_app.api.schema_serializers import ErrorResponseSerializer
 from propertylist_app.api.schema_helpers import standard_response_serializer
 from propertylist_app.validators import validate_avatar_image
 
 from .common import ok_response
-
-
-
-
 
 
 
@@ -190,7 +197,7 @@ class MyProfilePageView(APIView):
             "date_joined": user.date_joined,
             "avatar": (profile.avatar.url if profile.avatar else None),
             "role": profile.role,
-            "gender": profile.gender or "",
+            "gender": profile.get_gender_display() if profile.gender else "",
             "occupation": profile.occupation or "",
             "postcode": profile.postcode or "",
             "address_manual": profile.address_manual or "",
@@ -263,7 +270,6 @@ class UserAvatarUploadView(APIView):
             "data": {
                 "avatar": profile.avatar.url if profile.avatar else None,
             },
-            "avatar": profile.avatar.url if profile.avatar else None,
         }
         return Response(payload, status=status.HTTP_200_OK)
 
@@ -294,27 +300,16 @@ class ChangeEmailView(APIView):
         description="Change the user's email address.",
     )
     def post(self, request):
-        current_password = request.data.get("current_password")
-        new_email = (request.data.get("new_email") or "").strip()
+        ser = ChangeEmailRequestSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
 
-        if not current_password or not new_email:
-            return Response(
-                {"detail": "current_password and new_email are required."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        current_password = ser.validated_data["current_password"]
+        new_email = ser.validated_data["new_email"]
 
         user = authenticate(request, username=request.user.username, password=current_password)
         if not user:
             return Response(
                 {"detail": "Current password is incorrect."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        try:
-            serializers.EmailField().run_validation(new_email)
-        except serializers.ValidationError:
-            return Response(
-                {"new_email": "Enter a valid email address."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -331,7 +326,6 @@ class ChangeEmailView(APIView):
             {"detail": "Email updated."},
             status_code=status.HTTP_200_OK,
         )
-    
     
 class ChangePasswordView(APIView):
     permission_classes = [IsAuthenticated]
@@ -358,15 +352,12 @@ class ChangePasswordView(APIView):
         description="Change the current user's password.",
     )
     def post(self, request):
-        current_password = request.data.get("current_password")
-        new_password = request.data.get("new_password")
-        confirm_password = request.data.get("confirm_password")
+        ser = ChangePasswordRequestSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
 
-        if not current_password or not new_password or not confirm_password:
-            return Response(
-                {"detail": "current_password, new_password, confirm_password are required."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        current_password = ser.validated_data["current_password"]
+        new_password = ser.validated_data["new_password"]
+        confirm_password = ser.validated_data["confirm_password"]
 
         if new_password != confirm_password:
             return Response(
@@ -399,8 +390,6 @@ class ChangePasswordView(APIView):
             {"detail": "Password updated. Please log in again."},
             status_code=status.HTTP_200_OK,
         )
-
-
 
 class DeactivateAccountView(APIView):
     permission_classes = [IsAuthenticated]

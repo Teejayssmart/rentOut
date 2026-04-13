@@ -7,14 +7,11 @@ from dateutil.relativedelta import relativedelta
 from datetime import date, datetime, time, timedelta
 from datetime import date as _date  # add if not already present
 from django.shortcuts import get_object_or_404
-from django.contrib.auth.models import User
-from django.contrib.auth import get_user_model
 from django.db import transaction
 
 
 from typing import Optional, Any, Dict, List
 from drf_spectacular.types import OpenApiTypes
-
 
 
 from drf_spectacular.utils import extend_schema_field
@@ -45,7 +42,7 @@ import re
 
 
 
-User = get_user_model()
+
 
 
 
@@ -1860,12 +1857,6 @@ class TokenPairWithExpirySerializer(serializers.Serializer):
     refresh_expires_at = serializers.DateTimeField()
 
 
-
-class LoginResponseSerializer(serializers.Serializer):
-    ok = serializers.BooleanField()
-    data = LoginSuccessDataSerializer()
-    
-
 class TokenRefreshRequestSerializer(serializers.Serializer):
     refresh = serializers.CharField()
 
@@ -2016,7 +2007,7 @@ class ProfilePageSerializer(serializers.Serializer):
         date_joined = serializers.DateTimeField()
 
         # profile fields
-        avatar = serializers.CharField(allow_blank=True, allow_null=True, required=False)
+        avatar = serializers.URLField(allow_blank=True, allow_null=True, required=False)
         role = serializers.CharField()
         gender = serializers.CharField(allow_blank=True, required=False)
         occupation = serializers.CharField(allow_blank=True, required=False)
@@ -2379,17 +2370,14 @@ class BookingCreateRequestSerializer(serializers.Serializer):
     slot = serializers.IntegerField(required=False)
     start = serializers.DateTimeField(required=False)
     end = serializers.DateTimeField(required=False)
+
+    def create(self, validated_data):
+        return Booking.objects.create(**validated_data)
     
     
 class BookingResponseEnvelopeSerializer(serializers.Serializer):
     ok = serializers.BooleanField()
     data = BookingSerializer()
-    
-    
-    
-class BookingResponseEnvelopeSerializer(serializers.Serializer):
-    ok = serializers.BooleanField()
-    data = BookingSerializer()        
 
 
 class AvailabilitySlotSerializer(serializers.ModelSerializer):

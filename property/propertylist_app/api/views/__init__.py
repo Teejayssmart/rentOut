@@ -24,6 +24,7 @@ from .rooms import (
     RoomAV,
     RoomDetailAV,
     RoomListGV,
+    RoomListAlt,
     RoomCategorieAV,
     RoomCategorieDetailAV,
     RoomPreviewView,

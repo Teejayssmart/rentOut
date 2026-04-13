@@ -11,7 +11,7 @@ from google.auth.transport import requests as google_requests
 #Django
 from django.conf import settings
 from django.contrib.auth import authenticate, get_user_model
-from django.core.cache import cache
+
 from django.core import mail
 from django.utils.crypto import get_random_string
 from django.utils import timezone
@@ -24,9 +24,9 @@ from rest_framework import serializers, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework import generics
+from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.exceptions import ValidationError, Throttled
 from rest_framework_simplejwt.views import TokenRefreshView
 from rest_framework_simplejwt.tokens import AccessToken, RefreshToken
 from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
@@ -96,50 +96,6 @@ from rest_framework.throttling import ScopedRateThrottle
 
 
 
-def _parse_simple_rate(rate: str):
-    if not rate:
-        return None, None
-
-    rate = rate.strip().lower()
-    num, period = rate.split("/", 1)
-    num = int(num)
-
-    period = period.strip()
-    if period in ("sec", "second", "seconds"):
-        window = 1
-    elif period in ("min", "minute", "minutes"):
-        window = 60
-    elif period in ("hour", "hours"):
-        window = 3600
-    elif period in ("day", "days"):
-        window = 86400
-    else:
-        window = 60
-
-    return num, window
-
-
-def _manual_scope_throttle(request, scope: str):
-    rates = getattr(settings, "REST_FRAMEWORK", {}).get("DEFAULT_THROTTLE_RATES", {})
-    rate = rates.get(scope)
-    if not rate:
-        return None
-
-    limit, window = _parse_simple_rate(rate)
-    if not limit or not window:
-        return None
-
-    ip = request.META.get("REMOTE_ADDR", "unknown")
-    key = f"manual_throttle:{scope}:{ip}"
-
-    current = cache.get(key, 0)
-    if current >= limit:
-    # reason: raise Throttled so custom_exception_handler returns the standard A4 error envelope
-        raise Throttled(wait=window)
-
-
-    cache.set(key, current + 1, timeout=window)
-    return None
 
 
 
@@ -272,6 +228,60 @@ def _verify_apple_identity_token(raw_token: str) -> dict:
         raise ValueError("Apple account email is not verified.")
 
     return payload
+
+
+
+
+def mark_profile_email_verified(user) -> UserProfile:
+    """
+    Ensure the user's profile exists and mark its email as verified.
+
+    Reason:
+    The main login flow checks user.profile.email_verified, so all auth
+    entry points should update the same source of truth.
+    """
+    profile, _ = UserProfile.objects.get_or_create(user=user)
+
+    fields_to_update = []
+
+    if not profile.email_verified:
+        profile.email_verified = True
+        fields_to_update.append("email_verified")
+
+    if profile.email_verified_at is None:
+        profile.email_verified_at = timezone.now()
+        fields_to_update.append("email_verified_at")
+
+    if fields_to_update:
+        profile.save(update_fields=fields_to_update)
+
+    return profile
+
+
+def generate_unique_username_from_email(email: str) -> str:
+    """
+    Build a unique username from the email local part.
+
+    Reason:
+    Social auth currently uses email.split("@")[0], which can collide
+    across providers or users with the same local part.
+    """
+    UserModel = get_user_model()
+
+    base = (email.split("@")[0] or "user").strip().lower()
+    base = "".join(ch for ch in base if ch.isalnum() or ch == "_")
+    if not base:
+        base = "user"
+
+    candidate = base
+    counter = 1
+
+    while UserModel.objects.filter(username=candidate).exists():
+        counter += 1
+        candidate = f"{base}{counter}"
+
+    return candidate
+
 
 
 class RegistrationView(generics.CreateAPIView):
@@ -416,13 +426,13 @@ class GoogleRegisterView(APIView):
         user, created = User.objects.get_or_create(
             email=email,
             defaults={
-                "username": email.split("@")[0],
+                "username": generate_unique_username_from_email(email),
             },
         )
 
-        if hasattr(user, "is_email_verified"):
-            user.is_email_verified = True
-            user.save()
+        # Keep social auth consistent with the main login flow,
+        # which checks user.profile.email_verified
+        mark_profile_email_verified(user)
 
         refresh = RefreshToken.for_user(user)
 
@@ -495,18 +505,18 @@ class AppleRegisterView(APIView):
             )
 
         email = payload.get("email", "").strip().lower()
-
+        
         User = get_user_model()
         user, created = User.objects.get_or_create(
             email=email,
             defaults={
-                "username": email.split("@")[0],
+                "username": generate_unique_username_from_email(email),
             },
         )
 
-        if hasattr(user, "is_email_verified"):
-            user.is_email_verified = True
-            user.save()
+        # Keep social auth consistent with the main login flow,
+        # which checks user.profile.email_verified
+        mark_profile_email_verified(user)
 
         refresh = RefreshToken.for_user(user)
 
@@ -568,9 +578,7 @@ class LoginView(APIView):
         ),
     )
     def post(self, request, *args, **kwargs):
-        throttled = _manual_scope_throttle(request, "login")
-        if throttled:
-            return throttled
+        
 
         try:
             data = request.data.copy()
