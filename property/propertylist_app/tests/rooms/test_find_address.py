@@ -9,7 +9,8 @@ def test_find_address_requires_postcode():
 
     assert resp.status_code == 400
     data = resp.json()
-    assert data["detail"] == "Query param 'postcode' is required."
+    assert data["ok"] is False
+    assert data["message"] == "Query param 'postcode' is required."
 
 
 @pytest.mark.django_db
@@ -24,7 +25,7 @@ def test_find_address_returns_addresses(monkeypatch):
         ]
 
     monkeypatch.setattr(
-        "propertylist_app.api.views._fetch_ideal_postcodes_suggestions",
+        "propertylist_app.api.views.public._fetch_ideal_postcodes_suggestions",
         fake_fetch,
     )
 
@@ -48,7 +49,7 @@ def test_find_address_returns_empty_list(monkeypatch):
         return []
 
     monkeypatch.setattr(
-        "propertylist_app.api.views._fetch_ideal_postcodes_suggestions",
+       "propertylist_app.api.views.public._fetch_ideal_postcodes_suggestions",
         fake_fetch,
     )
 

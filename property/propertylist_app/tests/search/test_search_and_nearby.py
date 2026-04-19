@@ -16,7 +16,7 @@ def test_nearby_orders_by_distance_and_attaches_distance(monkeypatch):
     # Patch the symbol used inside the views module
     def fake_geocode(_postcode):
         return (51.5074, -0.1278)  # London
-    monkeypatch.setattr("propertylist_app.api.views.geocode_postcode_cached", fake_geocode)
+    monkeypatch.setattr("propertylist_app.api.views.public.geocode_postcode_cached", fake_geocode)
 
     owner = User.objects.create_user(username="o", password="pass123", email="o@example.com")
     cat = RoomCategorie.objects.create(name="Any", active=True)
@@ -71,7 +71,7 @@ def test_search_with_postcode_distance_ordering_and_reverse(monkeypatch):
     """
     def fake_geocode(_postcode):
         return (51.5074, -0.1278)  # London
-    monkeypatch.setattr("propertylist_app.api.views.geocode_postcode_cached", fake_geocode)
+    monkeypatch.setattr("propertylist_app.api.views.public.geocode_postcode_cached", fake_geocode)
     
     owner = User.objects.create_user(username="o2", password="pass123", email="o2@example.com")
     cat = RoomCategorie.objects.create(name="Any2", active=True)

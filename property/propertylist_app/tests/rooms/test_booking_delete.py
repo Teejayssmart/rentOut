@@ -52,7 +52,8 @@ def test_owner_can_delete_future_booking_204():
     r = client.delete(url)
 
 
-    assert r.status_code == 204
+    assert r.status_code == 200
+    assert r.data["ok"] is True
     b.refresh_from_db()
     assert b.is_deleted is True
 

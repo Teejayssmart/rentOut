@@ -29,12 +29,16 @@ from drf_spectacular.utils import (
 )
 from drf_spectacular.types import OpenApiTypes
 
+
+from django.db import connection
 from django.contrib.auth import get_user_model
 from django.shortcuts import get_object_or_404
 from django.core.cache import cache
 from django.utils.crypto import get_random_string
-from django.db.models import Q, Exists, OuterRef, Prefetch
+from django.db.models import Q, Exists, OuterRef, Prefetch, Count
  
+ 
+from propertylist_app.validators import validate_radius_miles, haversine_miles 
 from propertylist_app.services.captcha import verify_captcha
 from propertylist_app.services.geo import geocode_postcode_cached
 from propertylist_app.api.schema_serializers import ErrorResponseSerializer
@@ -54,7 +58,9 @@ from propertylist_app.api.serializers import (
     EmailOTPResendSerializer,
 )
 from propertylist_app.models import Room, UserProfile, PhoneOTP, EmailOTP,SavedRoom, RoomImage
+
 from .common import ok_response, _wrap_response_success
+from .messaging import _fetch_ideal_postcodes_suggestions
 
 
 from propertylist_app.api.pagination import StandardLimitOffsetPagination

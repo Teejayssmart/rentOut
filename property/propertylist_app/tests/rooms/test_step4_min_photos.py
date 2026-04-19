@@ -107,7 +107,7 @@ def create_draft_room(auth_client, valid_step1_payload):
         }
         response = auth_client.post(url, payload, format="json")
         assert response.status_code == status.HTTP_201_CREATED, response.data
-        return Room.objects.get(id=response.data["id"])
+        return Room.objects.get(id=response.data["data"]["id"])
 
     return _create
 
@@ -165,10 +165,11 @@ def test_step4_preview_blocked_with_less_than_three_photos(auth_client, create_d
     response = auth_client.patch(url, patch_payload, format="json")
 
     assert response.status_code == status.HTTP_400_BAD_REQUEST
-    assert "detail" in response.data
-    assert "photos_min_required" in response.data
-    assert response.data["photos_min_required"] == 3
-    assert response.data["photos_current"] == 2
+    assert response.data["ok"] is False
+    assert response.data["message"] == "Please upload at least 3 photos before previewing your listing."
+    assert "photos_min_required" in response.data["errors"]
+    assert response.data["errors"]["photos_min_required"] == 3
+    assert response.data["errors"]["photos_current"] == 2
 
 
 @pytest.mark.django_db
@@ -194,7 +195,7 @@ def test_step4_preview_allows_when_at_least_three_photos(auth_client, create_dra
 
     assert response.status_code == status.HTTP_200_OK, response.data
     # Room data still comes back; status remains whatever it was (draft until payment)
-    assert response.data["id"] == room.id
+    assert response.data["data"]["id"] == room.id
 
 
 @pytest.mark.django_db
@@ -215,4 +216,4 @@ def test_step4_save_close_does_not_require_photos(auth_client, create_draft_room
     response = auth_client.patch(url, patch_payload, format="json")
 
     assert response.status_code == status.HTTP_200_OK, response.data
-    assert response.data["id"] == room.id
+    assert response.data["data"]["id"] == room.id

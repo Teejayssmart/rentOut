@@ -5,6 +5,7 @@ from django.db import transaction
 from django.shortcuts import get_object_or_404
 from django_filters.rest_framework import DjangoFilterBackend
 from django.utils import timezone
+from django.db.models import Q
 
 from rest_framework import generics, status
 from rest_framework.response import Response
@@ -32,7 +33,7 @@ from propertylist_app.api.serializers import (
     BookingPreflightResponseSerializer,
 )
 from ..serializers import BookingCreateRequestSerializer, BookingResponseEnvelopeSerializer
-from .common import ok_response, _pagination_meta
+from .common import ok_response, _pagination_meta, _wrap_response_success
 
 
 
@@ -194,7 +195,11 @@ class BookingListCreateView(generics.ListCreateAPIView):
 
             with transaction.atomic():
                 slot_locked = AvailabilitySlot.objects.select_for_update().get(pk=slot.pk)
-                active = Booking.objects.filter(slot=slot_locked, canceled_at__isnull=True).count()
+                active = Booking.objects.filter(
+                    slot=slot_locked,
+                    canceled_at__isnull=True,
+                    is_deleted=False,
+                ).count()
                 if active >= slot_locked.max_bookings:
                     raise ValidationError({"detail": "This slot is fully booked."})
 
@@ -229,16 +234,19 @@ class BookingListCreateView(generics.ListCreateAPIView):
         if start >= end:
             raise ValidationError({"end": "End must be after start."})
 
-        conflicts = (
-            Booking.objects
-            .filter(room=room, canceled_at__isnull=True)
-            .filter(start__lt=end, end__gt=start)
-            .exists()
-        )
-        if conflicts:
-            raise ValidationError({"detail": "Selected dates clash with an existing booking."})
+        with transaction.atomic():
+            Booking.objects.select_for_update().filter(room=room, canceled_at__isnull=True)
 
-        serializer.save(user=self.request.user, room=room)
+            conflicts = (
+                Booking.objects
+                .filter(room=room, canceled_at__isnull=True, is_deleted=False)
+                .filter(start__lt=end, end__gt=start)
+                .exists()
+            )
+            if conflicts:
+                raise ValidationError({"detail": "Selected dates clash with an existing booking."})
+
+            serializer.save(user=self.request.user, room=room)
 
         profile, _ = UserProfile.objects.get_or_create(user=self.request.user)
         if getattr(profile, "notify_confirmations", True):
@@ -318,12 +326,33 @@ class BookingListCreateView(generics.ListCreateAPIView):
         if page is not None:
             serializer = self.get_serializer(page, many=True)
             meta = _pagination_meta(self.paginator)
-            return ok_response(serializer.data, meta=meta, status_code=200)
+
+            return Response(
+                {
+                    "ok": True,
+                    "message": None,
+                    "data": serializer.data,
+                    "meta": meta,
+                    # compatibility keys for tests / standard pagination consumers
+                    "count": meta.get("count"),
+                    "next": meta.get("next"),
+                    "previous": meta.get("previous"),
+                    "results": serializer.data,
+                },
+                status=status.HTTP_200_OK,
+            )
 
         serializer = self.get_serializer(queryset, many=True)
-        return ok_response(serializer.data, status_code=200)
-    
-    
+        return Response(
+            {
+                "ok": True,
+                "message": None,
+                "data": serializer.data,
+                "results": serializer.data,
+            },
+            status=status.HTTP_200_OK,
+        )
+        
     
     
     

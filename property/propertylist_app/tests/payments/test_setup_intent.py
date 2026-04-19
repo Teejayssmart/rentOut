@@ -41,8 +41,9 @@ def test_setup_intent_creates_customer_if_missing_and_returns_client_secret(monk
     r = client.post(url, {}, format="json")
 
     assert r.status_code == 200, r.content
-    assert r.data.get("clientSecret") == "seti_secret_456"
-    assert "publishableKey" in r.data  # can be empty in tests depending on settings
+    payload = r.data.get("data", r.data)
+    assert payload.get("clientSecret") == "seti_secret_456"
+    assert payload.get("publishableKey") is not None  # can be empty string in some settings
 
 
 @pytest.mark.django_db

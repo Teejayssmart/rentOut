@@ -741,23 +741,22 @@ class RoomImage(models.Model):
             try:
                 from propertylist_app.services.image import should_auto_approve_upload
 
-                # Ensure the underlying file is open for PIL to read
-                self.image.open("rb")
-                try:
-                    if should_auto_approve_upload(self.image.file):
-                        self.status = "approved"
-                finally:
+                file_obj = getattr(self.image, "file", None)
+                if file_obj and should_auto_approve_upload(file_obj):
+                    self.status = "approved"
+
+                # Important: reset pointer for Django storage save
+                if file_obj:
                     try:
-                        self.image.close()
+                        file_obj.seek(0)
                     except Exception:
                         pass
+
             except Exception:
                 # if anything goes wrong, leave as pending for manual moderation
                 pass
 
         super().save(*args, **kwargs)
-
-
 
 
 # -----------------
@@ -813,29 +812,6 @@ class Booking(models.Model):
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_ACTIVE)
     is_deleted = models.BooleanField(default=False)
     deleted_at = models.DateTimeField(null=True, blank=True)
-
-
-    def can_transition_to(self, new_status: str) -> bool:
-        """
-        Allowed transitions:
-        - active -> cancelled
-        - active -> suspended
-        Terminal states:
-        - cancelled
-        - suspended
-        Deleted bookings are not allowed to transition.
-        """
-        if self.is_deleted:
-            return False
-
-        if self.status == self.STATUS_ACTIVE:
-            return new_status in {self.STATUS_CANCELLED, self.STATUS_SUSPENDED}
-
-        if self.status in {self.STATUS_CANCELLED, self.STATUS_SUSPENDED}:
-            return False
-
-        return False
-
 
     def __str__(self):
         return f"Booking #{self.id} for {self.room} by {self.user}"
@@ -1316,6 +1292,7 @@ class Payment(models.Model):
         STRIPE = "stripe", "Stripe"
 
     class Status(models.TextChoices):
+        CREATED = "created", "Created"
         REQUIRES_PAYMENT = "requires_payment_method", "Requires payment"
         REQUIRES_ACTION = "requires_action", "Requires action"
         PROCESSING = "processing", "Processing"

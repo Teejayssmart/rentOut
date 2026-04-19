@@ -1,5 +1,5 @@
 #Standard/library
-from datetime import date
+from datetime import date, datetime
 
 
 
@@ -17,6 +17,7 @@ from django.db.models import (
 )
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from django.core.exceptions import ValidationError as DjangoValidationError
 
 
 #DRF
@@ -157,7 +158,10 @@ class RoomCategorieDetailAV(APIView):
     )
     def get(self, request, pk):
         category = get_object_or_404(RoomCategorie, pk=pk)
-        return Response(RoomCategorieSerializer(category).data)
+        return ok_response(
+        RoomCategorieSerializer(category).data,
+        status_code=status.HTTP_200_OK,
+    )
 
     @extend_schema(
         request=RoomCategorieSerializer,
@@ -692,7 +696,7 @@ class RoomPhotoUploadView(APIView):
             )
 
         # 1) Quick extension check – JPG / JPEG / PNG only
-        allowed_exts = {"jpg", "jpeg", "png"}
+        allowed_exts = {"jpg", "jpeg", "png", "webp"}
         name_lower = (file_obj.name or "").lower()
         ext = name_lower.rsplit(".", 1)[-1] if "." in name_lower else ""
         if ext not in allowed_exts:
@@ -700,7 +704,7 @@ class RoomPhotoUploadView(APIView):
                 {
                     "ok": False,
                     "message": "Validation error.",
-                    "errors": {"image": ["Only JPG, JPEG, or PNG files are allowed."]},
+                    "errors": {"image": ["Only JPG, JPEG, PNG, or WEBP files are allowed."]},
                 },
                 status=status.HTTP_400_BAD_REQUEST,
             )

@@ -3,8 +3,9 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 import logging
 import stripe
-
-
+import json
+import sys
+from django.db.models import Q
 
 
 
@@ -71,6 +72,16 @@ logger_webhooks = logging.getLogger("rentout.webhooks")
 logger = logger_webhooks
 
 
+def _stripe_mod():
+    """
+    Use the package-level stripe object if tests monkeypatch
+    propertylist_app.api.views.stripe; otherwise fall back to the
+    local payments.py import.
+    """
+    pkg = sys.modules.get("propertylist_app.api.views")
+    return getattr(pkg, "stripe", stripe)
+
+
 
 
 stripe.api_key = settings.STRIPE_SECRET_KEY
@@ -124,7 +135,7 @@ def stripe_webhook(request):
     sig_header = request.META.get("HTTP_STRIPE_SIGNATURE", "")
 
     try:
-        event = stripe.Webhook.construct_event(
+        event = _stripe_mod().Webhook.construct_event(
             payload=payload,
             sig_header=sig_header,
             secret=settings.STRIPE_WEBHOOK_SECRET,
@@ -132,7 +143,7 @@ def stripe_webhook(request):
     except Exception:
         # allow tests to use mocked construct_event
         try:
-            event = stripe.Webhook.construct_event(
+            event = _stripe_mod().Webhook.construct_event(
                 payload=payload,
                 sig_header=sig_header,
                 secret=settings.STRIPE_WEBHOOK_SECRET,
@@ -565,10 +576,16 @@ class CreateListingCheckoutSessionView(APIView):
 
         # Ensure a Stripe Customer exists for this user
         if not profile.stripe_customer_id:
-            stripe_customer = stripe.Customer.create(
-                email=user.email or None,
-                name=user.get_full_name() or user.username,
-            )
+            try:
+                stripe_customer = _stripe_mod().Customer.create(
+                    email=user.email or None,
+                    name=user.get_full_name() or user.username,
+                )
+            except Exception:
+                return Response(
+                    {"detail": "Unable to create Stripe customer."},
+                    status=status.HTTP_502_BAD_GATEWAY,
+                )
 
             stripe_customer_id = getattr(stripe_customer, "id", None)
             if stripe_customer_id:
@@ -599,36 +616,42 @@ class CreateListingCheckoutSessionView(APIView):
         cancel_path = reverse("v1:payments-cancel")
 
         # Create the Stripe Checkout Session
-        session = stripe.checkout.Session.create(
-            mode="payment",
-            customer=customer_id,
-            payment_method_types=["card"],
-            line_items=[
-                {
-                    "price_data": {
-                        "currency": "gbp",
-                        "product_data": {
-                            "name": f"Listing fee for: {room.title}",
+        try:
+            session = _stripe_mod().checkout.Session.create(
+                mode="payment",
+                customer=customer_id,
+                payment_method_types=["card"],
+                line_items=[
+                    {
+                        "price_data": {
+                            "currency": "gbp",
+                            "product_data": {
+                                "name": f"Listing fee for: {room.title}",
+                            },
+                            "unit_amount": amount_pence,
                         },
-                        "unit_amount": amount_pence,
-                    },
-                    "quantity": 1,
-                }
-            ],
-            success_url=(
-                f"{base}{success_path}"
-                f"?session_id={{CHECKOUT_SESSION_ID}}&payment_id={payment.id}"
-            ),
-            cancel_url=(
-                f"{base}{cancel_path}"
-                f"?payment_id={payment.id}"
-            ),
-            metadata={
-                "payment_id": str(payment.id),
-                "room_id": str(room.id),
-                "user_id": str(user.id),
-            },
-        )
+                        "quantity": 1,
+                    }
+                ],
+                success_url=(
+                    f"{base}{success_path}"
+                    f"?session_id={{CHECKOUT_SESSION_ID}}&payment_id={payment.id}"
+                ),
+                cancel_url=(
+                    f"{base}{cancel_path}"
+                    f"?payment_id={payment.id}"
+                ),
+                metadata={
+                    "payment_id": str(payment.id),
+                    "room_id": str(room.id),
+                    "user_id": str(user.id),
+                },
+            )
+        except Exception:
+            return Response(
+                {"detail": "Unable to create checkout session."},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
 
         # Safely extract session id + checkout URL (works for real Stripe + dict fakes)
         session_id = getattr(session, "id", None)
@@ -678,7 +701,7 @@ class SavedCardsListView(APIView):
 
         try:
             # Stripe returns a ListObject -> convert to standard dict
-            pm_list = stripe.PaymentMethod.list(
+            pm_list = _stripe_mod().PaymentMethod.list(
                 customer=profile.stripe_customer_id,
                 type="card",
                 limit=4,
@@ -746,7 +769,7 @@ class DetachSavedCardView(APIView):
             )
 
         try:
-            stripe.PaymentMethod.detach(pm_id)
+            _stripe_mod().PaymentMethod.detach(pm_id)
         except Exception:
             return Response(
                 {"detail": "Unable to detach saved card."},
@@ -913,10 +936,16 @@ class CreateSetupIntentView(APIView):
 
         # Ensure Stripe Customer exists
         if not profile.stripe_customer_id:
-            stripe_customer = stripe.Customer.create(
-                email=user.email or None,
-                name=user.get_full_name() or user.username,
-            )
+            try:
+                stripe_customer = _stripe_mod().Customer.create(
+                    email=user.email or None,
+                    name=user.get_full_name() or user.username,
+                )
+            except Exception:
+                return Response(
+                    {"detail": "Unable to create Stripe customer."},
+                    status=status.HTTP_502_BAD_GATEWAY,
+                )
 
             stripe_customer_id = getattr(stripe_customer, "id", None)
             if not stripe_customer_id:
@@ -930,7 +959,7 @@ class CreateSetupIntentView(APIView):
 
         # Create SetupIntent (used by Stripe Elements to save a card)
         try:
-            setup_intent = stripe.SetupIntent.create(
+            setup_intent = _stripe_mod().SetupIntent.create(
                 customer=profile.stripe_customer_id,
                 payment_method_types=["card"],
                 usage="off_session",
@@ -995,7 +1024,7 @@ class SetDefaultSavedCardView(APIView):
             )
 
         try:
-            stripe.Customer.modify(
+            _stripe_mod().Customer.modify(
                 profile.stripe_customer_id,
                 invoice_settings={"default_payment_method": pm_id},
             )

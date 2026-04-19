@@ -34,8 +34,8 @@ def test_owner_can_unpublish_sets_hidden_and_returns_200():
     r = client.post(url, {}, format="json")
 
     assert r.status_code == 200, r.content
-    assert r.data["status"] == "hidden"
-    assert r.data["listing_state"] == "hidden"
+    assert r.data["data"]["status"] == "hidden"
+    assert r.data["data"]["listing_state"] == "hidden"
 
     room.refresh_from_db()
     assert room.status == "hidden"

@@ -13,6 +13,7 @@ from django.conf import settings
 from django.contrib.auth import authenticate, get_user_model
 
 from django.core import mail
+from django.core.cache import cache
 from django.utils.crypto import get_random_string
 from django.utils import timezone
 from django.utils.decorators import method_decorator

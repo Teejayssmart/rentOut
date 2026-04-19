@@ -74,7 +74,7 @@ def test_patch_availability_time_single_side_invalid(auth_client, valid_step1_pa
     create_resp = auth_client.post(url_list, create_payload, format="json")
     assert create_resp.status_code == status.HTTP_201_CREATED, create_resp.data
 
-    room_id = create_resp.data["id"]
+    room_id = create_resp.data["data"]["id"]
     url_detail = reverse("api:room-detail", args=[room_id])
 
     # PATCH only start time -> should complain about missing end time
@@ -130,7 +130,7 @@ def test_patch_switch_to_custom_without_dates_rejected(auth_client, valid_step1_
     create_resp = auth_client.post(url_list, create_payload, format="json")
     assert create_resp.status_code == status.HTTP_201_CREATED, create_resp.data
 
-    room_id = create_resp.data["id"]
+    room_id = create_resp.data["data"]["id"]
     url_detail = reverse("api:room-detail", args=[room_id])
 
     # PATCH to custom but do NOT send view_available_custom_dates
@@ -170,7 +170,7 @@ def test_patch_switch_from_custom_to_everyday_clears_dates(auth_client, valid_st
     create_resp = auth_client.post(url_list, create_payload, format="json")
     assert create_resp.status_code == status.HTTP_201_CREATED, create_resp.data
 
-    room_id = create_resp.data["id"]
+    room_id = create_resp.data["data"]["id"]
     url_detail = reverse("api:room-detail", args=[room_id])
 
     # PATCH to everyday – no need to send custom dates

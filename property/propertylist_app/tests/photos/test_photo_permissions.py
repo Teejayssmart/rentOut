@@ -66,7 +66,8 @@ def test_only_owner_can_upload_room_photo(monkeypatch):
     c.force_authenticate(user=owner)
     r2 = c.post(url, data={"image": _png()}, format="multipart")
     assert r2.status_code == 201, r2.data
-    assert r2.data["status"] == "pending"
+    assert r2.data.get("ok") is True
+    assert r2.data.get("data", {}).get("status") == "pending"
     assert app_models.RoomImage.objects.filter(room=room).count() == 1
 
 
@@ -102,5 +103,7 @@ def test_only_owner_can_delete_room_photo(monkeypatch):
     # Owner → 204 and record removed
     c.force_authenticate(user=owner)
     r2 = c.delete(url)
-    assert r2.status_code == 204
+    assert r2.status_code == 200
+    assert r2.data.get("ok") is True
+    assert r2.data.get("data") == {}
     assert not app_models.RoomImage.objects.filter(pk=img.pk).exists()

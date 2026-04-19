@@ -27,7 +27,8 @@ def test_detach_saved_card_success(monkeypatch):
     r = client.post(url, {}, format="json")
 
     assert r.status_code == 200, r.content
-    assert r.data["detail"] == "Card removed."
+    payload = r.data.get("data", r.data)
+    assert payload["detail"] == "Card removed."
     assert called["pm_id"] == "pm_test_999"
 
 
