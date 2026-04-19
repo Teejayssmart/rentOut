@@ -28,14 +28,26 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/LoginResponse'
+                $ref: '#/components/schemas/LoginOkResponse'
           description: ''
         '400':
-          description: Invalid input or invalid credentials.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DetailResponse'
+          description: ''
         '403':
-          description: Email not verified.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DetailResponse'
+          description: ''
         '429':
-          description: Too many failed attempts.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DetailResponse'
+          description: ''
   /api/v1/auth/logout/:
     post:
       operationId: auth_logout_create
@@ -80,9 +92,13 @@ paths:
           description: ''
         '400':
           description: Validation error.
+        '429':
+          description: Rate limit exceeded.
   /api/v1/auth/password-reset/confirm/:
     post:
       operationId: auth_password_reset_confirm_create
+      description: Confirm a password reset using email, token, and new password.
+        Returns ok_response envelope.
       tags:
       - auth
       requestBody:
@@ -106,9 +122,12 @@ paths:
           description: ''
         '400':
           description: Validation error.
+        '429':
+          description: Rate limit exceeded.
   /api/v1/auth/phone/start/:
     post:
       operationId: auth_phone_start_create
+      description: Start phone OTP verification by sending a 6-digit code.
       tags:
       - auth
       requestBody:
@@ -130,9 +149,25 @@ paths:
               schema:
                 $ref: '#/components/schemas/PhoneOTPStartOkResponse'
           description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DetailResponse'
+          description: ''
+        '401':
+          description: Authentication required.
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DetailResponse'
+          description: ''
   /api/v1/auth/phone/verify/:
     post:
       operationId: auth_phone_verify_create
+      description: Verify a phone OTP code and mark the current user's phone number
+        as verified.
       tags:
       - auth
       requestBody:
@@ -154,6 +189,14 @@ paths:
               schema:
                 $ref: '#/components/schemas/PhoneOTPVerifyOkResponse'
           description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DetailResponse'
+          description: ''
+        '401':
+          description: Authentication required.
   /api/v1/auth/register/:
     post:
       operationId: auth_register_create
@@ -247,10 +290,17 @@ paths:
                 $ref: '#/components/schemas/GoogleRegisterResponse'
           description: ''
         '400':
-          description: Missing or invalid Google token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GoogleRegisterBadRequestResponse'
+          description: ''
+        '429':
+          description: Rate limit exceeded.
   /api/v1/auth/resend-otp/:
     post:
       operationId: auth_resend_otp_create
+      description: Resend a new email verification OTP code.
       tags:
       - auth
       requestBody:
@@ -271,6 +321,18 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/EmailOTPResendOkResponse'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DetailResponse'
+          description: ''
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DetailResponse'
           description: ''
   /api/v1/auth/token/refresh/:
     post:
@@ -303,6 +365,7 @@ paths:
   /api/v1/auth/verify-otp/:
     post:
       operationId: auth_verify_otp_create
+      description: Verify a 6-digit email OTP code and mark the user's email as verified.
       tags:
       - auth
       requestBody:
@@ -324,10 +387,22 @@ paths:
               schema:
                 $ref: '#/components/schemas/EmailOTPVerifyOkResponse'
           description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DetailResponse'
+          description: ''
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DetailResponse'
+          description: ''
   /api/v1/bookings/:
     get:
       operationId: bookings_list
-      description: List bookings for the authenticated user.
+      description: GET my bookings / POST create (slot OR direct).
       parameters:
       - name: limit
         required: false
@@ -364,7 +439,7 @@ paths:
                     type: string
                     nullable: true
                   data:
-                    $ref: '#/components/schemas/PaginatedBookingListResponseList'
+                    $ref: '#/components/schemas/PaginatedBookingList'
                 required:
                 - ok
                 - data
@@ -378,17 +453,49 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/Booking'
+              $ref: '#/components/schemas/BookingCreateRequest'
           application/x-www-form-urlencoded:
             schema:
-              $ref: '#/components/schemas/Booking'
+              $ref: '#/components/schemas/BookingCreateRequest'
           multipart/form-data:
             schema:
-              $ref: '#/components/schemas/Booking'
+              $ref: '#/components/schemas/BookingCreateRequest'
       security:
       - jwtAuth: []
       responses:
         '201':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/BookingCreateRequest'
+                required:
+                - ok
+                - data
+          description: ''
+  /api/v1/bookings/{id}/:
+    get:
+      operationId: bookings_retrieve
+      description: GET /api/bookings/<id>/ → see my booking
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - bookings
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
           content:
             application/json:
               schema:
@@ -405,90 +512,6 @@ paths:
                 - ok
                 - data
           description: ''
-  /api/v1/bookings/{booking_id}/reviews/:
-    get:
-      operationId: bookings_reviews_retrieve
-      description: List booking reviews. Returns ok_response envelope.
-      parameters:
-      - in: path
-        name: booking_id
-        schema:
-          type: integer
-        required: true
-      tags:
-      - bookings
-      security:
-      - jwtAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/BookingReviewListOkResponse'
-          description: ''
-  /api/v1/bookings/{booking_id}/reviews/create/:
-    post:
-      operationId: bookings_reviews_create_create
-      description: Create a booking review. Returns ok_response envelope.
-      parameters:
-      - in: path
-        name: booking_id
-        schema:
-          type: integer
-        required: true
-      tags:
-      - bookings
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/BookingReviewCreate'
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/BookingReviewCreate'
-          multipart/form-data:
-            schema:
-              $ref: '#/components/schemas/BookingReviewCreate'
-      security:
-      - jwtAuth: []
-      responses:
-        '201':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/BookingReviewCreateOkResponse'
-          description: ''
-        '400':
-          description: Validation error.
-        '401':
-          description: Authentication required.
-        '404':
-          description: Not found.
-  /api/v1/bookings/{id}/:
-    get:
-      operationId: bookings_retrieve
-      description: Retrieve a booking owned by the authenticated user.
-      parameters:
-      - in: path
-        name: id
-        schema:
-          type: integer
-        required: true
-      tags:
-      - bookings
-      security:
-      - jwtAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/BookingResponseEnvelope'
-          description: ''
-        '401':
-          description: Authentication required.
-        '404':
-          description: Booking not found.
   /api/v1/bookings/{id}/cancel/:
     post:
       operationId: bookings_cancel_create
@@ -508,19 +531,30 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/BookingCancelOkResponse'
+                $ref: '#/components/schemas/BookingCancelResponse'
           description: ''
         '400':
-          description: Validation error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: ''
         '401':
-          description: Authentication required.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: ''
         '404':
-          description: Not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: ''
   /api/v1/bookings/{id}/delete/:
     delete:
       operationId: bookings_delete_destroy
-      description: Delete a booking. Returns 204 or ok_response envelope depending
-        on implementation.
+      description: Delete a booking.
       parameters:
       - in: path
         name: id
@@ -532,18 +566,41 @@ paths:
       security:
       - jwtAuth: []
       responses:
-        '204':
-          description: Deleted.
         '200':
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/BookingDeleteOkResponse'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/BookingDeleteResponse'
+                required:
+                - ok
+                - data
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
           description: ''
         '401':
-          description: Authentication required.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: ''
         '404':
-          description: Not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: ''
   /api/v1/bookings/{id}/suspend/:
     post:
       operationId: bookings_suspend_create
@@ -563,16 +620,32 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/BookingSuspendOkResponse'
+                $ref: '#/components/schemas/BookingSuspendResponse'
           description: ''
         '400':
-          description: Validation error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: ''
         '401':
-          description: Authentication required.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: ''
         '403':
-          description: Forbidden.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: ''
         '404':
-          description: Not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: ''
   /api/v1/bookings/create/:
     post:
       operationId: bookings_create_create
@@ -622,229 +695,17 @@ paths:
           description: Missing/invalid fields or invalid datetime format.
         '401':
           description: Authentication required.
-  /api/v1/category/:
-    get:
-      operationId: category_list
-      description: Admin/staff can create/update/delete; others read active=True.
-      parameters:
-      - name: limit
-        required: false
-        in: query
-        description: Number of results to return per page.
-        schema:
-          type: integer
-      - name: offset
-        required: false
-        in: query
-        description: The initial index from which to return the results.
-        schema:
-          type: integer
-      - name: ordering
-        required: false
-        in: query
-        description: Which field to use when ordering the results.
-        schema:
-          type: string
-      tags:
-      - category
-      security:
-      - jwtAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  ok:
-                    type: boolean
-                  message:
-                    type: string
-                    nullable: true
-                  data:
-                    $ref: '#/components/schemas/PaginatedRoomCategorieList'
-                required:
-                - ok
-                - data
-          description: ''
-    post:
-      operationId: category_create
-      description: Admin/staff can create/update/delete; others read active=True.
-      tags:
-      - category
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/RoomCategorie'
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/RoomCategorie'
-          multipart/form-data:
-            schema:
-              $ref: '#/components/schemas/RoomCategorie'
-        required: true
-      security:
-      - jwtAuth: []
-      responses:
-        '201':
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  ok:
-                    type: boolean
-                  message:
-                    type: string
-                    nullable: true
-                  data:
-                    $ref: '#/components/schemas/RoomCategorie'
-                required:
-                - ok
-                - data
-          description: ''
-  /api/v1/category/{id}/:
-    get:
-      operationId: category_retrieve
-      description: Admin/staff can create/update/delete; others read active=True.
-      parameters:
-      - in: path
-        name: id
-        schema:
-          type: integer
-        description: A unique integer value identifying this room categorie.
-        required: true
-      tags:
-      - category
-      security:
-      - jwtAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  ok:
-                    type: boolean
-                  message:
-                    type: string
-                    nullable: true
-                  data:
-                    $ref: '#/components/schemas/RoomCategorie'
-                required:
-                - ok
-                - data
-          description: ''
-    put:
-      operationId: category_update
-      description: Admin/staff can create/update/delete; others read active=True.
-      parameters:
-      - in: path
-        name: id
-        schema:
-          type: integer
-        description: A unique integer value identifying this room categorie.
-        required: true
-      tags:
-      - category
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/RoomCategorie'
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/RoomCategorie'
-          multipart/form-data:
-            schema:
-              $ref: '#/components/schemas/RoomCategorie'
-        required: true
-      security:
-      - jwtAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  ok:
-                    type: boolean
-                  message:
-                    type: string
-                    nullable: true
-                  data:
-                    $ref: '#/components/schemas/RoomCategorie'
-                required:
-                - ok
-                - data
-          description: ''
-    patch:
-      operationId: category_partial_update
-      description: Admin/staff can create/update/delete; others read active=True.
-      parameters:
-      - in: path
-        name: id
-        schema:
-          type: integer
-        description: A unique integer value identifying this room categorie.
-        required: true
-      tags:
-      - category
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/PatchedRoomCategorie'
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/PatchedRoomCategorie'
-          multipart/form-data:
-            schema:
-              $ref: '#/components/schemas/PatchedRoomCategorie'
-      security:
-      - jwtAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  ok:
-                    type: boolean
-                  message:
-                    type: string
-                    nullable: true
-                  data:
-                    $ref: '#/components/schemas/RoomCategorie'
-                required:
-                - ok
-                - data
-          description: ''
-    delete:
-      operationId: category_destroy
-      description: Admin/staff can create/update/delete; others read active=True.
-      parameters:
-      - in: path
-        name: id
-        schema:
-          type: integer
-        description: A unique integer value identifying this room categorie.
-        required: true
-      tags:
-      - category
-      security:
-      - jwtAuth: []
-      responses:
-        '204':
-          description: No response body
   /api/v1/cities/:
     get:
       operationId: cities_retrieve
-      description: List cities. Returns ok_response envelope.
+      description: List cities. Returns ok_response envelope. Supports optional filtering
+        with the 'q' query parameter.
+      parameters:
+      - in: query
+        name: q
+        schema:
+          type: string
+        description: Filter cities by case-insensitive substring.
       tags:
       - cities
       security:
@@ -901,7 +762,7 @@ paths:
   /api/v1/health/:
     get:
       operationId: health_retrieve
-      description: Health check. Returns ok_response envelope.
+      description: Health check endpoint.
       tags:
       - health
       responses:
@@ -909,12 +770,24 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HealthCheckOkResponse'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/HealthCheckResponse'
+                required:
+                - ok
+                - data
           description: ''
   /api/v1/home/:
     get:
       operationId: home_retrieve
-      description: Homepage summary. Returns ok_response envelope.
+      description: Return homepage summary data including featured rooms, latest rooms,
+        popular cities, stats, and app links.
       tags:
       - home
       security:
@@ -930,7 +803,7 @@ paths:
   /api/v1/inbox/:
     get:
       operationId: inbox_retrieve
-      description: List inbox items (merged notifications + message threads) wrapped
+      description: List inbox items (merged notifications and message threads) wrapped
         in ok_response. Not paginated.
       tags:
       - inbox
@@ -946,7 +819,8 @@ paths:
   /api/v1/messages/stats/:
     get:
       operationId: messages_stats_retrieve
-      description: Message stats (e.g. unread counts). Returns ok_response envelope.
+      description: Return message statistics for the authenticated user, including
+        total threads, total unread messages, and good-fit thread counts.
       tags:
       - messages
       security:
@@ -956,7 +830,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/MessageStatsOkResponse'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/MessageStatsResponse'
+                required:
+                - ok
+                - data
           description: ''
   /api/v1/messages/threads/:
     get:
@@ -965,7 +850,7 @@ paths:
         GET /api/messages/threads/
 
         Query params:
-          - folder : inbox (default) | sent | bin | new | waiting_reply   # >>>
+          - folder : inbox (default) | sent | bin | new | waiting_reply
           - label  : filter by per-user label (Viewing scheduled, Good fit, etc.)
           - q      : search in message body or participant username
           - sort_by: latest (default) | oldest
@@ -1016,7 +901,7 @@ paths:
         GET /api/messages/threads/
 
         Query params:
-          - folder : inbox (default) | sent | bin | new | waiting_reply   # >>>
+          - folder : inbox (default) | sent | bin | new | waiting_reply
           - label  : filter by per-user label (Viewing scheduled, Good fit, etc.)
           - q      : search in message body or participant username
           - sort_by: latest (default) | oldest
@@ -1066,6 +951,18 @@ paths:
         required: true
       tags:
       - messages
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ThreadMoveToBinRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/ThreadMoveToBinRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/ThreadMoveToBinRequest'
+        required: true
       security:
       - jwtAuth: []
       responses:
@@ -1183,13 +1080,13 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/Message'
+              $ref: '#/components/schemas/MessageCreate'
           application/x-www-form-urlencoded:
             schema:
-              $ref: '#/components/schemas/Message'
+              $ref: '#/components/schemas/MessageCreate'
           multipart/form-data:
             schema:
-              $ref: '#/components/schemas/Message'
+              $ref: '#/components/schemas/MessageCreate'
         required: true
       security:
       - jwtAuth: []
@@ -1206,7 +1103,7 @@ paths:
                     type: string
                     nullable: true
                   data:
-                    $ref: '#/components/schemas/Message'
+                    $ref: '#/components/schemas/MessageCreate'
                 required:
                 - ok
                 - data
@@ -1239,9 +1136,7 @@ paths:
   /api/v1/messages/threads/{thread_id}/restore/:
     post:
       operationId: messages_threads_restore_create
-      description: |-
-        POST /api/messages/threads/<thread_id>/restore/
-        Restore this thread from the current user's Bin back to the inbox.
+      description: Restore a thread from bin back to inbox (per-user).
       parameters:
       - in: path
         name: thread_id
@@ -1257,19 +1152,10 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  ok:
-                    type: boolean
-                  message:
-                    type: string
-                    nullable: true
-                  data:
-                    $ref: '#/components/schemas/ThreadRestoreResponse'
-                required:
-                - ok
-                - data
+                $ref: '#/components/schemas/ThreadRestoreFromBinResponse'
           description: ''
+        '401':
+          description: Authentication required.
         '404':
           description: Thread not found.
   /api/v1/messages/threads/{thread_id}/state/:
@@ -1315,15 +1201,23 @@ paths:
                     type: string
                     nullable: true
                   data:
-                    $ref: '#/components/schemas/ThreadStateResponse'
+                    $ref: '#/components/schemas/MessageThreadStateUpdateResponse'
                 required:
                 - ok
                 - data
           description: ''
         '400':
-          description: Validation error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: ''
         '404':
-          description: Thread not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: ''
   /api/v1/moderation/reports/:
     get:
       operationId: moderation_reports_list
@@ -1478,16 +1372,13 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: {}
+              $ref: '#/components/schemas/PatchedRoomModerationStatusUpdate'
           application/x-www-form-urlencoded:
             schema:
-              type: object
-              additionalProperties: {}
+              $ref: '#/components/schemas/PatchedRoomModerationStatusUpdate'
           multipart/form-data:
             schema:
-              type: object
-              additionalProperties: {}
+              $ref: '#/components/schemas/PatchedRoomModerationStatusUpdate'
       security:
       - jwtAuth: []
       responses:
@@ -1503,8 +1394,7 @@ paths:
                     type: string
                     nullable: true
                   data:
-                    type: object
-                    additionalProperties: {}
+                    $ref: '#/components/schemas/RoomModerationStatusUpdateResponse'
                 required:
                 - ok
                 - data
@@ -1513,8 +1403,13 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: {}
+                $ref: '#/components/schemas/ErrorResponse'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
           description: ''
   /api/v1/my-listings/:
     get:
@@ -1560,8 +1455,8 @@ paths:
           description: ''
   /api/v1/notifications/:
     get:
-      operationId: notifications_list
-      description: List notifications for the current user. Returns a plain array
+      operationId: notifications_retrieve
+      description: List notifications for the current user. Returns ok_response envelope
         (not paginated).
       tags:
       - notifications
@@ -1572,24 +1467,14 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  ok:
-                    type: boolean
-                  message:
-                    type: string
-                    nullable: true
-                  data:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/Notification'
-                required:
-                - ok
-                - data
+                $ref: '#/components/schemas/NotificationListOkResponse'
           description: ''
+        '401':
+          description: Authentication required.
   /api/v1/notifications/{id}/read/:
     post:
       operationId: notifications_read_create
+      description: Mark a notification as read for the current user.
       parameters:
       - in: path
         name: id
@@ -1605,30 +1490,16 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  ok:
-                    type: boolean
-                  message:
-                    type: string
-                    nullable: true
-                  data:
-                    type: object
-                    additionalProperties: {}
-                required:
-                - ok
-                - data
+                $ref: '#/components/schemas/NotificationMarkReadOkResponse'
           description: ''
+        '401':
+          description: Authentication required.
         '404':
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: {}
-          description: ''
+          description: Notification not found.
   /api/v1/notifications/read/all/:
     post:
       operationId: notifications_read_all_create
+      description: Mark all notifications as read for the current user.
       tags:
       - notifications
       security:
@@ -1638,20 +1509,10 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  ok:
-                    type: boolean
-                  message:
-                    type: string
-                    nullable: true
-                  data:
-                    type: object
-                    additionalProperties: {}
-                required:
-                - ok
-                - data
+                $ref: '#/components/schemas/NotificationMarkAllReadOkResponse'
           description: ''
+        '401':
+          description: Authentication required.
   /api/v1/ops/stats/:
     get:
       operationId: ops_stats_retrieve
@@ -1695,14 +1556,25 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/StripeCancelResponse'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/StripeCancelResponse'
+                required:
+                - ok
+                - data
           description: ''
   /api/v1/payments/checkout/rooms/{id}/:
     post:
       operationId: payments_checkout_rooms_create
       description: Creates a Stripe Checkout Session for the specified room listing
         fee. Request body may include an optional payment_method_id. Returns the Stripe-hosted
-        checkout_url and session_id.
+        checkout_url and session_id inside the standard envelope.
       parameters:
       - in: path
         name: id
@@ -1729,16 +1601,43 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/StripeCheckoutRedirectResponse'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/CreateListingCheckoutSessionResponse'
+                required:
+                - ok
+                - data
           description: ''
         '400':
-          description: Invalid request or validation error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: ''
         '401':
-          description: Authentication required.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: ''
         '403':
-          description: Forbidden (not the room owner).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: ''
         '404':
-          description: Room not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: ''
   /api/v1/payments/saved-cards/:
     get:
       operationId: payments_saved_cards_retrieve
@@ -1766,10 +1665,15 @@ paths:
                 - data
           description: ''
         '502':
-          description: Unable to fetch saved cards from Stripe.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DetailResponse'
+          description: ''
   /api/v1/payments/saved-cards/{pm_id}/detach/:
     post:
       operationId: payments_saved_cards_detach_create
+      description: Detach a saved Stripe card for the current user.
       parameters:
       - in: path
         name: pm_id
@@ -1785,26 +1689,26 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  ok:
-                    type: boolean
-                  message:
-                    type: string
-                    nullable: true
-                  data:
-                    $ref: '#/components/schemas/DetailResponse'
-                required:
-                - ok
-                - data
+                $ref: '#/components/schemas/DetachSavedCardOkResponse'
           description: ''
         '400':
-          description: No Stripe customer found for this user.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DetailResponse'
+          description: ''
+        '401':
+          description: Authentication required.
         '502':
-          description: Unable to detach saved card.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DetailResponse'
+          description: ''
   /api/v1/payments/saved-cards/{pm_id}/set-default/:
     post:
       operationId: payments_saved_cards_set_default_create
+      description: Set the default saved Stripe card for the current user.
       parameters:
       - in: path
         name: pm_id
@@ -1820,29 +1724,27 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  ok:
-                    type: boolean
-                  message:
-                    type: string
-                    nullable: true
-                  data:
-                    $ref: '#/components/schemas/DetailResponse'
-                required:
-                - ok
-                - data
+                $ref: '#/components/schemas/SetDefaultSavedCardOkResponse'
           description: ''
         '400':
-          description: No Stripe customer found for this user.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DetailResponse'
+          description: ''
+        '401':
+          description: Authentication required.
         '502':
-          description: Unable to set default card.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DetailResponse'
+          description: ''
   /api/v1/payments/setup-intent/:
     post:
       operationId: payments_setup_intent_create
-      description: |-
-        Creates a Stripe SetupIntent for the logged-in user so they can add/save a card
-        using Stripe Elements (do NOT send raw card details to backend).
+      description: Create a Stripe SetupIntent for the current user and return it
+        in the standard envelope.
       tags:
       - payments
       security:
@@ -1852,21 +1754,16 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  ok:
-                    type: boolean
-                  message:
-                    type: string
-                    nullable: true
-                  data:
-                    $ref: '#/components/schemas/SetupIntentResponse'
-                required:
-                - ok
-                - data
+                $ref: '#/components/schemas/CreateSetupIntentOkResponse'
           description: ''
+        '401':
+          description: Authentication required.
         '502':
-          description: Unable to create setup intent.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DetailResponse'
+          description: ''
   /api/v1/payments/success/:
     get:
       operationId: payments_success_retrieve
@@ -1891,7 +1788,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/StripeSuccessResponse'
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/StripeSuccessResponse'
+                required:
+                - ok
+                - data
           description: ''
   /api/v1/payments/transactions/:
     get:
@@ -1999,13 +1907,13 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/StripeWebhookAckResponse'
+                $ref: '#/components/schemas/StripeWebhookAckOkResponse'
           description: ''
         '400':
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/StripeWebhookErrorResponse'
+                $ref: '#/components/schemas/ErrorResponse'
           description: ''
   /api/v1/reports/:
     post:
@@ -2051,9 +1959,8 @@ paths:
   /api/v1/reports/{id}/moderate/:
     post:
       operationId: reports_moderate_create
-      description: |-
-        POST /api/v1/reports/<id>/moderate/
-        body: {"action": "resolve"|"in_review"|"reject", "hide_room": true|false, "resolution_notes": "..." }
+      description: Moderate a report by changing its status, optionally hiding the
+        reported room.
       parameters:
       - in: path
         name: id
@@ -2066,16 +1973,14 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: {}
+              $ref: '#/components/schemas/ModerationReportModerateActionRequest'
           application/x-www-form-urlencoded:
             schema:
-              type: object
-              additionalProperties: {}
+              $ref: '#/components/schemas/ModerationReportModerateActionRequest'
           multipart/form-data:
             schema:
-              type: object
-              additionalProperties: {}
+              $ref: '#/components/schemas/ModerationReportModerateActionRequest'
+        required: true
       security:
       - jwtAuth: []
       responses:
@@ -2083,34 +1988,16 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  ok:
-                    type: boolean
-                  message:
-                    type: string
-                    nullable: true
-                  data:
-                    type: object
-                    additionalProperties: {}
-                required:
-                - ok
-                - data
+                $ref: '#/components/schemas/ModerationReportModerateActionOkResponse'
           description: ''
         '400':
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: {}
-          description: ''
+          description: Validation error.
+        '401':
+          description: Authentication required.
+        '403':
+          description: Admin privileges required.
         '404':
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: {}
-          description: ''
+          description: Report not found.
   /api/v1/reviews/:
     get:
       operationId: reviews_list
@@ -2225,7 +2112,8 @@ paths:
           description: ''
   /api/v1/room-categories/:
     get:
-      operationId: room_categories_list
+      operationId: api_v1_room_categories_list
+      description: List room categories. Non-staff users only see active categories.
       tags:
       - room-categories
       security:
@@ -2235,23 +2123,11 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  ok:
-                    type: boolean
-                  message:
-                    type: string
-                    nullable: true
-                  data:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/RoomCategorie'
-                required:
-                - ok
-                - data
+                $ref: '#/components/schemas/RoomCategoryListOkResponse'
           description: ''
     post:
       operationId: room_categories_create
+      description: Create a room category.
       tags:
       - room-categories
       requestBody:
@@ -2273,29 +2149,17 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  ok:
-                    type: boolean
-                  message:
-                    type: string
-                    nullable: true
-                  data:
-                    $ref: '#/components/schemas/RoomCategorie'
-                required:
-                - ok
-                - data
+                $ref: '#/components/schemas/RoomCategoryCreateOkResponse'
           description: ''
         '400':
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: {}
-          description: ''
+          description: Validation error.
+        '401':
+          description: Authentication required.
+        '403':
+          description: Admin privileges required.
   /api/v1/room-categories/{id}/:
     get:
-      operationId: room_categories_retrieve
+      operationId: api_v1_room_categories_retrieve
       parameters:
       - in: path
         name: id
@@ -2319,7 +2183,7 @@ paths:
                     type: string
                     nullable: true
                   data:
-                    $ref: '#/components/schemas/RoomCategorie'
+                    $ref: '#/components/schemas/RoomCategorieDetailResponse'
                 required:
                 - ok
                 - data
@@ -2328,8 +2192,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: {}
+                $ref: '#/components/schemas/ErrorResponse'
           description: ''
     put:
       operationId: room_categories_update
@@ -2368,7 +2231,7 @@ paths:
                     type: string
                     nullable: true
                   data:
-                    $ref: '#/components/schemas/RoomCategorie'
+                    $ref: '#/components/schemas/RoomCategorieUpdateResponse'
                 required:
                 - ok
                 - data
@@ -2377,15 +2240,13 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: {}
+                $ref: '#/components/schemas/ErrorResponse'
           description: ''
         '404':
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: {}
+                $ref: '#/components/schemas/ErrorResponse'
           description: ''
     delete:
       operationId: room_categories_destroy
@@ -2400,14 +2261,28 @@ paths:
       security:
       - jwtAuth: []
       responses:
-        '204':
-          description: No response body
-        '404':
+        '200':
           content:
             application/json:
               schema:
                 type: object
-                additionalProperties: {}
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/RoomCategorieDeleteResponse'
+                required:
+                - ok
+                - data
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
           description: ''
   /api/v1/rooms/:
     get:
@@ -2432,18 +2307,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  ok:
-                    type: boolean
-                  message:
-                    type: string
-                    nullable: true
-                  data:
-                    $ref: '#/components/schemas/PaginatedRoomListResponse'
-                required:
-                - ok
-                - data
+                $ref: '#/components/schemas/RoomListResponse'
           description: ''
     post:
       operationId: rooms_create
@@ -2477,18 +2341,26 @@ paths:
                     type: string
                     nullable: true
                   data:
-                    $ref: '#/components/schemas/Room'
+                    $ref: '#/components/schemas/RoomCreateResponse'
                 required:
                 - ok
                 - data
           description: ''
         '400':
-          description: Validation error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: ''
         '401':
-          description: Authentication required.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: ''
   /api/v1/rooms-alt/:
     get:
-      operationId: api_v1_rooms_alt_list
+      operationId: rooms_alt_list
       description: |-
         Drop-in mixin for DRF views:
         - Caches ONLY anonymous GET responses
@@ -2538,6 +2410,167 @@ paths:
                 - ok
                 - data
           description: ''
+    put:
+      operationId: rooms_alt_update
+      description: |-
+        Drop-in mixin for DRF views:
+        - Caches ONLY anonymous GET responses
+        - Uses per-view prefix to isolate keys
+        - Stores/returns 'data' payload (JSON-serializable)
+        - Uses the global cache buster so when data changes,
+          new keys are automatically used.
+      tags:
+      - rooms-alt
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Room'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/Room'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Room'
+        required: true
+      security:
+      - jwtAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/RoomListAltPutResponse'
+                required:
+                - ok
+                - data
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: ''
+    patch:
+      operationId: rooms_alt_partial_update
+      description: |-
+        Drop-in mixin for DRF views:
+        - Caches ONLY anonymous GET responses
+        - Uses per-view prefix to isolate keys
+        - Stores/returns 'data' payload (JSON-serializable)
+        - Uses the global cache buster so when data changes,
+          new keys are automatically used.
+      tags:
+      - rooms-alt
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedRoom'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/PatchedRoom'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PatchedRoom'
+      security:
+      - jwtAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/RoomListAltPatchResponse'
+                required:
+                - ok
+                - data
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: ''
+    delete:
+      operationId: rooms_alt_destroy
+      description: |-
+        Drop-in mixin for DRF views:
+        - Caches ONLY anonymous GET responses
+        - Uses per-view prefix to isolate keys
+        - Stores/returns 'data' payload (JSON-serializable)
+        - Uses the global cache buster so when data changes,
+          new keys are automatically used.
+      tags:
+      - rooms-alt
+      security:
+      - jwtAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/RoomListAltDeleteResponse'
+                required:
+                - ok
+                - data
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: ''
   /api/v1/rooms/{id}/:
     get:
       operationId: api_v1_rooms_retrieve
@@ -2560,6 +2593,10 @@ paths:
                 $ref: '#/components/schemas/RoomDetailOkResponse'
           description: ''
         '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
           description: Not found.
     put:
       operationId: rooms_update
@@ -2599,19 +2636,23 @@ paths:
                     type: string
                     nullable: true
                   data:
-                    $ref: '#/components/schemas/Room'
+                    $ref: '#/components/schemas/RoomUpdateResponse'
                 required:
                 - ok
                 - data
           description: ''
         '400':
-          description: Validation error.
-        '401':
-          description: Authentication required.
-        '403':
-          description: Forbidden.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: ''
         '404':
-          description: Not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: ''
     patch:
       operationId: rooms_partial_update
       description: Partial update (owner-only). If action=preview, requires at least
@@ -2650,19 +2691,23 @@ paths:
                     type: string
                     nullable: true
                   data:
-                    $ref: '#/components/schemas/Room'
+                    $ref: '#/components/schemas/RoomPartialUpdateResponse'
                 required:
                 - ok
                 - data
           description: ''
         '400':
-          description: Validation error or preview requires 3 photos.
-        '401':
-          description: Authentication required.
-        '403':
-          description: Forbidden.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: ''
         '404':
-          description: Not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: ''
     delete:
       operationId: rooms_destroy
       description: Soft-delete a room (owner-only).
@@ -2677,26 +2722,53 @@ paths:
       security:
       - jwtAuth: []
       responses:
-        '204':
-          description: Deleted.
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/RoomDeleteResponse'
+                required:
+                - ok
+                - data
+          description: ''
         '401':
-          description: Authentication required.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: ''
         '403':
-          description: Forbidden.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: ''
         '404':
-          description: Not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: ''
   /api/v1/rooms/{id}/availability/:
     get:
       operationId: rooms_availability_retrieve
-      description: |-
-        GET /api/rooms/<id>/availability/?from=&to=
-        Returns: {"available": bool, "conflicts": [{"id": ..., "start": ..., "end": ...}, ...]}
+      description: Check whether a room is available between the supplied from/to
+        datetimes.
       parameters:
       - in: query
         name: from
         schema:
           type: string
           format: date-time
+        description: Start datetime in ISO 8601 format.
         required: true
       - in: path
         name: id
@@ -2708,6 +2780,7 @@ paths:
         schema:
           type: string
           format: date-time
+        description: End datetime in ISO 8601 format.
         required: true
       tags:
       - rooms
@@ -2727,8 +2800,7 @@ paths:
                     type: string
                     nullable: true
                   data:
-                    type: object
-                    additionalProperties: {}
+                    $ref: '#/components/schemas/RoomAvailabilityResponse'
                 required:
                 - ok
                 - data
@@ -2737,16 +2809,10 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: {}
+                $ref: '#/components/schemas/RoomAvailabilityBadRequest'
           description: ''
         '404':
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: {}
-          description: ''
+          description: Room not found.
   /api/v1/rooms/{id}/availability/slots/:
     get:
       operationId: rooms_availability_slots_list
@@ -2911,9 +2977,8 @@ paths:
           description: ''
   /api/v1/rooms/{id}/photos/:
     get:
-      operationId: rooms_photos_list
-      description: Return only approved images for a room (for grids on Step 4/5,
-        room cards, etc.).
+      operationId: rooms_photos_retrieve
+      description: List approved room photos. Returns ok_response envelope.
       parameters:
       - in: path
         name: id
@@ -2930,29 +2995,17 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  ok:
-                    type: boolean
-                  message:
-                    type: string
-                    nullable: true
-                  data:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/RoomImage'
-                required:
-                - ok
-                - data
+                $ref: '#/components/schemas/RoomPhotoListResponse'
           description: ''
         '404':
-          description: Room not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: ''
     post:
       operationId: rooms_photos_create
-      description: |-
-        Upload a single image for this room.
-
-        Front-end can call this multiple times (one per image) to build the gallery.
+      description: Upload a room image. Returns ok_response envelope.
       parameters:
       - in: path
         name: id
@@ -2991,17 +3044,29 @@ paths:
                     type: string
                     nullable: true
                   data:
-                    $ref: '#/components/schemas/RoomImage'
+                    $ref: '#/components/schemas/RoomPhotoUploadResponse'
                 required:
                 - ok
                 - data
           description: ''
         '400':
-          description: Invalid file or validation error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: ''
         '403':
-          description: Forbidden (not the room owner).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: ''
         '404':
-          description: Room not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: ''
   /api/v1/rooms/{id}/photos/{photo_id}/:
     delete:
       operationId: rooms_photos_destroy
@@ -3022,37 +3087,46 @@ paths:
       security:
       - jwtAuth: []
       responses:
-        '204':
-          description: No response body
-        '403':
+        '200':
           content:
             application/json:
               schema:
                 type: object
-                additionalProperties: {}
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/RoomPhotoDeleteResponse'
+                required:
+                - ok
+                - data
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
           description: ''
         '404':
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: {}
+                $ref: '#/components/schemas/ErrorResponse'
           description: ''
   /api/v1/rooms/{id}/preview/:
     get:
       operationId: rooms_preview_retrieve
-      description: |-
-        Step 5/5 – Preview & Edit page
-
-        GET /api/v1/rooms/<pk>/preview/
-
-        Returns:
-          {
-            "room": { ... full RoomSerializer data ... },
-            "photos": [ ... ]
-          }
-
-        Only the room owner is allowed to see this preview payload.
+      description: Return the private preview payload for a room owned by the authenticated
+        user.
       parameters:
       - in: path
         name: id
@@ -3076,28 +3150,33 @@ paths:
                     type: string
                     nullable: true
                   data:
-                    $ref: '#/components/schemas/RoomPreview'
+                    $ref: '#/components/schemas/RoomPreviewResponse'
                 required:
                 - ok
                 - data
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
           description: ''
         '403':
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: {}
+                $ref: '#/components/schemas/ErrorResponse'
           description: ''
         '404':
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: {}
+                $ref: '#/components/schemas/ErrorResponse'
           description: ''
   /api/v1/rooms/{id}/save/:
     post:
       operationId: rooms_save_create
+      description: Save a room for the authenticated user. Returns ok_response envelope.
       parameters:
       - in: path
         name: id
@@ -3113,29 +3192,17 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  ok:
-                    type: boolean
-                  message:
-                    type: string
-                    nullable: true
-                  data:
-                    type: object
-                    additionalProperties: {}
-                required:
-                - ok
-                - data
+                $ref: '#/components/schemas/RoomSaveOkResponse'
           description: ''
         '404':
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: {}
+                $ref: '#/components/schemas/DetailResponse'
           description: ''
     delete:
       operationId: rooms_save_destroy
+      description: Remove a saved room for the authenticated user.
       parameters:
       - in: path
         name: id
@@ -3147,14 +3214,34 @@ paths:
       security:
       - jwtAuth: []
       responses:
-        '204':
-          description: No response body
-        '404':
+        '200':
           content:
             application/json:
               schema:
                 type: object
-                additionalProperties: {}
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/RoomSaveDeleteResponse'
+                required:
+                - ok
+                - data
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
           description: ''
   /api/v1/rooms/{id}/save-toggle/:
     post:
@@ -3220,16 +3307,27 @@ paths:
                     type: string
                     nullable: true
                   data:
-                    type: object
-                    additionalProperties: {}
+                    $ref: '#/components/schemas/RoomSaveToggleDeleteResponse'
                 required:
                 - ok
                 - data
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
           description: ''
   /api/v1/rooms/{id}/soft-delete/:
     post:
       operationId: rooms_soft_delete_create
-      description: POST /api/rooms/<id>/soft-delete/
+      description: Soft-delete a room owned by the authenticated user.
       parameters:
       - in: path
         name: id
@@ -3245,37 +3343,24 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  ok:
-                    type: boolean
-                  message:
-                    type: string
-                    nullable: true
-                  data:
-                    type: object
-                    additionalProperties: {}
-                required:
-                - ok
-                - data
+                $ref: '#/components/schemas/RoomSoftDeleteOkResponse'
           description: ''
         '403':
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: {}
+                $ref: '#/components/schemas/DetailResponse'
           description: ''
         '404':
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: {}
+                $ref: '#/components/schemas/DetailResponse'
           description: ''
   /api/v1/rooms/{id}/unpublish/:
     post:
       operationId: rooms_unpublish_create
+      description: Unpublish a room listing owned by the authenticated user.
       parameters:
       - in: path
         name: id
@@ -3291,37 +3376,27 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  ok:
-                    type: boolean
-                  message:
-                    type: string
-                    nullable: true
-                  data:
-                    type: object
-                    additionalProperties: {}
-                required:
-                - ok
-                - data
+                $ref: '#/components/schemas/RoomUnpublishOkResponse'
           description: ''
+        '401':
+          description: Authentication required.
         '403':
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: {}
+                $ref: '#/components/schemas/DetailResponse'
           description: ''
         '404':
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: {}
+                $ref: '#/components/schemas/DetailResponse'
           description: ''
   /api/v1/rooms/{room_id}/start-thread/:
     post:
       operationId: rooms_start_thread_create
+      description: Start or reuse a message thread from a room, and optionally send
+        an initial message.
       parameters:
       - in: path
         name: room_id
@@ -3334,14 +3409,13 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/Message'
+              $ref: '#/components/schemas/StartThreadFromRoomRequest'
           application/x-www-form-urlencoded:
             schema:
-              $ref: '#/components/schemas/Message'
+              $ref: '#/components/schemas/StartThreadFromRoomRequest'
           multipart/form-data:
             schema:
-              $ref: '#/components/schemas/Message'
-        required: true
+              $ref: '#/components/schemas/StartThreadFromRoomRequest'
       security:
       - jwtAuth: []
       responses:
@@ -3349,32 +3423,21 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  ok:
-                    type: boolean
-                  message:
-                    type: string
-                    nullable: true
-                  data:
-                    $ref: '#/components/schemas/MessageThread'
-                required:
-                - ok
-                - data
+                $ref: '#/components/schemas/StartThreadFromRoomOkResponse'
           description: ''
         '400':
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: {}
+                $ref: '#/components/schemas/DetailResponse'
           description: ''
+        '401':
+          description: Authentication required.
         '404':
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: {}
+                $ref: '#/components/schemas/DetailResponse'
           description: ''
   /api/v1/rooms/mine/:
     get:
@@ -3500,11 +3563,29 @@ paths:
                 - data
           description: ''
         '400':
-          description: Invalid or missing postcode.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: ''
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: ''
         '502':
-          description: Address provider error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: ''
         '503':
-          description: Address lookup not configured.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: ''
   /api/v1/search/rooms/:
     get:
       operationId: search_rooms_list
@@ -3568,6 +3649,7 @@ paths:
   /api/v1/tenancies/{tenancy_id}/extensions/:
     post:
       operationId: tenancies_extensions_create
+      description: Create a tenancy extension proposal.
       parameters:
       - in: path
         name: tenancy_id
@@ -3595,39 +3677,25 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  ok:
-                    type: boolean
-                  message:
-                    type: string
-                    nullable: true
-                  data:
-                    $ref: '#/components/schemas/TenancyExtensionResponse'
-                required:
-                - ok
-                - data
+                $ref: '#/components/schemas/TenancyExtensionCreateOkResponse'
           description: ''
         '400':
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: {}
+                $ref: '#/components/schemas/DetailResponse'
           description: ''
         '403':
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: {}
+                $ref: '#/components/schemas/DetailResponse'
           description: ''
         '404':
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: {}
+                $ref: '#/components/schemas/DetailResponse'
           description: ''
   /api/v1/tenancies/{tenancy_id}/extensions/{extension_id}/respond/:
     patch:
@@ -3671,7 +3739,7 @@ paths:
                     type: string
                     nullable: true
                   data:
-                    $ref: '#/components/schemas/TenancyExtensionResponse'
+                    $ref: '#/components/schemas/TenancyExtensionRespondResponse'
                 required:
                 - ok
                 - data
@@ -3680,26 +3748,24 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: {}
+                $ref: '#/components/schemas/ErrorResponse'
           description: ''
         '403':
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: {}
+                $ref: '#/components/schemas/ErrorResponse'
           description: ''
         '404':
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: {}
+                $ref: '#/components/schemas/ErrorResponse'
           description: ''
   /api/v1/tenancies/{tenancy_id}/respond/:
     post:
       operationId: tenancies_respond_create
+      description: Respond to a tenancy proposal and return the updated tenancy.
       parameters:
       - in: path
         name: tenancy_id
@@ -3727,6 +3793,38 @@ paths:
           content:
             application/json:
               schema:
+                $ref: '#/components/schemas/TenancyRespondOkResponse'
+          description: ''
+        '400':
+          description: Validation error.
+        '401':
+          description: Authentication required.
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DetailResponse'
+          description: ''
+  /api/v1/tenancies/{tenancy_id}/reviews/:
+    get:
+      operationId: tenancies_reviews_retrieve
+      description: Return the authenticated user's review and the counterparty review
+        for a tenancy, if visible.
+      parameters:
+      - in: path
+        name: tenancy_id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - tenancies
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
                 type: object
                 properties:
                   ok:
@@ -3735,28 +3833,27 @@ paths:
                     type: string
                     nullable: true
                   data:
-                    $ref: '#/components/schemas/TenancyDetail'
+                    $ref: '#/components/schemas/TenancyReviewListResponse'
                 required:
                 - ok
                 - data
           description: ''
-        '400':
+        '403':
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: {}
+                $ref: '#/components/schemas/TenancyReviewListForbiddenResponse'
           description: ''
         '404':
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: {}
+                $ref: '#/components/schemas/TenancyReviewListNotFoundResponse'
           description: ''
-  /api/v1/tenancies/{tenancy_id}/reviews/:
+  /api/v1/tenancies/{tenancy_id}/reviews/create/:
     post:
-      operationId: tenancies_reviews_create
+      operationId: tenancies_reviews_create_create
+      description: Create a tenancy review and return it in ok_response envelope.
       parameters:
       - in: path
         name: tenancy_id
@@ -3784,26 +3881,14 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  ok:
-                    type: boolean
-                  message:
-                    type: string
-                    nullable: true
-                  data:
-                    $ref: '#/components/schemas/Review'
-                required:
-                - ok
-                - data
+                $ref: '#/components/schemas/TenancyReviewCreateOkResponse'
           description: ''
         '400':
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: {}
-          description: ''
+          description: Validation error.
+        '401':
+          description: Authentication required.
+        '404':
+          description: Tenancy not found.
   /api/v1/tenancies/{tenancy_id}/still-living/confirm/:
     patch:
       operationId: tenancies_still_living_confirm_partial_update
@@ -3830,8 +3915,7 @@ paths:
                     type: string
                     nullable: true
                   data:
-                    type: object
-                    additionalProperties: {}
+                    $ref: '#/components/schemas/TenancyStillLivingConfirmResponse'
                 required:
                 - ok
                 - data
@@ -3840,22 +3924,13 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: {}
-          description: ''
-        '403':
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: {}
+                $ref: '#/components/schemas/ErrorResponse'
           description: ''
         '404':
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: {}
+                $ref: '#/components/schemas/ErrorResponse'
           description: ''
   /api/v1/tenancies/mine/:
     get:
@@ -3904,6 +3979,7 @@ paths:
   /api/v1/tenancies/propose/:
     post:
       operationId: tenancies_propose_create
+      description: Create a tenancy proposal.
       tags:
       - tenancies
       requestBody:
@@ -3925,26 +4001,12 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  ok:
-                    type: boolean
-                  message:
-                    type: string
-                    nullable: true
-                  data:
-                    $ref: '#/components/schemas/TenancyDetail'
-                required:
-                - ok
-                - data
+                $ref: '#/components/schemas/TenancyProposeOkResponse'
           description: ''
         '400':
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: {}
-          description: ''
+          description: Validation error.
+        '401':
+          description: Authentication required.
   /api/v1/users/{user_id}/review-summary/:
     get:
       operationId: users_review_summary_retrieve
@@ -3972,10 +4034,16 @@ paths:
                     type: string
                     nullable: true
                   data:
-                    $ref: '#/components/schemas/UserReviewSummary'
+                    $ref: '#/components/schemas/UserReviewSummaryResponse'
                 required:
                 - ok
                 - data
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
           description: ''
   /api/v1/users/{user_id}/reviews/:
     get:
@@ -4126,6 +4194,7 @@ paths:
   /api/v1/users/me/change-email/:
     post:
       operationId: users_me_change_email_create
+      description: Change the user's email address.
       tags:
       - users
       requestBody:
@@ -4147,30 +4216,16 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  ok:
-                    type: boolean
-                  message:
-                    type: string
-                    nullable: true
-                  data:
-                    type: object
-                    additionalProperties: {}
-                required:
-                - ok
-                - data
+                $ref: '#/components/schemas/ChangeEmailOkResponse'
           description: ''
         '400':
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: {}
-          description: ''
+          description: Validation error.
+        '401':
+          description: Authentication required.
   /api/v1/users/me/change-password/:
     post:
       operationId: users_me_change_password_create
+      description: Change the current user's password.
       tags:
       - users
       requestBody:
@@ -4192,30 +4247,17 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  ok:
-                    type: boolean
-                  message:
-                    type: string
-                    nullable: true
-                  data:
-                    type: object
-                    additionalProperties: {}
-                required:
-                - ok
-                - data
+                $ref: '#/components/schemas/ChangePasswordOkResponse'
           description: ''
         '400':
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: {}
-          description: ''
+          description: Validation error.
+        '401':
+          description: Authentication required.
   /api/v1/users/me/create-password/:
     post:
       operationId: users_me_create_password_create
+      description: Create a password for the current user if one does not already
+        exist.
       tags:
       - users
       requestBody:
@@ -4237,30 +4279,16 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  ok:
-                    type: boolean
-                  message:
-                    type: string
-                    nullable: true
-                  data:
-                    type: object
-                    additionalProperties: {}
-                required:
-                - ok
-                - data
+                $ref: '#/components/schemas/CreatePasswordOkResponse'
           description: ''
         '400':
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: {}
-          description: ''
+          description: Validation error.
+        '401':
+          description: Authentication required.
   /api/v1/users/me/deactivate/:
     post:
       operationId: users_me_deactivate_create
+      description: Deactivate the current user's account.
       tags:
       - users
       security:
@@ -4270,22 +4298,15 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  ok:
-                    type: boolean
-                  message:
-                    type: string
-                    nullable: true
-                  data:
-                    $ref: '#/components/schemas/OpsStatsResponse'
-                required:
-                - ok
-                - data
+                $ref: '#/components/schemas/DeactivateAccountOkResponse'
           description: ''
+        '401':
+          description: Authentication required.
   /api/v1/users/me/delete-account/:
     post:
       operationId: users_me_delete_account_create
+      description: Schedule the current user's account for deletion after the grace
+        period.
       tags:
       - users
       requestBody:
@@ -4307,22 +4328,16 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  ok:
-                    type: boolean
-                  message:
-                    type: string
-                    nullable: true
-                  data:
-                    $ref: '#/components/schemas/OpsStatsResponse'
-                required:
-                - ok
-                - data
+                $ref: '#/components/schemas/DeleteAccountRequestOkResponse'
           description: ''
+        '400':
+          description: Validation error.
+        '401':
+          description: Authentication required.
   /api/v1/users/me/delete-account/cancel/:
     post:
       operationId: users_me_delete_account_cancel_create
+      description: Cancel a pending account deletion request.
       tags:
       - users
       requestBody:
@@ -4344,27 +4359,17 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  ok:
-                    type: boolean
-                  message:
-                    type: string
-                    nullable: true
-                  data:
-                    type: object
-                    additionalProperties: {}
-                required:
-                - ok
-                - data
+                $ref: '#/components/schemas/DeleteAccountCancelOkResponse'
           description: ''
+        '400':
+          description: Validation error.
+        '401':
+          description: Authentication required.
   /api/v1/users/me/delete/confirm/:
     post:
       operationId: users_me_delete_confirm_create
-      description: |-
-        POST /api/users/me/delete/confirm/
-        Body: {"confirm": true, "idempotency_key": "...optional..."}
-        Performs GDPR erasure and deactivates the account.
+      description: Confirm account deletion, perform GDPR erasure, and deactivate
+        the current user.
       tags:
       - users
       requestBody:
@@ -4386,33 +4391,17 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  ok:
-                    type: boolean
-                  message:
-                    type: string
-                    nullable: true
-                  data:
-                    type: object
-                    additionalProperties: {}
-                required:
-                - ok
-                - data
+                $ref: '#/components/schemas/AccountDeleteConfirmOkResponse'
           description: ''
         '400':
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: {}
-          description: ''
+          description: Validation error.
+        '401':
+          description: Authentication required.
   /api/v1/users/me/delete/preview/:
     get:
       operationId: users_me_delete_preview_retrieve
-      description: |-
-        GET /api/users/me/delete/preview/
-        Shows counts of records that will be anonymised/retained.
+      description: Show counts of records that will be deleted, anonymised, or retained
+        for the authenticated user.
       tags:
       - users
       security:
@@ -4430,18 +4419,18 @@ paths:
                     type: string
                     nullable: true
                   data:
-                    $ref: '#/components/schemas/NotificationMarkAllReadResponse'
+                    $ref: '#/components/schemas/AccountDeletePreviewResponse'
                 required:
                 - ok
                 - data
           description: ''
+        '401':
+          description: Authentication required.
   /api/v1/users/me/export/:
     post:
       operationId: users_me_export_create
-      description: |-
-        POST /api/users/me/export/
-        Body: {"confirm": true}
-        Builds a ZIP of the user’s data and returns a time-limited link.
+      description: Start a GDPR data export build and return a download link in the
+        standard envelope.
       tags:
       - users
       requestBody:
@@ -4459,30 +4448,27 @@ paths:
       security:
       - jwtAuth: []
       responses:
-        '200':
+        '201':
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  ok:
-                    type: boolean
-                  message:
-                    type: string
-                    nullable: true
-                  data:
-                    type: object
-                    additionalProperties: {}
-                required:
-                - ok
-                - data
+                $ref: '#/components/schemas/DataExportStartOkResponse'
+          description: ''
+        '400':
+          description: Validation error.
+        '401':
+          description: Authentication required.
+        '500':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DetailResponse'
           description: ''
   /api/v1/users/me/export/latest/:
     get:
       operationId: users_me_export_latest_retrieve
-      description: |-
-        GET /api/users/me/export/latest/
-        Return the latest non-expired export link.
+      description: Return the latest non-expired export link for the authenticated
+        user.
       tags:
       - users
       security:
@@ -4500,16 +4486,21 @@ paths:
                     type: string
                     nullable: true
                   data:
-                    $ref: '#/components/schemas/NotificationMarkReadResponse'
+                    $ref: '#/components/schemas/DataExportLatestResponse'
                 required:
                 - ok
                 - data
           description: ''
         '404':
-          description: Not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DataExportLatestNotFoundResponse'
+          description: ''
   /api/v1/users/me/notification-preferences/:
     get:
       operationId: users_me_notification_preferences_retrieve
+      description: Get current user's notification preferences.
       tags:
       - users
       security:
@@ -4519,21 +4510,13 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  ok:
-                    type: boolean
-                  message:
-                    type: string
-                    nullable: true
-                  data:
-                    $ref: '#/components/schemas/NotificationPreferences'
-                required:
-                - ok
-                - data
+                $ref: '#/components/schemas/NotificationPreferencesOkResponse'
           description: ''
+        '401':
+          description: Authentication required.
     patch:
       operationId: users_me_notification_preferences_partial_update
+      description: Update notification preferences (partial update allowed).
       tags:
       - users
       requestBody:
@@ -4562,15 +4545,28 @@ paths:
                     type: string
                     nullable: true
                   data:
-                    $ref: '#/components/schemas/NotificationPreferences'
+                    $ref: '#/components/schemas/NotificationPreferencesUpdateResponse'
                 required:
                 - ok
                 - data
           description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: ''
   /api/v1/users/me/onboarding/complete/:
     post:
       operationId: users_me_onboarding_complete_create
-      description: Marks onboarding as completed for the logged-in user.
+      description: Mark onboarding as completed for the current user. Returns ok_response
+        envelope.
       tags:
       - users
       requestBody:
@@ -4592,23 +4588,16 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  ok:
-                    type: boolean
-                  message:
-                    type: string
-                    nullable: true
-                  data:
-                    type: object
-                    additionalProperties: {}
-                required:
-                - ok
-                - data
+                $ref: '#/components/schemas/OnboardingCompleteOkResponse'
           description: ''
+        '400':
+          description: Validation error.
+        '401':
+          description: Authentication required.
   /api/v1/users/me/privacy-preferences/:
     get:
       operationId: users_me_privacy_preferences_retrieve
+      description: Get the current user's privacy preferences.
       tags:
       - users
       security:
@@ -4618,21 +4607,13 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  ok:
-                    type: boolean
-                  message:
-                    type: string
-                    nullable: true
-                  data:
-                    $ref: '#/components/schemas/PrivacyPreferences'
-                required:
-                - ok
-                - data
+                $ref: '#/components/schemas/PrivacyPreferencesOkResponse'
           description: ''
+        '401':
+          description: Authentication required.
     patch:
       operationId: users_me_privacy_preferences_partial_update
+      description: Update the current user's privacy preferences.
       tags:
       - users
       requestBody:
@@ -4661,10 +4642,22 @@ paths:
                     type: string
                     nullable: true
                   data:
-                    $ref: '#/components/schemas/PrivacyPreferences'
+                    $ref: '#/components/schemas/PrivacyPreferencesUpdateResponse'
                 required:
                 - ok
                 - data
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
           description: ''
   /api/v1/users/me/profile/:
     get:
@@ -4781,10 +4774,16 @@ paths:
                     type: string
                     nullable: true
                   data:
-                    $ref: '#/components/schemas/ProfilePage'
+                    $ref: '#/components/schemas/MyProfilePageResponse'
                 required:
                 - ok
                 - data
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
           description: ''
   /api/v1/users/me/profile/avatar/:
     post:
@@ -4805,18 +4804,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  ok:
-                    type: boolean
-                  message:
-                    type: string
-                    nullable: true
-                  data:
-                    $ref: '#/components/schemas/AvatarUploadResponse'
-                required:
-                - ok
-                - data
+                $ref: '#/components/schemas/AvatarUploadOkResponse'
           description: ''
         '400':
           description: Invalid file or validation error.
@@ -4869,6 +4857,8 @@ paths:
   /api/v1/webhooks/{provider}/incoming/:
     post:
       operationId: api_v1_webhooks_provider_incoming_create
+      description: Receive and verify a provider webhook, store the receipt, and handle
+        supported provider events.
       parameters:
       - in: path
         name: provider
@@ -4905,10 +4895,16 @@ paths:
                     type: string
                     nullable: true
                   data:
-                    $ref: '#/components/schemas/ProviderWebhookResponse'
+                    $ref: '#/components/schemas/ProviderWebhookOkResponse'
                 required:
                 - ok
                 - data
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DetailResponse'
           description: ''
   /api/v1/webhooks/incoming/:
     post:
@@ -4957,6 +4953,69 @@ components:
           type: boolean
       required:
       - confirm
+    AccountDeleteConfirmData:
+      type: object
+      properties:
+        detail:
+          type: string
+      required:
+      - detail
+    AccountDeleteConfirmOkResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        message:
+          type: string
+          nullable: true
+        data:
+          $ref: '#/components/schemas/AccountDeleteConfirmData'
+      required:
+      - data
+      - ok
+    AccountDeletePreviewAnonymiseSection:
+      type: object
+      properties:
+        rooms:
+          type: integer
+        reviews:
+          type: integer
+        messages:
+          type: integer
+      required:
+      - messages
+      - reviews
+      - rooms
+    AccountDeletePreviewDeleteSection:
+      type: object
+      properties:
+        profile:
+          type: integer
+      required:
+      - profile
+    AccountDeletePreviewResponse:
+      type: object
+      properties:
+        delete:
+          $ref: '#/components/schemas/AccountDeletePreviewDeleteSection'
+        anonymise:
+          $ref: '#/components/schemas/AccountDeletePreviewAnonymiseSection'
+        retain_non_pii:
+          $ref: '#/components/schemas/AccountDeletePreviewRetainSection'
+      required:
+      - anonymise
+      - delete
+      - retain_non_pii
+    AccountDeletePreviewRetainSection:
+      type: object
+      properties:
+        payments:
+          type: integer
+        bookings:
+          type: integer
+      required:
+      - bookings
+      - payments
     AccountDeleteRequest:
       type: object
       properties:
@@ -5025,6 +5084,19 @@ components:
       - is_full
       - room
       - start
+    AvatarUploadOkResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        message:
+          type: string
+          nullable: true
+        data:
+          $ref: '#/components/schemas/AvatarUploadResponse'
+      required:
+      - data
+      - ok
     AvatarUploadRequest:
       type: object
       properties:
@@ -5092,65 +5164,48 @@ components:
       properties:
         detail:
           type: string
+        canceled_at:
+          type: string
+          format: date-time
+          nullable: true
       required:
       - detail
-    BookingCancelOkResponse:
+    BookingCancelResponse:
       type: object
       properties:
         ok:
           type: boolean
+        message:
+          type: string
+          nullable: true
         data:
           $ref: '#/components/schemas/BookingCancelData'
       required:
       - data
       - ok
-    BookingDeleteData:
+    BookingCreateRequest:
       type: object
       properties:
-        detail:
-          type: string
-      required:
-      - detail
-    BookingDeleteOkResponse:
-      type: object
-      properties:
-        ok:
-          type: boolean
-        data:
-          $ref: '#/components/schemas/BookingDeleteData'
-      required:
-      - data
-      - ok
-    BookingListData:
-      type: object
-      properties:
-        count:
+        room:
           type: integer
-        next:
+        slot:
+          type: integer
+        start:
           type: string
-          nullable: true
-        previous:
+          format: date-time
+        end:
           type: string
-          nullable: true
-        results:
-          type: array
-          items:
-            $ref: '#/components/schemas/Booking'
-      required:
-      - count
-      - next
-      - previous
-      - results
-    BookingListResponse:
+          format: date-time
+    BookingDeleteResponse:
       type: object
       properties:
         ok:
           type: boolean
-        data:
-          $ref: '#/components/schemas/BookingListData'
+          default: true
+        message:
+          type: string
       required:
-      - data
-      - ok
+      - message
     BookingPreflightRequest:
       type: object
       properties:
@@ -5173,69 +5228,50 @@ components:
           type: string
       required:
       - detail
-    BookingResponseEnvelope:
+    BookingSuspendData:
+      type: object
+      properties:
+        id:
+          type: integer
+        status:
+          type: string
+        canceled_at:
+          type: string
+          format: date-time
+          nullable: true
+      required:
+      - id
+      - status
+    BookingSuspendResponse:
       type: object
       properties:
         ok:
           type: boolean
-        data:
-          $ref: '#/components/schemas/Booking'
-      required:
-      - data
-      - ok
-    BookingReviewCreate:
-      type: object
-      properties:
-        booking_id:
-          type: integer
-          writeOnly: true
-        tenancy_id:
-          type: integer
-          writeOnly: true
-        overall_rating:
-          type: integer
-          maximum: 5
-          minimum: 1
-        review_flags: {}
-        notes:
+        message:
           type: string
           nullable: true
-    BookingReviewCreateOkResponse:
-      type: object
-      properties:
-        ok:
-          type: boolean
         data:
-          $ref: '#/components/schemas/BookingReviewCreate'
+          $ref: '#/components/schemas/BookingSuspendData'
       required:
       - data
       - ok
-    BookingReviewListOkResponse:
-      type: object
-      properties:
-        ok:
-          type: boolean
-        data:
-          type: array
-          items:
-            $ref: '#/components/schemas/BookingReviewCreate'
-      required:
-      - data
-      - ok
-    BookingSuspendData:
+    ChangeEmailData:
       type: object
       properties:
         detail:
           type: string
       required:
       - detail
-    BookingSuspendOkResponse:
+    ChangeEmailOkResponse:
       type: object
       properties:
         ok:
           type: boolean
+        message:
+          type: string
+          nullable: true
         data:
-          $ref: '#/components/schemas/BookingSuspendData'
+          $ref: '#/components/schemas/ChangeEmailData'
       required:
       - data
       - ok
@@ -5250,6 +5286,26 @@ components:
       required:
       - current_password
       - new_email
+    ChangePasswordData:
+      type: object
+      properties:
+        detail:
+          type: string
+      required:
+      - detail
+    ChangePasswordOkResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        message:
+          type: string
+          nullable: true
+        data:
+          $ref: '#/components/schemas/ChangePasswordData'
+      required:
+      - data
+      - ok
     ChangePasswordRequest:
       type: object
       properties:
@@ -5315,6 +5371,36 @@ components:
       - message
       - name
       - subject
+    CreateListingCheckoutSessionResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+          default: true
+        message:
+          type: string
+      required:
+      - message
+    CreatePasswordData:
+      type: object
+      properties:
+        detail:
+          type: string
+      required:
+      - detail
+    CreatePasswordOkResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        message:
+          type: string
+          nullable: true
+        data:
+          $ref: '#/components/schemas/CreatePasswordData'
+      required:
+      - data
+      - ok
     CreatePasswordRequest:
       type: object
       properties:
@@ -5325,6 +5411,153 @@ components:
       required:
       - confirm_password
       - new_password
+    CreateSetupIntentOkResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        message:
+          type: string
+          nullable: true
+        data:
+          $ref: '#/components/schemas/SetupIntentResponse'
+      required:
+      - data
+      - ok
+    DataExportLatestNotFoundResponse:
+      type: object
+      properties:
+        detail:
+          type: string
+      required:
+      - detail
+    DataExportLatestResponse:
+      type: object
+      properties:
+        download_url:
+          type: string
+          format: uri
+        expires_at:
+          type: string
+          format: date-time
+      required:
+      - download_url
+      - expires_at
+    DataExportStartData:
+      type: object
+      properties:
+        status:
+          type: string
+        download_url:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+      required:
+      - download_url
+      - expires_at
+      - status
+    DataExportStartOkResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        message:
+          type: string
+          nullable: true
+        data:
+          $ref: '#/components/schemas/DataExportStartData'
+      required:
+      - data
+      - ok
+    DeactivateAccountData:
+      type: object
+      properties:
+        detail:
+          type: string
+      required:
+      - detail
+    DeactivateAccountOkResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        message:
+          type: string
+          nullable: true
+        data:
+          $ref: '#/components/schemas/DeactivateAccountData'
+      required:
+      - data
+      - ok
+    DeleteAccountCancelData:
+      type: object
+      properties:
+        detail:
+          type: string
+      required:
+      - detail
+    DeleteAccountCancelOkResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        message:
+          type: string
+          nullable: true
+        data:
+          $ref: '#/components/schemas/DeleteAccountCancelData'
+      required:
+      - data
+      - ok
+    DeleteAccountRequestData:
+      type: object
+      properties:
+        detail:
+          type: string
+        scheduled_for:
+          type: string
+          format: date-time
+        grace_days:
+          type: integer
+      required:
+      - detail
+      - grace_days
+      - scheduled_for
+    DeleteAccountRequestOkResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        message:
+          type: string
+          nullable: true
+        data:
+          $ref: '#/components/schemas/DeleteAccountRequestData'
+      required:
+      - data
+      - ok
+    DetachSavedCardData:
+      type: object
+      properties:
+        detail:
+          type: string
+      required:
+      - detail
+    DetachSavedCardOkResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        message:
+          type: string
+          nullable: true
+        data:
+          $ref: '#/components/schemas/DetachSavedCardData'
+      required:
+      - data
+      - ok
     DetailResponse:
       type: object
       properties:
@@ -5338,7 +5571,10 @@ components:
       properties:
         user_id:
           type: integer
+        confirm:
+          type: boolean
       required:
+      - confirm
       - user_id
     EmailOTPResendData:
       type: object
@@ -5352,6 +5588,9 @@ components:
       properties:
         ok:
           type: boolean
+        message:
+          type: string
+          nullable: true
         data:
           $ref: '#/components/schemas/EmailOTPResendData'
       required:
@@ -5381,30 +5620,35 @@ components:
       properties:
         ok:
           type: boolean
+        message:
+          type: string
+          nullable: true
         data:
           $ref: '#/components/schemas/EmailOTPVerifyData'
       required:
       - data
       - ok
-    FindAddressItem:
+    ErrorResponse:
       type: object
       properties:
-        id:
+        ok:
+          type: boolean
+          default: false
+        message:
           type: string
-        label:
-          type: string
+        errors: {}
       required:
-      - id
-      - label
+      - message
     FindAddressResponse:
       type: object
       properties:
-        addresses:
-          type: array
-          items:
-            $ref: '#/components/schemas/FindAddressItem'
+        ok:
+          type: boolean
+          default: true
+        message:
+          type: string
       required:
-      - addresses
+      - message
     GDPRDeleteConfirm:
       type: object
       properties:
@@ -5422,6 +5666,19 @@ components:
           type: boolean
       required:
       - confirm
+    GoogleRegisterBadRequestResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        message:
+          type: string
+        data:
+          nullable: true
+      required:
+      - data
+      - message
+      - ok
     GoogleRegisterData:
       type: object
       properties:
@@ -5452,23 +5709,16 @@ components:
       - data
       - message
       - ok
-    HealthCheckData:
+    HealthCheckResponse:
       type: object
       properties:
         status:
           type: string
-      required:
-      - status
-    HealthCheckOkResponse:
-      type: object
-      properties:
-        ok:
+        db:
           type: boolean
-        data:
-          $ref: '#/components/schemas/HealthCheckData'
       required:
-      - data
-      - ok
+      - db
+      - status
     HomePageOkResponse:
       type: object
       properties:
@@ -5543,6 +5793,9 @@ components:
       properties:
         ok:
           type: boolean
+        message:
+          type: string
+          nullable: true
         data:
           type: array
           items:
@@ -5561,21 +5814,11 @@ components:
       required:
       - identifier
       - password
-    LoginResponse:
-      type: object
-      properties:
-        ok:
-          type: boolean
-        data:
-          $ref: '#/components/schemas/LoginSuccessData'
-      required:
-      - data
-      - ok
-    LoginSuccessData:
+    LoginOkData:
       type: object
       properties:
         tokens:
-          $ref: '#/components/schemas/LoginTokens'
+          $ref: '#/components/schemas/LoginTokenData'
         user:
           $ref: '#/components/schemas/User'
         profile:
@@ -5584,7 +5827,20 @@ components:
       - profile
       - tokens
       - user
-    LoginTokens:
+    LoginOkResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        message:
+          type: string
+          nullable: true
+        data:
+          $ref: '#/components/schemas/LoginOkData'
+      required:
+      - data
+      - ok
+    LoginTokenData:
       type: object
       properties:
         access:
@@ -5614,6 +5870,9 @@ components:
       properties:
         ok:
           type: boolean
+        message:
+          type: string
+          nullable: true
         data:
           $ref: '#/components/schemas/LogoutData'
       required:
@@ -5643,23 +5902,36 @@ components:
       - id
       - sender
       - thread
-    MessageStatsData:
+    MessageCreate:
       type: object
       properties:
-        unread_threads:
-          type: integer
-        unread_messages:
-          type: integer
-    MessageStatsOkResponse:
-      type: object
-      properties:
-        ok:
-          type: boolean
-        data:
-          $ref: '#/components/schemas/MessageStatsData'
+        body:
+          type: string
       required:
-      - data
-      - ok
+      - body
+    MessageStatsGoodFit:
+      type: object
+      properties:
+        threads:
+          type: integer
+        unread:
+          type: integer
+      required:
+      - threads
+      - unread
+    MessageStatsResponse:
+      type: object
+      properties:
+        total_threads:
+          type: integer
+        total_unread:
+          type: integer
+        good_fit:
+          $ref: '#/components/schemas/MessageStatsGoodFit'
+      required:
+      - good_fit
+      - total_threads
+      - total_unread
     MessageThread:
       type: object
       properties:
@@ -5699,6 +5971,60 @@ components:
       - last_message
       - participants
       - unread_count
+    MessageThreadStateUpdateResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+          default: true
+        message:
+          type: string
+      required:
+      - message
+    ModerationReportModerateActionData:
+      type: object
+      properties:
+        id:
+          type: integer
+        status:
+          type: string
+      required:
+      - id
+      - status
+    ModerationReportModerateActionOkResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        message:
+          type: string
+          nullable: true
+        data:
+          $ref: '#/components/schemas/ModerationReportModerateActionData'
+      required:
+      - data
+      - ok
+    ModerationReportModerateActionRequest:
+      type: object
+      properties:
+        action:
+          type: string
+        hide_room:
+          type: boolean
+        resolution_notes:
+          type: string
+      required:
+      - action
+    MyProfilePageResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+          default: true
+        message:
+          type: string
+      required:
+      - message
     Notification:
       type: object
       properties:
@@ -5760,19 +6086,60 @@ components:
       - thread
       - title
       - type
-    NotificationMarkAllReadResponse:
+    NotificationListOkResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        message:
+          type: string
+          nullable: true
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Notification'
+      required:
+      - data
+      - ok
+    NotificationMarkAllReadData:
+      type: object
+      properties:
+        marked:
+          type: integer
+      required:
+      - marked
+    NotificationMarkAllReadOkResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        message:
+          type: string
+          nullable: true
+        data:
+          $ref: '#/components/schemas/NotificationMarkAllReadData'
+      required:
+      - data
+      - ok
+    NotificationMarkReadData:
       type: object
       properties:
         ok:
           type: boolean
       required:
       - ok
-    NotificationMarkReadResponse:
+    NotificationMarkReadOkResponse:
       type: object
       properties:
         ok:
           type: boolean
+        message:
+          type: string
+          nullable: true
+        data:
+          $ref: '#/components/schemas/NotificationMarkReadData'
       required:
+      - data
       - ok
     NotificationPreferences:
       type: object
@@ -5787,6 +6154,29 @@ components:
           type: boolean
         notify_confirmations:
           type: boolean
+    NotificationPreferencesOkResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        message:
+          type: string
+          nullable: true
+        data:
+          $ref: '#/components/schemas/NotificationPreferences'
+      required:
+      - data
+      - ok
+    NotificationPreferencesUpdateResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+          default: true
+        message:
+          type: string
+      required:
+      - message
     OnboardingComplete:
       type: object
       properties:
@@ -5794,72 +6184,36 @@ components:
           type: boolean
       required:
       - confirm
+    OnboardingCompleteData:
+      type: object
+      properties:
+        onboarding_completed:
+          type: boolean
+      required:
+      - onboarding_completed
+    OnboardingCompleteOkResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        message:
+          type: string
+          nullable: true
+        data:
+          $ref: '#/components/schemas/OnboardingCompleteData'
+      required:
+      - data
+      - ok
     OpsStatsResponse:
       type: object
       properties:
-        total_rooms:
-          type: integer
-        active_rooms:
-          type: integer
-        hidden_rooms:
-          type: integer
-        deleted_rooms:
-          type: integer
-        total_users:
-          type: integer
-          nullable: true
-        bookings_7d:
-          type: integer
-        bookings_30d:
-          type: integer
-        upcoming_viewings:
-          type: integer
-        payments_30d_count:
-          type: integer
-        payments_30d_sum_gbp:
-          type: number
-          format: double
-        messages_7d:
-          type: integer
-        threads_total:
-          type: integer
-        reports_open:
-          type: integer
-        reports_in_review:
-          type: integer
-        top_categories:
-          type: array
-          items:
-            $ref: '#/components/schemas/OpsTopCategory'
-      required:
-      - active_rooms
-      - bookings_30d
-      - bookings_7d
-      - deleted_rooms
-      - hidden_rooms
-      - messages_7d
-      - payments_30d_count
-      - payments_30d_sum_gbp
-      - reports_in_review
-      - reports_open
-      - threads_total
-      - top_categories
-      - total_rooms
-      - total_users
-      - upcoming_viewings
-    OpsTopCategory:
-      type: object
-      properties:
-        id:
-          type: integer
-        name:
+        ok:
+          type: boolean
+          default: true
+        message:
           type: string
-        room_count:
-          type: integer
       required:
-      - id
-      - name
-      - room_count
+      - message
     PaginatedAvailabilitySlotList:
       type: object
       required:
@@ -5883,7 +6237,7 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/AvailabilitySlot'
-    PaginatedBookingListResponseList:
+    PaginatedBookingList:
       type: object
       required:
       - count
@@ -5905,7 +6259,7 @@ components:
         results:
           type: array
           items:
-            $ref: '#/components/schemas/BookingListResponse'
+            $ref: '#/components/schemas/Booking'
     PaginatedMessageList:
       type: object
       required:
@@ -6021,29 +6375,6 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Review'
-    PaginatedRoomCategorieList:
-      type: object
-      required:
-      - count
-      - results
-      properties:
-        count:
-          type: integer
-          example: 123
-        next:
-          type: string
-          nullable: true
-          format: uri
-          example: http://api.example.org/accounts/?offset=400&limit=100
-        previous:
-          type: string
-          nullable: true
-          format: uri
-          example: http://api.example.org/accounts/?offset=200&limit=100
-        results:
-          type: array
-          items:
-            $ref: '#/components/schemas/RoomCategorie'
     PaginatedRoomList:
       type: object
       required:
@@ -6067,24 +6398,6 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Room'
-    PaginatedRoomListResponse:
-      type: object
-      properties:
-        count:
-          type: integer
-        next:
-          type: string
-          nullable: true
-        previous:
-          type: string
-          nullable: true
-        results:
-          type: array
-          items:
-            $ref: '#/components/schemas/Room'
-      required:
-      - count
-      - results
     PaginatedTenancyDetailList:
       type: object
       required:
@@ -6162,6 +6475,9 @@ components:
       properties:
         ok:
           type: boolean
+        message:
+          type: string
+          nullable: true
         data:
           $ref: '#/components/schemas/PasswordResetConfirmData'
       required:
@@ -6180,6 +6496,9 @@ components:
       properties:
         detail:
           type: string
+        token:
+          type: string
+          nullable: true
       required:
       - detail
     PasswordResetRequestOkResponse:
@@ -6187,6 +6506,9 @@ components:
       properties:
         ok:
           type: boolean
+        message:
+          type: string
+          nullable: true
         data:
           $ref: '#/components/schemas/PasswordResetRequestData'
       required:
@@ -6850,31 +7172,18 @@ components:
           description: List of specific viewing dates when mode is 'custom'.
         property_owner:
           type: integer
-    PatchedRoomCategorie:
+    PatchedRoomModerationStatusUpdate:
       type: object
       properties:
-        id:
-          type: integer
-          readOnly: true
-        slug:
+        status:
+          enum:
+          - active
+          - hidden
           type: string
-          readOnly: true
-          pattern: ^[-a-zA-Z0-9_]+$
-        key:
-          type: string
-          maxLength: 30
-        name:
-          type: string
-          maxLength: 30
-        about:
-          type: string
-          maxLength: 150
-        website:
-          type: string
-          format: uri
-          maxLength: 100
-        active:
-          type: boolean
+          description: |-
+            * `active` - active
+            * `hidden` - hidden
+          x-spec-enum-id: fec5b2330dbe8df3
     PatchedTenancyExtensionRespond:
       type: object
       properties:
@@ -7026,6 +7335,7 @@ components:
           readOnly: true
         status:
           enum:
+          - created
           - requires_payment_method
           - requires_action
           - processing
@@ -7033,12 +7343,13 @@ components:
           - canceled
           type: string
           description: |-
+            * `created` - Created
             * `requires_payment_method` - Requires payment
             * `requires_action` - Requires action
             * `processing` - Processing
             * `succeeded` - Succeeded
             * `canceled` - Canceled
-          x-spec-enum-id: 65a072a37a6fe5c2
+          x-spec-enum-id: ca7851b2266c39f1
         amount:
           type: string
           format: decimal
@@ -7072,6 +7383,7 @@ components:
           readOnly: true
         status:
           enum:
+          - created
           - requires_payment_method
           - requires_action
           - processing
@@ -7079,12 +7391,13 @@ components:
           - canceled
           type: string
           description: |-
+            * `created` - Created
             * `requires_payment_method` - Requires payment
             * `requires_action` - Requires action
             * `processing` - Processing
             * `succeeded` - Succeeded
             * `canceled` - Canceled
-          x-spec-enum-id: 65a072a37a6fe5c2
+          x-spec-enum-id: ca7851b2266c39f1
         amount:
           type: string
           format: decimal
@@ -7120,6 +7433,9 @@ components:
       properties:
         ok:
           type: boolean
+        message:
+          type: string
+          nullable: true
         data:
           $ref: '#/components/schemas/PhoneOTPStartData'
       required:
@@ -7147,6 +7463,9 @@ components:
       properties:
         ok:
           type: boolean
+        message:
+          type: string
+          nullable: true
         data:
           $ref: '#/components/schemas/PhoneOTPVerifyData'
       required:
@@ -7168,80 +7487,44 @@ components:
             * `en-GB` - English (UK)
             * `en-US` - English (US)
           x-spec-enum-id: 8a33d790289546ea
-    ProfilePage:
+    PrivacyPreferencesOkResponse:
       type: object
       properties:
-        id:
-          type: integer
-        email:
-          type: string
-          format: email
-        username:
-          type: string
-        date_joined:
-          type: string
-          format: date-time
-        avatar:
+        ok:
+          type: boolean
+        message:
           type: string
           nullable: true
-        role:
-          type: string
-        gender:
-          type: string
-        occupation:
-          type: string
-        postcode:
-          type: string
-        address_manual:
-          type: string
-        date_of_birth:
-          type: string
-          format: date
-          nullable: true
-        about_you:
-          type: string
-        age:
-          type: integer
-          nullable: true
-        location:
-          type: string
-        total_reviews:
-          type: integer
-        overall_rating:
-          type: number
-          format: double
-          nullable: true
-        landlord_reviews_count:
-          type: integer
-        landlord_rating_average:
-          type: number
-          format: double
-          nullable: true
-        tenant_reviews_count:
-          type: integer
-        tenant_rating_average:
-          type: number
-          format: double
-          nullable: true
-        reviews_preview:
-          type: array
-          items:
-            $ref: '#/components/schemas/ReviewCard'
+        data:
+          $ref: '#/components/schemas/PrivacyPreferences'
       required:
-      - age
-      - date_joined
-      - email
-      - id
-      - landlord_rating_average
-      - landlord_reviews_count
-      - location
-      - overall_rating
-      - reviews_preview
-      - role
-      - tenant_rating_average
-      - tenant_reviews_count
-      - total_reviews
-      - username
+      - data
+      - ok
+    PrivacyPreferencesUpdateResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+          default: true
+        message:
+          type: string
+      required:
+      - message
+    ProviderWebhookOkResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        duplicate:
+          type: boolean
+        note:
+          type: string
+          nullable: true
+        object_id:
+          type: string
+          nullable: true
+      required:
+      - ok
     ProviderWebhookRequest:
       type: object
       properties:
@@ -7379,14 +7662,9 @@ components:
         id:
           type: integer
           readOnly: true
-        booking:
-          type: integer
-          readOnly: true
-          nullable: true
         tenancy:
           type: integer
           readOnly: true
-          nullable: true
         reviewer:
           type: integer
           readOnly: true
@@ -7450,7 +7728,6 @@ components:
           readOnly: true
       required:
       - active
-      - booking
       - display_summary
       - id
       - negative_labels
@@ -7465,35 +7742,6 @@ components:
       - role
       - submitted_at
       - tenancy
-    ReviewCard:
-      type: object
-      properties:
-        id:
-          type: integer
-          readOnly: true
-        overall_rating:
-          type: integer
-          maximum: 5
-          minimum: 1
-        notes:
-          type: string
-          nullable: true
-        submitted_at:
-          type: string
-          format: date-time
-          readOnly: true
-        reviewer_name:
-          type: string
-          readOnly: true
-        reviewer_avatar:
-          type: string
-          format: uri
-          readOnly: true
-      required:
-      - id
-      - reviewer_avatar
-      - reviewer_name
-      - submitted_at
     ReviewCreate:
       type: object
       properties:
@@ -8074,6 +8322,40 @@ components:
       - property_type
       - title
       - updated_at
+    RoomAvailabilityBadRequest:
+      type: object
+      properties:
+        detail:
+          type: string
+      required:
+      - detail
+    RoomAvailabilityConflict:
+      type: object
+      properties:
+        id:
+          type: integer
+        start:
+          type: string
+          format: date-time
+        end:
+          type: string
+          format: date-time
+      required:
+      - end
+      - id
+      - start
+    RoomAvailabilityResponse:
+      type: object
+      properties:
+        available:
+          type: boolean
+        conflicts:
+          type: array
+          items:
+            $ref: '#/components/schemas/RoomAvailabilityConflict'
+      required:
+      - available
+      - conflicts
     RoomCategorie:
       type: object
       properties:
@@ -8103,6 +8385,84 @@ components:
       - id
       - name
       - slug
+    RoomCategorieDeleteResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+          default: true
+        message:
+          type: string
+      required:
+      - message
+    RoomCategorieDetailResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+          default: true
+        message:
+          type: string
+      required:
+      - message
+    RoomCategorieUpdateResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+          default: true
+        message:
+          type: string
+      required:
+      - message
+    RoomCategoryCreateOkResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        message:
+          type: string
+          nullable: true
+        data:
+          $ref: '#/components/schemas/RoomCategorie'
+      required:
+      - data
+      - ok
+    RoomCategoryListOkResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        message:
+          type: string
+          nullable: true
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/RoomCategorie'
+      required:
+      - data
+      - ok
+    RoomCreateResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+          default: true
+        message:
+          type: string
+      required:
+      - message
+    RoomDeleteResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+          default: true
+        message:
+          type: string
+      required:
+      - message
     RoomDetailOkResponse:
       type: object
       properties:
@@ -8145,6 +8505,112 @@ components:
       - image
       - room
       - status
+    RoomListAltDeleteResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+          default: true
+        message:
+          type: string
+      required:
+      - message
+    RoomListAltPatchResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+          default: true
+        message:
+          type: string
+      required:
+      - message
+    RoomListAltPutResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+          default: true
+        message:
+          type: string
+      required:
+      - message
+    RoomListResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+          default: true
+        message:
+          type: string
+        data:
+          $ref: '#/components/schemas/RoomListResponseData'
+      required:
+      - data
+      - message
+    RoomListResponseData:
+      type: object
+      properties:
+        count:
+          type: integer
+        next:
+          type: string
+          nullable: true
+        previous:
+          type: string
+          nullable: true
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/Room'
+      required:
+      - count
+      - results
+    RoomModerationStatusUpdateResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+          default: true
+        message:
+          type: string
+      required:
+      - message
+    RoomPartialUpdateResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+          default: true
+        message:
+          type: string
+      required:
+      - message
+    RoomPhotoDeleteResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+          default: true
+        message:
+          type: string
+      required:
+      - message
+    RoomPhotoListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/RoomImage'
+        ok:
+          type: boolean
+          default: true
+        message:
+          type: string
+      required:
+      - data
+      - message
     RoomPhotoUploadRequest:
       type: object
       properties:
@@ -8153,22 +8619,122 @@ components:
           format: uri
       required:
       - image
-    RoomPreview:
+    RoomPhotoUploadResponse:
       type: object
       properties:
-        room:
-          type: object
-          additionalProperties: {}
-          readOnly: true
-        photos:
-          type: array
-          items:
-            type: object
-            additionalProperties: {}
-          readOnly: true
+        ok:
+          type: boolean
+          default: true
+        message:
+          type: string
       required:
-      - photos
-      - room
+      - message
+    RoomPreviewResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+          default: true
+        message:
+          type: string
+      required:
+      - message
+    RoomSaveData:
+      type: object
+      properties:
+        saved:
+          type: boolean
+      required:
+      - saved
+    RoomSaveDeleteResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+          default: true
+        message:
+          type: string
+      required:
+      - message
+    RoomSaveOkResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        message:
+          type: string
+          nullable: true
+        data:
+          $ref: '#/components/schemas/RoomSaveData'
+      required:
+      - data
+      - ok
+    RoomSaveToggleDeleteResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+          default: true
+        message:
+          type: string
+      required:
+      - message
+    RoomSoftDeleteData:
+      type: object
+      properties:
+        detail:
+          type: string
+      required:
+      - detail
+    RoomSoftDeleteOkResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        message:
+          type: string
+          nullable: true
+        data:
+          $ref: '#/components/schemas/RoomSoftDeleteData'
+      required:
+      - data
+      - ok
+    RoomUnpublishData:
+      type: object
+      properties:
+        id:
+          type: integer
+        status:
+          type: string
+        listing_state:
+          type: string
+      required:
+      - id
+      - listing_state
+      - status
+    RoomUnpublishOkResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        message:
+          type: string
+          nullable: true
+        data:
+          $ref: '#/components/schemas/RoomUnpublishData'
+      required:
+      - data
+      - ok
+    RoomUpdateResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+          default: true
+        message:
+          type: string
+      required:
+      - message
     SavedCard:
       type: object
       properties:
@@ -8197,6 +8763,26 @@ components:
             $ref: '#/components/schemas/SavedCard'
       required:
       - cards
+    SetDefaultSavedCardData:
+      type: object
+      properties:
+        detail:
+          type: string
+      required:
+      - detail
+    SetDefaultSavedCardOkResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        message:
+          type: string
+          nullable: true
+        data:
+          $ref: '#/components/schemas/SetDefaultSavedCardData'
+      required:
+      - data
+      - ok
     SetupIntentResponse:
       type: object
       properties:
@@ -8207,48 +8793,34 @@ components:
       required:
       - clientSecret
       - publishableKey
-    StripeCancelData:
+    StartThreadFromRoomOkResponse:
       type: object
       properties:
-        detail:
-          type: string
-        payment_id:
+        ok:
+          type: boolean
+        message:
           type: string
           nullable: true
+        data:
+          $ref: '#/components/schemas/MessageThread'
       required:
-      - detail
+      - data
+      - ok
+    StartThreadFromRoomRequest:
+      type: object
+      properties:
+        body:
+          type: string
     StripeCancelResponse:
       type: object
       properties:
         ok:
           type: boolean
-        data:
-          $ref: '#/components/schemas/StripeCancelData'
-      required:
-      - data
-      - ok
-    StripeCheckoutRedirectData:
-      type: object
-      properties:
-        checkout_url:
+          default: true
+        message:
           type: string
-          format: uri
-        session_id:
-          type: string
-          nullable: true
       required:
-      - checkout_url
-      - session_id
-    StripeCheckoutRedirectResponse:
-      type: object
-      properties:
-        ok:
-          type: boolean
-        data:
-          $ref: '#/components/schemas/StripeCheckoutRedirectData'
-      required:
-      - data
-      - ok
+      - message
     StripeCheckoutSessionCreateRequest:
       type: object
       properties:
@@ -8256,35 +8828,21 @@ components:
           type: string
           nullable: true
           description: Optional saved Stripe PaymentMethod ID for future use.
-    StripeSuccessData:
-      type: object
-      properties:
-        detail:
-          type: string
-        session_id:
-          type: string
-          nullable: true
-        payment_id:
-          type: string
-          nullable: true
-      required:
-      - detail
     StripeSuccessResponse:
       type: object
       properties:
         ok:
           type: boolean
-        data:
-          $ref: '#/components/schemas/StripeSuccessData'
+          default: true
+        message:
+          type: string
       required:
-      - data
-      - ok
+      - message
     StripeWebhookAckData:
       type: object
       properties:
         detail:
           type: string
-          nullable: true
         event_id:
           type: string
           nullable: true
@@ -8294,23 +8852,21 @@ components:
         payment_id:
           type: string
           nullable: true
-    StripeWebhookAckResponse:
+      required:
+      - detail
+    StripeWebhookAckOkResponse:
       type: object
       properties:
         ok:
           type: boolean
+        message:
+          type: string
+          nullable: true
         data:
           $ref: '#/components/schemas/StripeWebhookAckData'
       required:
       - data
       - ok
-    StripeWebhookErrorResponse:
-      type: object
-      properties:
-        detail:
-          type: string
-      required:
-      - detail
     StripeWebhookEventRequest:
       type: object
       properties:
@@ -8431,6 +8987,29 @@ components:
           minimum: 1
       required:
       - proposed_duration_months
+    TenancyExtensionCreateOkResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        message:
+          type: string
+          nullable: true
+        data:
+          $ref: '#/components/schemas/TenancyExtensionResponse'
+      required:
+      - data
+      - ok
+    TenancyExtensionRespondResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+          default: true
+        message:
+          type: string
+      required:
+      - message
     TenancyExtensionResponse:
       type: object
       properties:
@@ -8490,6 +9069,19 @@ components:
       - duration_months
       - move_in_date
       - room_id
+    TenancyProposeOkResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        message:
+          type: string
+          nullable: true
+        data:
+          $ref: '#/components/schemas/TenancyDetail'
+      required:
+      - data
+      - ok
     TenancyRespond:
       type: object
       description: |-
@@ -8520,6 +9112,75 @@ components:
           minimum: 1
       required:
       - action
+    TenancyRespondOkResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        message:
+          type: string
+          nullable: true
+        data:
+          $ref: '#/components/schemas/TenancyDetail'
+      required:
+      - data
+      - ok
+    TenancyReviewCreateOkResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        message:
+          type: string
+          nullable: true
+        data:
+          $ref: '#/components/schemas/Review'
+      required:
+      - data
+      - ok
+    TenancyReviewListForbiddenResponse:
+      type: object
+      properties:
+        detail:
+          type: string
+      required:
+      - detail
+    TenancyReviewListNotFoundResponse:
+      type: object
+      properties:
+        detail:
+          type: string
+      required:
+      - detail
+    TenancyReviewListResponse:
+      type: object
+      properties:
+        my_review:
+          allOf:
+          - $ref: '#/components/schemas/UserReviewList'
+          nullable: true
+        other_review:
+          allOf:
+          - $ref: '#/components/schemas/UserReviewList'
+          nullable: true
+        other_review_reveal_at:
+          type: string
+          format: date-time
+          nullable: true
+      required:
+      - my_review
+      - other_review
+      - other_review_reveal_at
+    TenancyStillLivingConfirmResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+          default: true
+        message:
+          type: string
+      required:
+      - message
     ThreadMarkReadData:
       type: object
       properties:
@@ -8532,6 +9193,9 @@ components:
       properties:
         ok:
           type: boolean
+        message:
+          type: string
+          nullable: true
         data:
           $ref: '#/components/schemas/ThreadMarkReadData'
       required:
@@ -8544,17 +9208,27 @@ components:
           type: string
       required:
       - detail
+    ThreadMoveToBinRequest:
+      type: object
+      properties:
+        in_bin:
+          type: boolean
+      required:
+      - in_bin
     ThreadMoveToBinResponse:
       type: object
       properties:
         ok:
           type: boolean
+        message:
+          type: string
+          nullable: true
         data:
           $ref: '#/components/schemas/ThreadMoveToBinData'
       required:
       - data
       - ok
-    ThreadRestoreResponse:
+    ThreadRestoreFromBinData:
       type: object
       properties:
         id:
@@ -8564,6 +9238,19 @@ components:
       required:
       - id
       - in_bin
+    ThreadRestoreFromBinResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        message:
+          type: string
+          nullable: true
+        data:
+          $ref: '#/components/schemas/ThreadRestoreFromBinData'
+      required:
+      - data
+      - ok
     ThreadSetLabelData:
       type: object
       properties:
@@ -8579,23 +9266,23 @@ components:
       properties:
         label:
           enum:
-          - none
           - viewing_scheduled
           - viewing_done
           - good_fit
           - unsure
           - not_a_fit
           - paperwork_pending
+          - no_status
           type: string
           description: |-
-            * `none` - none
             * `viewing_scheduled` - viewing_scheduled
             * `viewing_done` - viewing_done
             * `good_fit` - good_fit
             * `unsure` - unsure
             * `not_a_fit` - not_a_fit
             * `paperwork_pending` - paperwork_pending
-          x-spec-enum-id: 756a1165a13994a8
+            * `no_status` - no_status
+          x-spec-enum-id: cbf901550524e676
       required:
       - label
     ThreadSetLabelResponse:
@@ -8603,24 +9290,14 @@ components:
       properties:
         ok:
           type: boolean
+        message:
+          type: string
+          nullable: true
         data:
           $ref: '#/components/schemas/ThreadSetLabelData'
       required:
       - data
       - ok
-    ThreadStateResponse:
-      type: object
-      properties:
-        thread:
-          type: integer
-        label:
-          type: string
-          nullable: true
-        in_bin:
-          type: boolean
-      required:
-      - in_bin
-      - thread
     TokenRefreshData:
       type: object
       properties:
@@ -8641,6 +9318,9 @@ components:
       properties:
         ok:
           type: boolean
+        message:
+          type: string
+          nullable: true
         data:
           $ref: '#/components/schemas/TokenRefreshData'
       required:
@@ -8840,50 +9520,30 @@ components:
             reviewer.profile is your OneToOne related_name.
             Return the avatar URL if present, else None.
           readOnly: true
-        booking:
+        tenancy:
           type: integer
-          nullable: true
       required:
       - id
       - reveal_at
       - reviewer_avatar
       - reviewer_name
       - submitted_at
-    UserReviewSummary:
+      - tenancy
+    UserReviewSummaryResponse:
       type: object
       properties:
-        landlord_count:
-          type: integer
-        landlord_average:
-          type: number
-          format: double
-          nullable: true
-        tenant_count:
-          type: integer
-        tenant_average:
-          type: number
-          format: double
-          nullable: true
-        total_reviews_count:
-          type: integer
-        overall_rating_average:
-          type: number
-          format: double
-          nullable: true
+        ok:
+          type: boolean
+          default: true
+        message:
+          type: string
       required:
-      - landlord_average
-      - landlord_count
-      - overall_rating_average
-      - tenant_average
-      - tenant_count
-      - total_reviews_count
+      - message
   securitySchemes:
     jwtAuth:
       type: http
       scheme: bearer
       bearerFormat: JWT
 servers:
-- url: http://localhost:8000
-  description: Current environment
 - url: https://rentout-staging-v2.onrender.com
   description: Staging

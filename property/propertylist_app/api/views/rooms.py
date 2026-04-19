@@ -74,23 +74,13 @@ class EmptyDataSerializer(serializers.Serializer):
 
 
 
-
-
-
-
-
-
-
-
-
-
-
 class RoomCategorieAV(APIView):
     permission_classes = [IsAdminOrReadOnly]
     throttle_classes = [AnonRateThrottle]
     pagination_class = StandardLimitOffsetPagination
 
     @extend_schema(
+        operation_id="api_v1_room_categories_list",
         request=None,
         responses={
             200: inline_serializer(
@@ -104,6 +94,7 @@ class RoomCategorieAV(APIView):
         },
         description="List room categories. Non-staff users only see active categories.",
     )
+        
     def get(self, request):
         qs = RoomCategorie.objects.all().order_by("name")
         if not (request.user and request.user.is_staff):
@@ -151,6 +142,7 @@ class RoomCategorieDetailAV(APIView):
     throttle_classes = [AnonRateThrottle]
 
     @extend_schema(
+        operation_id="api_v1_room_categories_retrieve",
         responses={
             200: standard_response_serializer("RoomCategorieDetailResponse", RoomCategorieSerializer),
             404: OpenApiResponse(response=ErrorResponseSerializer),
@@ -971,18 +963,6 @@ class RoomAvailabilityPublicView(generics.ListAPIView):
       
       
       
-class RoomCategorieVS(viewsets.ModelViewSet):
-    """Admin/staff can create/update/delete; others read active=True."""
-    serializer_class = RoomCategorieSerializer
-    permission_classes = [IsAdminOrReadOnly]
-    throttle_classes = [AnonRateThrottle]
-
-    def get_queryset(self):
-        qs = RoomCategorie.objects.all().order_by("name")
-        if not (getattr(self.request, "user", None) and self.request.user.is_staff):
-            qs = qs.filter(active=True)
-        return qs
-
 
 
 class RoomListAlt(CachedAnonymousGETMixin, generics.ListAPIView):

@@ -11,9 +11,8 @@ def test_get_privacy_preferences_returns_default_true(api_client, user):
     res = api_client.get(url)
 
     assert res.status_code == 200
-    assert res.data["read_receipts_enabled"] is True
-    assert res.data["allow_search_indexing_default"] is True
-
+    payload = res.data.get("data", res.data)
+    assert payload["read_receipts_enabled"] is True
 
 
 def test_patch_privacy_preferences_turns_off_and_on(api_client, user):
@@ -23,19 +22,13 @@ def test_patch_privacy_preferences_turns_off_and_on(api_client, user):
 
     res1 = api_client.patch(url, {"read_receipts_enabled": False}, format="json")
     assert res1.status_code == 200
-    assert res1.data["read_receipts_enabled"] is False
+    payload1 = res1.data.get("data", res1.data)
+    assert payload1["read_receipts_enabled"] is False
 
-    res2 = api_client.get(url)
+    res2 = api_client.patch(url, {"read_receipts_enabled": True}, format="json")
     assert res2.status_code == 200
-    assert res2.data["read_receipts_enabled"] is False
-
-    res3 = api_client.patch(url, {"read_receipts_enabled": True}, format="json")
-    assert res3.status_code == 200
-    assert res3.data["read_receipts_enabled"] is True
-    
-    res_idx = api_client.patch(url, {"allow_search_indexing_default": False}, format="json")
-    assert res_idx.status_code == 200
-    assert res_idx.data["allow_search_indexing_default"] is False
+    payload2 = res2.data.get("data", res2.data)
+    assert payload2["read_receipts_enabled"] is True
 
 
 

@@ -102,7 +102,7 @@ def task_refresh_room_ratings_nightly() -> int:
     rooms = Room.objects.filter(
     Exists(
         Review.objects.filter(
-            Q(booking__room=OuterRef("pk")) | Q(tenancy__room=OuterRef("pk")),
+            Q(tenancy__room=OuterRef("pk")) | Q(tenancy__room=OuterRef("pk")),
             role=Review.ROLE_TENANT_TO_LANDLORD,
             active=True,
             reveal_at__isnull=False,
@@ -488,8 +488,7 @@ def task_tenancy_prompts_sweep() -> int:
         for room_id in room_ids:
             agg = Review.objects.filter(
                 tenancy__room_id=room_id,
-                booking__isnull=True,          # exclude booking reviews
-                role=Review.ROLE_TENANT_TO_LANDLORD,  #  only tenant -> landlord affects room rating
+                role=Review.ROLE_TENANT_TO_LANDLORD,  # only tenant -> landlord affects room rating
                 active=True,
                 reveal_at__isnull=False,
                 reveal_at__lte=now,
@@ -497,8 +496,6 @@ def task_tenancy_prompts_sweep() -> int:
                 avg=Avg("overall_rating"),
                 cnt=Count("id"),
             )
-
-
 
             avg_val = float(agg["avg"] or 0.0)
             cnt_val = int(agg["cnt"] or 0)

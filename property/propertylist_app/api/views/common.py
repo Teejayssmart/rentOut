@@ -57,6 +57,39 @@ def ok_response(data, *, message=None, meta=None, status_code=200):
 
 
 
+def error_response(
+    *,
+    message,
+    status_code,
+    code=None,
+    detail=None,
+    field_errors=None,
+    details=None,
+):
+    """
+    Standard manual error response for views that return Response(...)
+    instead of raising DRF exceptions.
+    """
+    payload = {
+        "ok": False,
+        "message": message,
+        "detail": detail or message,
+        "status": status_code,
+    }
+
+    if code is not None:
+        payload["code"] = code
+
+    if field_errors is not None:
+        payload["field_errors"] = field_errors
+
+    if details is not None:
+        payload["details"] = details
+
+    return Response(payload, status=status_code)
+
+
+
 
 
 

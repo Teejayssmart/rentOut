@@ -7,11 +7,12 @@ from propertylist_app.models import MessageThread, Message, Notification, RoomCa
 
 User = get_user_model()
 
+
 @pytest.mark.django_db
 def test_message_creates_notifications_and_mark_read_and_mark_all():
     # users
     a = User.objects.create_user(username="alice", password="pass123", email="a@example.com")
-    b = User.objects.create_user(username="bob",   password="pass123", email="b@example.com")
+    b = User.objects.create_user(username="bob", password="pass123", email="b@example.com")
 
     # thread
     t = MessageThread.objects.create()
@@ -28,29 +29,36 @@ def test_message_creates_notifications_and_mark_read_and_mark_all():
     assert r1.status_code == 201, r1.data
 
     # Bob should see one new notification
-    client_b = APIClient(); client_b.force_authenticate(user=b)
+    client_b = APIClient()
+    client_b.force_authenticate(user=b)
     url_list = reverse("v1:notifications-list")
+
     r2 = client_b.get(url_list)
     assert r2.status_code == 200, r2.data
-    assert len(r2.data) == 1
-    notif_id = r2.data[0]["id"]
-    assert r2.data[0]["is_read"] is False
-    assert r2.data[0]["title"] == "New message"
+    items = r2.data.get("data", r2.data)
+    assert len(items) == 1
+    notif_id = items[0]["id"]
+    assert items[0]["is_read"] is False
+    assert items[0]["title"] == "New message"
 
     # Mark single notification as read
     url_read_one = reverse("v1:notification-mark-read", kwargs={"pk": notif_id})
     r3 = client_b.post(url_read_one, {})
     assert r3.status_code == 200
+
     # verify
     r4 = client_b.get(url_list)
-    assert r4.data[0]["is_read"] is True
+    items_after_one = r4.data.get("data", r4.data)
+    assert items_after_one[0]["is_read"] is True
 
     # Send another message to generate a second notification
     r5 = client.post(url_post, {"body": "another"}, format="json")
     assert r5.status_code == 201
+
     r6 = client_b.get(url_list)
-    assert len(r6.data) == 2  # one read + one unread
-    assert any(not n["is_read"] for n in r6.data)
+    items_after_two = r6.data.get("data", r6.data)
+    assert len(items_after_two) == 2  # one read + one unread
+    assert any(not n["is_read"] for n in items_after_two)
 
     # Mark all read
     url_read_all = reverse("v1:notifications-mark-all-read")
@@ -58,4 +66,5 @@ def test_message_creates_notifications_and_mark_read_and_mark_all():
     assert r7.status_code == 200
 
     r8 = client_b.get(url_list)
-    assert all(n["is_read"] for n in r8.data)
+    items_after_all = r8.data.get("data", r8.data)
+    assert all(n["is_read"] for n in items_after_all)

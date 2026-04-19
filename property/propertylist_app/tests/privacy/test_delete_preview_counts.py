@@ -4,7 +4,7 @@ from django.contrib.auth import get_user_model
 from propertylist_app.models import Room, RoomCategorie, Review
 from datetime import timedelta
 from django.utils import timezone
-from propertylist_app.models import Booking
+from propertylist_app.models import Booking, Review, Room, RoomCategorie, Tenancy
 
 User = get_user_model()
 
@@ -31,15 +31,23 @@ def test_delete_preview_counts():
     )
 
     booking = Booking.objects.create(
-        user=tenant,
+    user=tenant,
+    room=room,
+    start=timezone.now() - timedelta(days=40),
+    end=timezone.now() - timedelta(days=35),
+    status=Booking.STATUS_ACTIVE,
+    )
+
+    tenancy = Tenancy.objects.create(
         room=room,
-        start=timezone.now() - timedelta(days=40),
-        end=timezone.now() - timedelta(days=35),
-        status=Booking.STATUS_ACTIVE,
+        landlord=user,
+        tenant=tenant,
+        move_in_date=(timezone.now() - timedelta(days=60)).date(),
+        duration_months=1,
     )
 
     Review.objects.create(
-        booking=booking,
+        tenancy=tenancy,
         reviewer=tenant,
         reviewee=user,
         role=Review.ROLE_TENANT_TO_LANDLORD,

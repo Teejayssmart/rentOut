@@ -84,7 +84,7 @@ def test_register_missing_terms_400(api):
 
     res = api.post(register_url(), bad, format="json")
     assert res.status_code == 400
-    assert "terms_accepted" in res.data["errors"]
+    assert "terms_accepted" in res.data.get("field_errors", {})
 
 
 @pytest.mark.django_db

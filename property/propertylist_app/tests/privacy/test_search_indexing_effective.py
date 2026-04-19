@@ -37,9 +37,9 @@ def draft_room(auth_client, user, default_category):
     res = auth_client.post(reverse("api:room-list"), payload, format="json")
     assert res.status_code in (200, 201), res.data
 
-    room_id = res.data.get("id")
+    payload = res.data.get("data", res.data)
+    room_id = payload.get("id")
     assert room_id, res.data
-
     return Room.objects.get(pk=room_id)
 
 

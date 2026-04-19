@@ -4,7 +4,7 @@ from decimal import Decimal
 
 from django.utils import timezone
 
-from propertylist_app.models import Room, RoomCategorie, Booking, Review
+from propertylist_app.models import Room, RoomCategorie, Booking, Review, Tenancy
 from propertylist_app.tasks import task_refresh_room_ratings_nightly
 
 
@@ -21,8 +21,7 @@ def _make_user(django_user_model, username: str):
 
 def _make_room(*, owner, category):
     """
-    Creates a Room using only the required fields from your Room model:
-    title, description, price_per_month, location, category, property_owner, property_type.
+    Creates a Room using only the required fields from your Room model.
     """
     return Room.objects.create(
         title="Nice room",
@@ -36,12 +35,28 @@ def _make_room(*, owner, category):
 
 
 def _make_booking(*, user, room, start, end):
-    # Booking requires: user, room, start, end
+    # Booking still represents completed viewing proof in your backend.
     return Booking.objects.create(
         user=user,
         room=room,
         start=start,
         end=end,
+    )
+
+
+def _make_tenancy(*, room, landlord, tenant, move_in_date, months=1, status=Tenancy.STATUS_ENDED):
+    return Tenancy.objects.create(
+        room=room,
+        landlord=landlord,
+        tenant=tenant,
+        proposed_by=landlord,
+        move_in_date=move_in_date,
+        duration_months=months,
+        status=status,
+        landlord_confirmed_at=timezone.now(),
+        tenant_confirmed_at=timezone.now(),
+        review_open_at=timezone.now() - timedelta(days=1),
+        review_deadline_at=timezone.now() + timedelta(days=29),
     )
 
 
@@ -60,21 +75,32 @@ def test_task_refresh_room_ratings_updates_room_for_revealed_reviews(django_user
     room.number_rating = 0
     room.save(update_fields=["avg_rating", "number_rating"])
 
-    booking = _make_booking(
+    # Completed viewing proof
+    _make_booking(
         user=tenant,
         room=room,
         start=now - timedelta(days=3),
         end=now - timedelta(days=2),
     )
 
-    # Create a revealed review (Option A requires reveal_at <= now)
+    # Review must belong to tenancy, not booking
+    tenancy = _make_tenancy(
+        room=room,
+        landlord=landlord,
+        tenant=tenant,
+        move_in_date=(now - timedelta(days=32)).date(),
+        months=1,
+        status=Tenancy.STATUS_ENDED,
+    )
+
+    # Create a revealed review
     review = Review.objects.create(
-        booking=booking,
+        tenancy=tenancy,
         reviewer=tenant,
         reviewee=landlord,
         role=Review.ROLE_TENANT_TO_LANDLORD,
         reveal_at=now - timedelta(days=1),
-        review_flags=["responsive", "maintenance_good"],  # forces rating to 5 via save()
+        review_flags=["responsive", "maintenance_good"],  # save() auto-calculates to 5
         notes="Good landlord",
         active=True,
     )
@@ -105,16 +131,27 @@ def test_task_refresh_room_ratings_ignores_unrevealed_reviews(django_user_model)
     room.number_rating = 0
     room.save(update_fields=["avg_rating", "number_rating"])
 
-    booking = _make_booking(
+    # Completed viewing proof
+    _make_booking(
         user=tenant,
         room=room,
         start=now - timedelta(days=3),
         end=now - timedelta(days=2),
     )
 
+    # Review must belong to tenancy, not booking
+    tenancy = _make_tenancy(
+        room=room,
+        landlord=landlord,
+        tenant=tenant,
+        move_in_date=(now - timedelta(days=32)).date(),
+        months=1,
+        status=Tenancy.STATUS_ENDED,
+    )
+
     # Unrevealed review: reveal_at is in the future -> should not be counted
     Review.objects.create(
-        booking=booking,
+        tenancy=tenancy,
         reviewer=tenant,
         reviewee=landlord,
         role=Review.ROLE_TENANT_TO_LANDLORD,

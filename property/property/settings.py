@@ -314,15 +314,20 @@ SPECTACULAR_SETTINGS = {
     "SERVE_INCLUDE_SCHEMA": False,
     "SCHEMA_PATH_PREFIX": r"/api/v1",
     "SERVERS": [
-        {
-            "url": SITE_URL.rstrip("/") if SITE_URL else "http://localhost:8000",
-            "description": "Current environment",
-        },
+        *(
+            [{
+                "url": SITE_URL.rstrip("/"),
+                "description": "Current environment",
+            }]
+            if SITE_URL
+            else []
+        ),
         {
             "url": "https://rentout-staging-v2.onrender.com",
             "description": "Staging",
         },
     ],
+    
     "ENUM_NAME_OVERRIDES": {
         "RoomStatusEnum": "propertylist_app.api.schema_enums.ROOM_STATUS_CHOICES",
         "BookingStatusEnum": "propertylist_app.api.schema_enums.BOOKING_STATUS_CHOICES",

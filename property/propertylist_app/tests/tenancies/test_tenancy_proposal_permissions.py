@@ -4,7 +4,7 @@ from django.utils import timezone
 from datetime import timedelta
 from datetime import date
 
-from propertylist_app.models import Room, Booking, UserProfile
+from propertylist_app.models import Room, RoomCategorie, Booking, Tenancy, UserProfile
 
 API_TENANCY_PROPOSE_URL = "/api/v1/tenancies/propose/"
 
@@ -14,10 +14,15 @@ def future_move_in_date():
 
 
 def create_basic_room(owner):
+    category = RoomCategorie.objects.create(name=f"TestCat-{owner.username}", active=True)
     return Room.objects.create(
         title="Test Room",
+        description="A valid room description for tenancy proposal tests.",
+        price_per_month=900,
+        location="London",
+        category=category,
         property_owner=owner,
-        price_per_month=500,
+        status="active",
     )
 
 

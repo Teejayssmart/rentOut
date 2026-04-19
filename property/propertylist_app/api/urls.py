@@ -27,8 +27,9 @@ from propertylist_app.api.views import (
     # Tenancy (rental confirmation)
     TenancyRespondView,TenancyProposeView, MyTenanciesView,TenancyStillLivingConfirmView,TenancyExtensionCreateView,TenancyExtensionRespondView,
     
-    # Tenancy-based reviews
+   # Tenancy-based reviews
     TenancyReviewCreateView,
+    TenancyReviewListView,
     
     # Search & Nearby
     SearchRoomsView, NearbyRoomsView,
@@ -43,7 +44,7 @@ from propertylist_app.api.views import (
     # Bookings & Availability
     create_booking, BookingListCreateView, BookingDetailView, BookingCancelView,
     RoomAvailabilityView, RoomAvailabilitySlotListCreateView, RoomAvailabilitySlotDeleteView, RoomAvailabilityPublicView,  FindAddressView,BookingDeleteView,
-    BookingSuspendView,BookingReviewCreateView, BookingReviewListView,
+    BookingSuspendView,
 
     # Photos
     RoomPhotoUploadView, RoomPhotoDeleteView,
@@ -95,7 +96,7 @@ from propertylist_app.api.views import (
 
 
 # router = DefaultRouter()
-# router.register("category", RoomCategorieVS, basename="roomcategory")  # DRF ViewSet routes
+
 
 urlpatterns = [
     
@@ -122,7 +123,8 @@ urlpatterns = [
     path("reviews/<int:pk>/", ReviewDetailView.as_view(), name="review-detail"),
     
     # Tenancy-based reviews
-    path("tenancies/<int:tenancy_id>/reviews/", TenancyReviewCreateView.as_view(), name="tenancy-review-create"),
+    path("tenancies/<int:tenancy_id>/reviews/", TenancyReviewListView.as_view(), name="tenancy-review-list"),
+    path("tenancies/<int:tenancy_id>/reviews/create/", TenancyReviewCreateView.as_view(), name="tenancy-review-create"),
 
 
 
@@ -180,9 +182,6 @@ urlpatterns = [
     path("bookings/<int:pk>/cancel/",      BookingCancelView.as_view(),     name="booking-cancel"),
     path("rooms/<int:pk>/availability/",   RoomAvailabilityView.as_view(),  name="room-availability"),
     
-    path("bookings/<int:booking_id>/reviews/", BookingReviewListView.as_view(), name="booking-reviews"),
-    path("bookings/<int:booking_id>/reviews/create/", BookingReviewCreateView.as_view(), name="booking-reviews-create"),
-
     
      
     # --- Bookings / suspend---

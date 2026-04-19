@@ -81,8 +81,9 @@ def test_landlord_proposes_tenancy_creates_single_proposal_row():
     resp = client.post(f"{API_PREFIX}/tenancies/propose/", data=payload, format="json")
     assert resp.status_code == 201, resp.data
 
-    tenancy_id = resp.data["id"]
-    tenancy = Tenancy.objects.get(id=tenancy_id)
+    response_payload = resp.data.get("data", resp.data)
+    tenancy_id = response_payload["id"]
+    tenancy = Tenancy.objects.get(id=response_payload["id"])
 
     assert tenancy.room_id == room.id
     assert tenancy.landlord_id == landlord.id
@@ -121,7 +122,8 @@ def test_tenant_can_propose_tenancy_when_landlord_is_busy():
     resp = client.post(f"{API_PREFIX}/tenancies/propose/", data=payload, format="json")
     assert resp.status_code == 201, resp.data
 
-    tenancy = Tenancy.objects.get(id=resp.data["id"])
+    payload = resp.data.get("data", resp.data)
+    tenancy = Tenancy.objects.get(id=payload["id"])
     assert tenancy.landlord_id == landlord.id
     assert tenancy.tenant_id == tenant.id
     assert tenancy.proposed_by_id == tenant.id
@@ -153,7 +155,8 @@ def test_propose_changes_resets_confirmations_and_updates_dates():
         format="json",
     )
     assert resp.status_code == 201, resp.data
-    tenancy_id = resp.data["id"]
+    payload = resp.data.get("data", resp.data)
+    tenancy_id = payload["id"]
 
     # tenant proposes changes
     resp2 = tenant_client.post(
@@ -199,7 +202,8 @@ def test_both_confirm_locks_schedule_and_sets_review_dates():
         format="json",
     )
     assert resp.status_code == 201, resp.data
-    tenancy_id = resp.data["id"]
+    payload = resp.data.get("data", resp.data)
+    tenancy_id = payload["id"]
 
     # tenant confirms
     resp2 = tenant_client.post(
@@ -241,7 +245,8 @@ def test_two_sided_proposals_do_not_create_two_rows_last_write_wins():
         format="json",
     )
     assert resp1.status_code == 201, resp1.data
-    tenancy_id = resp1.data["id"]
+    payload1 = resp1.data.get("data", resp1.data)
+    tenancy_id = payload1["id"]
 
     # landlord proposes "at the same time" (second write)
     resp2 = landlord_client.post(

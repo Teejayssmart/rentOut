@@ -26,13 +26,12 @@ from propertylist_app.services.deep_links import build_absolute_url
 
 def _recalc_room_rating(room: Room):
     """
-    Room rating: ONLY tenant -> landlord reviews about the listing/landlord experience.
-    Only revealed reviews count.
+    Room rating: only revealed tenant -> landlord tenancy reviews count.
     """
     now = timezone.now()
 
     agg = Review.objects.filter(
-        Q(booking__room=room) | Q(tenancy__room=room),
+        tenancy__room=room,
         role=Review.ROLE_TENANT_TO_LANDLORD,
         active=True,
         reveal_at__isnull=False,
@@ -47,13 +46,10 @@ def _recalc_room_rating(room: Room):
     room.save(update_fields=["avg_rating", "number_rating"])
 
 
-
 @receiver(post_save, sender=apps.get_model("propertylist_app", "Review"))
 def review_saved_update_room_rating(sender, instance, created, **kwargs):
     room = None
-    if getattr(instance, "booking_id", None) and getattr(instance.booking, "room_id", None):
-        room = instance.booking.room
-    elif getattr(instance, "tenancy_id", None) and getattr(instance.tenancy, "room_id", None):
+    if getattr(instance, "tenancy_id", None) and getattr(instance.tenancy, "room_id", None):
         room = instance.tenancy.room
 
     if not room:
@@ -65,9 +61,7 @@ def review_saved_update_room_rating(sender, instance, created, **kwargs):
 @receiver(post_delete, sender=apps.get_model("propertylist_app", "Review"))
 def review_deleted_update_room_rating(sender, instance, **kwargs):
     room = None
-    if getattr(instance, "booking_id", None) and getattr(instance.booking, "room_id", None):
-        room = instance.booking.room
-    elif getattr(instance, "tenancy_id", None) and getattr(instance.tenancy, "room_id", None):
+    if getattr(instance, "tenancy_id", None) and getattr(instance.tenancy, "room_id", None):
         room = instance.tenancy.room
 
     if not room:

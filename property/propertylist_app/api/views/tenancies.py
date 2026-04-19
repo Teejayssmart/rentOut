@@ -1,8 +1,11 @@
-
 from datetime import datetime, timedelta
 
+from django.apps import apps
 from django.db import transaction
+from django.db.models import Q
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
+
 from rest_framework import permissions, serializers, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -10,8 +13,7 @@ from rest_framework.generics import ListAPIView
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.exceptions import ValidationError, PermissionDenied, NotFound
 
-
-from drf_spectacular.utils import extend_schema, OpenApiResponse,inline_serializer
+from drf_spectacular.utils import extend_schema, OpenApiResponse, inline_serializer
 
 from propertylist_app.models import Tenancy, Review
 from propertylist_app.tasks import task_send_tenancy_notification
@@ -30,6 +32,8 @@ from propertylist_app.api.serializers import (
 from .common import ok_response
 
 
+def _get_model(app_label: str, model_name: str):
+    return apps.get_model(app_label, model_name)
 
 
 
@@ -200,7 +204,7 @@ class TenancyExtensionCreateView(APIView):
         return ok_response(
             TenancyExtensionResponseSerializer(payload).data,
             message="Tenancy extension proposal created successfully.",
-            status_code=drf_status.HTTP_201_CREATED,
+            status_code=status.HTTP_201_CREATED,
         )   
         
         
@@ -280,7 +284,7 @@ class TenancyExtensionRespondView(APIView):
         return ok_response(
             TenancyExtensionResponseSerializer(payload).data,
             message="Tenancy extension response recorded successfully.",
-            status_code=drf_status.HTTP_200_OK,
+            status_code=status.HTTP_200_OK,
         )
 
 

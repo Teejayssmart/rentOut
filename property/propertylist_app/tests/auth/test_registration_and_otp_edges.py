@@ -112,7 +112,7 @@ def test_register_terms_accepted_false_400(api):
 
     res = api.post(register_url(), bad, format="json")
     assert res.status_code == 400, getattr(res, "data", res.content)
-    assert "terms_accepted" in res.data["errors"]
+    assert "terms_accepted" in res.data.get("field_errors", {})
 
 
 # ---------- OTP attempts cap / expired / none ----------

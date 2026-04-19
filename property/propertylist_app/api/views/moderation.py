@@ -1,3 +1,8 @@
+from datetime import timedelta
+
+from django.utils import timezone
+from django.contrib.auth import get_user_model
+from django.shortcuts import get_object_or_404
 from django.apps import apps
 from django.db.models import Avg, Count, Max, Q, Sum
 from django.conf import settings
@@ -13,7 +18,7 @@ from rest_framework.exceptions import ValidationError
 from drf_spectacular.utils import extend_schema, OpenApiResponse, inline_serializer
 
 from propertylist_app.services.captcha import verify_captcha
-from propertylist_app.models import AuditLog, Report, Room, Booking, Payment, Message
+from propertylist_app.models import AuditLog, Report, Room, Booking, Payment, Message, MessageThread
 from propertylist_app.api.permissions import IsModerationAdmin, IsOpsAdmin
 from propertylist_app.api.pagination import StandardLimitOffsetPagination
 from propertylist_app.api.throttling import ReportCreateScopedThrottle
@@ -408,7 +413,7 @@ class OpsStatsView(APIView):
             except Exception:
                 payments_30d_sum_gbp = 0.0
 
-            messages_7d = _safe_count(Message.objects.filter(created_at__gte=d7))
+            messages_7d = _safe_count(Message.objects.filter(created__gte=d7))
             threads_total = _safe_count(MessageThread.objects.all())
 
             reports_open = _safe_count(Report.objects.filter(status="open"))

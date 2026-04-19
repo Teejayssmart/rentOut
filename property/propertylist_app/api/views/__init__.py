@@ -46,9 +46,8 @@ from .reviews import (
     ReviewCreateView,
     ReviewListView,
     ReviewDetailView,
-    BookingReviewCreateView,
-    BookingReviewListView,
     TenancyReviewCreateView,
+    TenancyReviewListView,
 )
 
 from .tenancies import (

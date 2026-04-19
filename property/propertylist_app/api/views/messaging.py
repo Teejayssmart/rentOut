@@ -1,9 +1,11 @@
 
-from django.db.models import Exists, OuterRef, Q, Subquery
+from django.db.models import Count, Exists, Max, OuterRef, Q, Subquery
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from django.contrib.auth import get_user_model
 
 from rest_framework import generics, serializers, status
+from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework import filters
@@ -12,7 +14,16 @@ from rest_framework.throttling import ScopedRateThrottle, UserRateThrottle
 from drf_spectacular.utils import extend_schema, OpenApiResponse,inline_serializer,OpenApiParameter
 from drf_spectacular.types import OpenApiTypes
 
-from propertylist_app.models import Message, MessageThread, MessageThreadState, Notification, Room, SavedRoom
+
+from propertylist_app.models import (
+    Message,
+    MessageRead,
+    MessageThread,
+    MessageThreadState,
+    Notification,
+    Room,
+    SavedRoom,
+)
 from propertylist_app.api.pagination import StandardLimitOffsetPagination
 from propertylist_app.api.throttling import MessageUserThrottle, MessagingScopedThrottle
 from propertylist_app.api.schema_serializers import ErrorResponseSerializer
@@ -41,7 +52,7 @@ from ..serializers import (
     ThreadSetLabelRequestSerializer,
     ThreadMarkReadRequestSerializer,
 )
-from .common import ok_response, _pagination_meta
+from .common import ok_response, _pagination_meta, _wrap_response_success
 
 
 

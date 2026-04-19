@@ -287,7 +287,6 @@ class ReviewAdmin(admin.ModelAdmin):
     list_display = (
         "id",
         "role",
-        "booking",
         "reviewer",
         "reviewee",
         "overall_rating",

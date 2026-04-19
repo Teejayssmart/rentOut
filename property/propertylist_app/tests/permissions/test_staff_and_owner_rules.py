@@ -18,7 +18,16 @@ def test_moderation_staff_only_forbidden_to_regular_user():
 
     # A room + a report to moderate
     cat = RoomCategorie.objects.create(name="Perms", active=True)
-    room = Room.objects.create(title="Room A", category=cat, price_per_month=500, status="active")
+    room = Room.objects.create(
+        title="Room A",
+        description="Valid room description with enough words for tests.",
+        location="London",
+        property_type="flat",
+        category=cat,
+        property_owner=regular,
+        price_per_month=500,
+        status="active",
+    )
 
     # IMPORTANT: reporter is required (NOT NULL), and Report uses a GenericForeignKey.
     report = Report.objects.create(

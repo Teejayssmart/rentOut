@@ -102,7 +102,7 @@ def test_f4_notifications_list_orders_unread_first(user_factory):
     resp = client.get(url)
 
     assert resp.status_code == 200
-    data = resp.data
+    data = resp.data.get("data", resp.data)
     assert isinstance(data, list)
     assert len(data) >= 2
 

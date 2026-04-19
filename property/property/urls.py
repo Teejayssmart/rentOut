@@ -70,7 +70,7 @@ urlpatterns = [
 
 
     # DEBUG helper
-    path("debug-urls/", debug_urls),
+    *( [path("debug-urls/", debug_urls)] if settings.DEBUG else [] ),
 
     # API includes (ONLY ONCE EACH)
     #path("api/", include(("propertylist_app.api.urls", "api"), namespace="api")),

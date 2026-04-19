@@ -64,7 +64,7 @@ from propertylist_app.api import views as views_mod
 from propertylist_app.api.schema_helpers import (
     standard_response_serializer,
 )
-from .common import ok_response
+from .common import ok_response, error_response
 
 
 #Project serializers/models
@@ -306,42 +306,41 @@ class RegistrationView(generics.CreateAPIView):
         if getattr(settings, "ENABLE_CAPTCHA", False):
             token = (request.data.get("captcha_token") or "").strip()
             if not views_mod.verify_captcha(token, request.META.get("REMOTE_ADDR", "")):
-                return Response(
-                    {
-                        "ok": False,
-                        "message": "CAPTCHA verification failed.",
-                    },
-                    status=status.HTTP_400_BAD_REQUEST,
+                return error_response(
+                    message="CAPTCHA verification failed.",
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    code="bad_request",
                 )
 
         # 1) Terms & Privacy must be accepted
         raw_terms = request.data.get("terms_accepted")
         if raw_terms not in [True, "true", "True", "1", 1, "on"]:
-            return Response(
-                {
-                    "ok": False,
-                    "message": "Validation error.",
-                    "errors": {
-                        "terms_accepted": ["You must accept Terms & Privacy."]
-                    },
+            return error_response(
+                message="Invalid input.",
+                status_code=status.HTTP_400_BAD_REQUEST,
+                code="validation_error",
+                field_errors={
+                    "terms_accepted": ["You must accept Terms & Privacy."]
                 },
-                status=status.HTTP_400_BAD_REQUEST,
+                details={
+                    "terms_accepted": ["You must accept Terms & Privacy."]
+                },
             )
 
         # 2) Duplicate email must give 400
         email = (request.data.get("email") or "").strip()
         if email and get_user_model().objects.filter(email__iexact=email).exists():
-            return Response(
-                {
-                    "ok": False,
-                    "message": "Validation error.",
-                    "errors": {
-                        "email": ["This email is already in use."]
-                    },
+           return error_response(
+                message="Invalid input.",
+                status_code=status.HTTP_400_BAD_REQUEST,
+                code="validation_error",
+                field_errors={
+                    "email": ["This email is already in use."]
                 },
-                status=status.HTTP_400_BAD_REQUEST,
+                details={
+                    "email": ["This email is already in use."]
+                },
             )
-
         # 3) Let the serializer do the rest
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -398,9 +397,10 @@ class GoogleRegisterView(APIView):
         token = request.data.get("token")
 
         if not token:
-            return Response(
-                {"ok": False, "message": "Missing token", "data": None},
-                status=status.HTTP_400_BAD_REQUEST,
+            return error_response(
+                message="Missing token",
+                status_code=status.HTTP_400_BAD_REQUEST,
+                code="bad_request",
             )
 
         try:
@@ -410,16 +410,18 @@ class GoogleRegisterView(APIView):
                 settings.GOOGLE_WEB_CLIENT_ID,
             )
         except Exception:
-            return Response(
-                {"ok": False, "message": "Invalid Google token", "data": None},
-                status=status.HTTP_400_BAD_REQUEST,
+            return error_response(
+                message="Invalid Google token",
+                status_code=status.HTTP_400_BAD_REQUEST,
+                code="invalid_token",
             )
 
         email = idinfo.get("email")
         if not email:
-            return Response(
-                {"ok": False, "message": "Email not provided", "data": None},
-                status=status.HTTP_400_BAD_REQUEST,
+            return error_response(
+                message="Email not provided",
+                status_code=status.HTTP_400_BAD_REQUEST,
+                code="bad_request",
             )
 
         User = get_user_model()
@@ -487,22 +489,25 @@ class AppleRegisterView(APIView):
         identity_token = (request.data.get("identity_token") or "").strip()
 
         if not identity_token:
-            return Response(
-                {"ok": False, "message": "Missing identity_token", "data": None},
-                status=status.HTTP_400_BAD_REQUEST,
+            return error_response(
+                message="Missing identity_token",
+                status_code=status.HTTP_400_BAD_REQUEST,
+                code="bad_request",
             )
 
         try:
             payload = views_mod._verify_apple_identity_token(identity_token)
         except ValueError as exc:
-            return Response(
-                {"ok": False, "message": str(exc), "data": None},
-                status=status.HTTP_400_BAD_REQUEST,
+            return error_response(
+                message=str(exc),
+                status_code=status.HTTP_400_BAD_REQUEST,
+                code="bad_request",
             )
         except Exception:
-            return Response(
-                {"ok": False, "message": "Invalid Apple identity token", "data": None},
-                status=status.HTTP_400_BAD_REQUEST,
+            return error_response(
+                message="Invalid Apple identity token",
+                status_code=status.HTTP_400_BAD_REQUEST,
+                code="invalid_token",
             )
 
         email = payload.get("email", "").strip().lower()

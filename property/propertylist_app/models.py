@@ -520,22 +520,10 @@ class Room(SoftDeleteModel):
 
     def save(self, *args, **kwargs):
         if self.property_owner_id is None:
-            UserModel = get_user_model()
-            owner = UserModel.objects.order_by("id").first()
-            if owner is None:
-                owner = UserModel.objects.create_user(
-                    username=f"system_{uuid4().hex[:8]}",
-                    password="!auto!",
-                    email="",
-                )
-            self.property_owner = owner
+            raise ValidationError({"property_owner": "property_owner is required."})
 
         if self.category_id is None:
-            cat, _ = RoomCategorie.objects.get_or_create(
-                name="General",
-                defaults={"key": "general", "slug": "general", "active": True},
-            )
-            self.category = cat
+            raise ValidationError({"category": "category is required."})
 
         super().save(*args, **kwargs)
 
@@ -996,21 +984,10 @@ class Review(models.Model):
         (ROLE_LANDLORD_TO_TENANT, "Landlord → Tenant"),
     )
 
-    booking = models.ForeignKey(
-        Booking,
-        on_delete=models.CASCADE,
-        related_name="reviews",
-        null=True,
-        blank=True,
-    )
-
-
     tenancy = models.ForeignKey(
         "Tenancy",
         on_delete=models.CASCADE,
         related_name="reviews",
-        null=True,
-        blank=True,
     )
   
      
@@ -1049,7 +1026,6 @@ class Review(models.Model):
     class Meta:
         ordering = ["-submitted_at"]
         constraints = [
-            models.UniqueConstraint(fields=["booking", "role"], name="uq_review_once_per_booking_role"),
             models.UniqueConstraint(fields=["tenancy", "role"], name="uq_review_once_per_tenancy_role"),
         ]
 
@@ -1060,18 +1036,8 @@ class Review(models.Model):
         end_dt = None
 
         # Prefer tenancy end-date flow (new)
-        if self.tenancy and self.tenancy.review_open_at:
-            end_dt = self.tenancy.review_open_at  # reveal at review_open_at (which is end + 7 days)
-        elif self.booking:
-            end_dt = getattr(self.booking, "end", None) or getattr(self.booking, "end_date", None)
-
-        if self.reveal_at is None and end_dt:
-            # If tenancy flow, reveal_at == review_open_at
-            # If legacy booking flow, keep your existing “+30 days” rule
-            if self.tenancy and self.tenancy.review_open_at:
-                self.reveal_at = end_dt
-            else:
-                self.reveal_at = end_dt + timedelta(days=30)
+        if self.reveal_at is None and self.tenancy and self.tenancy.review_open_at:
+            self.reveal_at = self.tenancy.review_open_at
 
         #  IMPORTANT FIX:
         # Only auto-calc rating from flags if flags were actually supplied.

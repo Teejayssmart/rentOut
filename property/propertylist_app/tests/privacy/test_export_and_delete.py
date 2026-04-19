@@ -19,6 +19,7 @@ from propertylist_app.models import (
     Message,
     DataExport,
     Booking,
+    Tenancy,
 )
 
 # NOTE: We call concrete URLs to avoid depending on URL names.
@@ -97,15 +98,23 @@ def test_delete_preview_counts():
     )
 
     booking = Booking.objects.create(
-        user=tenant,
+    user=tenant,
+    room=room,
+    start=timezone.now() - timedelta(days=40),
+    end=timezone.now() - timedelta(days=35),
+    status=Booking.STATUS_ACTIVE,
+    )
+
+    tenancy = Tenancy.objects.create(
         room=room,
-        start=timezone.now() - timedelta(days=40),
-        end=timezone.now() - timedelta(days=35),
-        status=Booking.STATUS_ACTIVE,
+        landlord=owner,
+        tenant=tenant,
+        move_in_date=(timezone.now() - timedelta(days=60)).date(),
+        duration_months=1,
     )
 
     Review.objects.create(
-        booking=booking,
+        tenancy=tenancy,
         reviewer=tenant,
         reviewee=owner,
         role=Review.ROLE_TENANT_TO_LANDLORD,
@@ -165,15 +174,23 @@ def test_delete_confirm_erases_pii_and_soft_hides_content():
     )
 
     booking2 = Booking.objects.create(
-        user=tenant2,
+    user=tenant2,
+    room=room,
+    start=timezone.now() - timedelta(days=40),
+    end=timezone.now() - timedelta(days=35),
+    status=Booking.STATUS_ACTIVE,
+    )
+
+    tenancy2 = Tenancy.objects.create(
         room=room,
-        start=timezone.now() - timedelta(days=40),
-        end=timezone.now() - timedelta(days=35),
-        status=Booking.STATUS_ACTIVE,
+        landlord=owner,
+        tenant=tenant2,
+        move_in_date=(timezone.now() - timedelta(days=60)).date(),
+        duration_months=1,
     )
 
     Review.objects.create(
-        booking=booking2,
+        tenancy=tenancy2,
         reviewer=tenant2,
         reviewee=owner,
         role=Review.ROLE_TENANT_TO_LANDLORD,

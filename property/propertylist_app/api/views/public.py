@@ -59,7 +59,7 @@ from propertylist_app.api.serializers import (
 )
 from propertylist_app.models import Room, UserProfile, PhoneOTP, EmailOTP,SavedRoom, RoomImage
 
-from .common import ok_response, _wrap_response_success
+from .common import ok_response, error_response, _wrap_response_success
 from .messaging import _fetch_ideal_postcodes_suggestions
 
 
@@ -268,32 +268,26 @@ class FindAddressView(APIView):
         postcode = (request.query_params.get("postcode") or "").strip().upper()
 
         if not postcode:
-            return Response(
-                {
-                    "ok": False,
-                    "message": "Query param 'postcode' is required.",
-                },
-                status=status.HTTP_400_BAD_REQUEST,
+            return error_response(
+                message="Query param 'postcode' is required.",
+                status_code=status.HTTP_400_BAD_REQUEST,
+                code="bad_request",
             )
 
         try:
             addresses = _fetch_ideal_postcodes_suggestions(postcode)
         except RuntimeError:
-            return Response(
-                {
-                    "ok": False,
-                    "message": "Address lookup is not configured.",
-                },
-                status=status.HTTP_503_SERVICE_UNAVAILABLE,
-            )
+            return error_response(
+                    message="Address lookup is not configured.",
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    code="error",
+                )
         except HTTPError as exc:
             if exc.code == 400:
-                return Response(
-                    {
-                        "ok": False,
-                        "message": "Invalid postcode.",
-                    },
-                    status=status.HTTP_400_BAD_REQUEST,
+                return error_response(
+                    message="Invalid postcode.",
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    code="bad_request",
                 )
             if exc.code == 404:
                 return ok_response(
@@ -302,53 +296,41 @@ class FindAddressView(APIView):
                     status_code=status.HTTP_200_OK,
                 )
             if exc.code == 401:
-                return Response(
-                    {
-                        "ok": False,
-                        "message": "Address provider authentication failed.",
-                    },
-                    status=status.HTTP_502_BAD_GATEWAY,
+                return error_response(
+                    message="Address provider authentication failed.",
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    code="error",
                 )
             if exc.code == 402:
-                return Response(
-                    {
-                        "ok": False,
-                        "message": "Address lookup credits exhausted.",
-                    },
-                    status=status.HTTP_502_BAD_GATEWAY,
+                return error_response(
+                    message="Address lookup credits exhausted.",
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    code="error",
                 )
             if exc.code == 429:
-                return Response(
-                    {
-                        "ok": False,
-                        "message": "Address lookup rate limited.",
-                    },
-                    status=status.HTTP_429_TOO_MANY_REQUESTS,
+                return error_response(
+                    message="Address lookup rate limited.",
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    code="rate_limited",
                 )
 
-            return Response(
-                {
-                    "ok": False,
-                    "message": "Address provider error.",
-                },
-                status=status.HTTP_502_BAD_GATEWAY,
+            return error_response(
+                message="Address provider error.",
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                code="error",
             )
         except URLError:
-            return Response(
-                {
-                    "ok": False,
-                    "message": "Address provider unavailable.",
-                },
-                status=status.HTTP_502_BAD_GATEWAY,
+            return error_response(
+                message="Address provider unavailable.",
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                code="error",
             )
         except Exception:
-            return Response(
-                {
-                    "ok": False,
-                    "message": "Address lookup failed.",
-                },
-                status=status.HTTP_502_BAD_GATEWAY,
-            )
+            return error_response(
+                    message="Address lookup failed.",
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    code="error",
+                )
 
         return ok_response(
             {"addresses": addresses},

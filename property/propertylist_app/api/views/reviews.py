@@ -1,25 +1,26 @@
+from django.db import models
+from django.db.models import Avg, Count
+from django.utils import timezone
 
 from rest_framework import generics, permissions, serializers, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from drf_spectacular.utils import extend_schema, OpenApiResponse, inline_serializer,OpenApiParameter
 from rest_framework.generics import ListAPIView
+from rest_framework.exceptions import PermissionDenied
 
-from propertylist_app.models import Review, Booking, Tenancy
+from drf_spectacular.utils import extend_schema, OpenApiResponse, inline_serializer, OpenApiParameter
+
+from propertylist_app.models import Review, Tenancy
 from propertylist_app.api.throttling import ReviewCreateThrottle, ReviewListThrottle
 from propertylist_app.api.schema_serializers import ErrorResponseSerializer
 from propertylist_app.api.schema_helpers import standard_response_serializer
 from propertylist_app.api.serializers import (
-    BookingReviewCreateSerializer,
-    BookingReviewCreateSerializer,
     UserReviewListSerializer,
     UserReviewSummarySerializer,
     ReviewSerializer,
     ReviewCreateSerializer,
 )
 from .common import ok_response
-
-
 
 
 
@@ -79,46 +80,6 @@ class UserReviewSummaryView(APIView):
         serializer = UserReviewSummarySerializer(data)
         return Response(serializer.data, status=status.HTTP_200_OK)
     
-
-
-class BookingReviewCreateOutputSerializer(serializers.Serializer):
-    review_id = serializers.IntegerField()
-
-
-class BookingReviewCreateView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
-
-    @extend_schema(
-        request=BookingReviewCreateSerializer,
-        responses={
-            201: standard_response_serializer(
-                "BookingReviewCreateResponse",
-                BookingReviewCreateOutputSerializer,
-            ),
-            400: OpenApiResponse(response=ErrorResponseSerializer),
-            401: OpenApiResponse(response=ErrorResponseSerializer),
-            404: OpenApiResponse(response=ErrorResponseSerializer),
-        },
-        description="Create a tenancy review.",
-    )
-    def post(self, request, booking_id):
-        serializer = BookingReviewCreateSerializer(
-            data={
-                **request.data,
-                "booking_id": booking_id,
-            },
-            context={"request": request},
-        )
-        serializer.is_valid(raise_exception=True)
-        review = serializer.save()
-
-        return ok_response(
-            {"review_id": review.id},
-            message="Review submitted successfully.",
-            status_code=status.HTTP_201_CREATED,
-        )
-
-
 
 
 class ReviewCreateView(generics.CreateAPIView):
@@ -246,19 +207,15 @@ class ReviewDetailView(generics.RetrieveAPIView):
         return obj
 
 
+  
 
-
-
-class BookingReviewListView(APIView):
+class TenancyReviewListView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
-
-
-    #  INSERT: schema for spectacular
     @extend_schema(
         responses={
             200: inline_serializer(
-                name="BookingReviewListResponse",
+                name="TenancyReviewListResponse",
                 fields={
                     "my_review": UserReviewListSerializer(allow_null=True),
                     "other_review": UserReviewListSerializer(allow_null=True),
@@ -266,64 +223,61 @@ class BookingReviewListView(APIView):
                 },
             ),
             403: inline_serializer(
-                name="BookingReviewListForbiddenResponse",
+                name="TenancyReviewListForbiddenResponse",
                 fields={
                     "detail": serializers.CharField(),
                 },
             ),
             404: inline_serializer(
-                name="BookingReviewListNotFoundResponse",
+                name="TenancyReviewListNotFoundResponse",
                 fields={
                     "detail": serializers.CharField(),
                 },
             ),
         },
-        description="Return the authenticated user's review and the counterparty review for a booking, if visible.",
-        )
-    def get(self, request, *args, **kwargs):
+        description="Return the authenticated user's review and the counterparty review for a tenancy, if visible.",
+    )
+    def get(self, request, tenancy_id):
         user = request.user
-        booking_id = kwargs.get("booking_id")
         try:
-            booking = Booking.objects.select_related("room").get(id=booking_id)
-        except Booking.DoesNotExist:
-            return Response({"detail": "Booking not found."}, status=status.HTTP_404_NOT_FOUND)
+            tenancy = Tenancy.objects.select_related("room", "tenant", "landlord").get(id=tenancy_id)
+        except Tenancy.DoesNotExist:
+            return Response({"detail": "Tenancy not found."}, status=status.HTTP_404_NOT_FOUND)
 
-        tenant = booking.user
-        landlord = booking.room.property_owner
+        if user.id not in {tenancy.tenant_id, tenancy.landlord_id}:
+            return Response(
+                {"detail": "You are not allowed to view these reviews."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
-        if user != tenant and user != landlord:
-            return Response({"detail": "You are not allowed to view these reviews."}, status=status.HTTP_403_FORBIDDEN)
-
-        # Decide which direction applies for the requester
-        if user == tenant:
+        if user.id == tenancy.tenant_id:
             my_role = Review.ROLE_TENANT_TO_LANDLORD
             other_role = Review.ROLE_LANDLORD_TO_TENANT
         else:
             my_role = Review.ROLE_LANDLORD_TO_TENANT
             other_role = Review.ROLE_TENANT_TO_LANDLORD
 
-        my_review = Review.objects.filter(booking=booking, role=my_role, active=True).first()
-        other_review = Review.objects.filter(booking=booking, role=other_role, active=True).first()
+        my_review = Review.objects.filter(tenancy=tenancy, role=my_role, active=True).first()
+        other_review = Review.objects.filter(tenancy=tenancy, role=other_role, active=True).first()
 
         now = timezone.now()
 
-        my_review_data = UserReviewListSerializer(
-            my_review, context={"request": request}
-        ).data if my_review else None
+        my_review_data = (
+            UserReviewListSerializer(my_review, context={"request": request}).data
+            if my_review else None
+        )
 
-        end_dt = getattr(booking, "end", None) or getattr(booking, "end_date", None)
-
-        # When will the "other" review be visible?
         if other_review and other_review.reveal_at:
             other_reveal_at = other_review.reveal_at
         else:
-            other_reveal_at = (end_dt + timedelta(days=30)) if end_dt else None
+            other_reveal_at = tenancy.review_open_at
 
         other_visible = bool(other_review and other_reveal_at and now >= other_reveal_at)
 
-        other_review_data = UserReviewListSerializer(
-            other_review, context={"request": request}
-        ).data if other_visible else None
+        other_review_data = (
+            UserReviewListSerializer(other_review, context={"request": request}).data
+            if other_visible else None
+        )
 
         return Response(
             {
@@ -386,10 +340,6 @@ class TenancyReviewCreateView(APIView):
         description="Create a tenancy review and return it in ok_response envelope.",
     )
     def post(self, request, tenancy_id):
-        # IMPORTANT:
-        # This endpoint is /api/tenancies/<id>/reviews/
-        # It must use ReviewCreateSerializer (NOT BookingReviewCreateSerializer),
-        # otherwise overall_rating is not applied correctly.
         serializer = ReviewCreateSerializer(
             data={**request.data, "tenancy_id": tenancy_id},
             context={"request": request},

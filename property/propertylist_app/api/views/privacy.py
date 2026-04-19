@@ -8,7 +8,7 @@ from drf_spectacular.utils import extend_schema, OpenApiResponse, inline_seriali
 from propertylist_app.api.schema_serializers import ErrorResponseSerializer
 from propertylist_app.api.schema_helpers import standard_response_serializer
 from propertylist_app.services.gdpr import build_export_zip, perform_erasure, preview_erasure
-from propertylist_app.models import DataExport
+from propertylist_app.models import AuditLog, DataExport, Room, UserProfile
 from propertylist_app.api.serializers import (
     GDPRDeleteConfirmSerializer,
     GDPRExportStartSerializer,
@@ -307,4 +307,4 @@ class MyPrivacyPreferencesView(APIView):
             serializer.data,
             message="Privacy preferences updated successfully.",
             status_code=status.HTTP_200_OK,
-        )            
+        )           

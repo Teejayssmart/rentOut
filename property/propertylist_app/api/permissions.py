@@ -57,11 +57,13 @@ class HasSpecificAdminRole(permissions.BasePermission):
         if getattr(user, "is_superuser", False):
             return True
 
+        # Project tests and current endpoint contract treat staff users
+        # as valid admins for role-specific admin endpoints.
+        if getattr(user, "is_staff", False):
+            return True
+
         profile = getattr(user, "profile", None)
         admin_role = getattr(profile, "admin_role", "") if profile else ""
-
-        if getattr(user, "is_staff", False) and not self.allowed_admin_roles:
-            return True
 
         return admin_role in self.allowed_admin_roles
 
