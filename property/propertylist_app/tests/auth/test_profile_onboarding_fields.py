@@ -56,7 +56,7 @@ class ProfileOnboardingTests(APITestCase):
 
         resp = self.client.patch(self.url, payload, format="json")
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("date_of_birth", resp.data)
+        self.assertIn("date_of_birth", resp.data["field_errors"])
 
     def test_update_profile_invalid_gender_rejected(self):
         payload = {
@@ -65,7 +65,7 @@ class ProfileOnboardingTests(APITestCase):
 
         resp = self.client.patch(self.url, payload, format="json")
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("gender", resp.data)
+        self.assertIn("gender", resp.data["field_errors"])
 
     def test_update_profile_all_fields_optional_when_empty(self):
         """

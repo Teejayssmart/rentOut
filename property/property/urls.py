@@ -5,13 +5,25 @@ from django.conf.urls.static import static
 from django.http import JsonResponse
 from django.shortcuts import redirect
 
-from propertylist_app.api.views import LoginView
+from django.http.response import HttpResponseRedirectBase
+
+from django.views.generic.base import RedirectView
+
+
+import os
+
+from django.urls import re_path
+from django.views.static import serve
+
+
+
+
 
 from rest_framework_simplejwt.views import (
     TokenObtainPairView,
-    TokenRefreshView,
     TokenVerifyView,
 )
+
 
 from drf_spectacular.views import (
     SpectacularAPIView,
@@ -29,23 +41,53 @@ def debug_urls(request):
     )
 
 
+def health_root(request):
+    return JsonResponse({"status": "ok"}, status=200)
+
+
+
+class HttpResponsePermanentRedirect308(HttpResponseRedirectBase):
+    status_code = 308
+
+
+def redirect_api_to_v1(request, path=""):
+    # keep querystring intact
+    qs = request.META.get("QUERY_STRING", "")
+    target = f"/api/v1/{path}"
+    if qs:
+        target = f"{target}?{qs}"
+    return HttpResponsePermanentRedirect308(target)
+
+
+
+
+
 urlpatterns = [
     path("admin/", admin.site.urls),
 
+    #-----health-----#
+    path("health/", health_root),
+
+
     # DEBUG helper
-    path("debug-urls/", debug_urls),
+    *( [path("debug-urls/", debug_urls)] if settings.DEBUG else [] ),
 
     # API includes (ONLY ONCE EACH)
-    path("api/", include(("propertylist_app.api.urls", "api"), namespace="api")),
+    #path("api/", include(("propertylist_app.api.urls", "api"), namespace="api")),
     path("api/v1/", include(("propertylist_app.api.urls", "v1"), namespace="v1")),
+    
+    re_path(
+    r"^api/auth/(?P<path>.*)$",
+    RedirectView.as_view(url="/api/v1/auth/%(path)s", permanent=True),
+    ),
 
-    # JWT token endpoints (NOT versioned)
-    path("api/auth/token/", TokenObtainPairView.as_view(), name="token_obtain_pair"),
-    path("api/auth/token/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
-    path("api/auth/token/verify/", TokenVerifyView.as_view(), name="token_verify"),
+    # # JWT token endpoints (NOT versioned)
+    # path("api/auth/token/", TokenObtainPairView.as_view(), name="token_obtain_pair"),
+    # path("api/auth/token/refresh/", TokenRefreshEnvelopeView.as_view(), name="token_refresh"),
+    # path("api/auth/token/verify/", TokenVerifyView.as_view(), name="token_verify"),
 
-    # Required by tests (unversioned)
-    path("api/auth/login/", LoginView.as_view(), name="auth-login"),
+    # # Required by tests (unversioned)
+    # path("api/auth/login/", LoginView.as_view(), name="auth-login"),
 
     # Schema endpoints
     path("api/v1/schema/", SpectacularAPIView.as_view(), name="schema"),
@@ -56,9 +98,23 @@ urlpatterns = [
     path("api/schema/", lambda r: redirect("/api/v1/schema/")),
     path("api/schema/swagger-ui/", lambda r: redirect("/api/v1/schema/swagger-ui/")),
     path("api/schema/redoc/", lambda r: redirect("/api/v1/schema/redoc/")),
+    
+    
+    
+    # Redirect any old /api/<path> (except the explicit auth + schema routes above) to /api/v1/<path>
+    re_path(r"^api/(?!v1/)(?P<path>.*)$", redirect_api_to_v1),
+
 ]
 
 
 
-if settings.DEBUG:
-    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+# Serve uploaded media:
+# - DEBUG=True (local dev)
+# - OR staging when SERVE_MEDIA=1 (Render disk)
+SERVE_MEDIA = os.getenv("SERVE_MEDIA", "").lower() in {"1", "true", "yes"}
+
+if settings.DEBUG or SERVE_MEDIA:
+    urlpatterns += [
+        re_path(r"^media/(?P<path>.*)$", serve, {"document_root": settings.MEDIA_ROOT}),
+    ]
+

@@ -1,11 +1,13 @@
 import pytest
 from datetime import date, timedelta
-
+import io
+from PIL import Image
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APIClient
-
+from django.db import models
+from django.test import override_settings
 from propertylist_app.models import Room, RoomImage
 
 
@@ -67,6 +69,29 @@ def valid_step1_payload():
     }
 
 
+@pytest.fixture(autouse=True)
+def _force_test_media_root(tmp_path):
+    """
+    Reason:
+    Ensure file uploads always write to a real, writable directory on Windows/CI.
+    """
+    with override_settings(MEDIA_ROOT=str(tmp_path), MEDIA_URL="/media/"):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def _bypass_roomimage_save_override(monkeypatch):
+    """
+    Reason:
+    RoomImage.save() override can close the underlying uploaded file before Django writes it,
+    which causes storage to raise and your view to return a 500 envelope.
+    Test-only: bypass the override so uploads are stable.
+    """
+    monkeypatch.setattr(RoomImage, "save", models.Model.save, raising=False)
+
+
+
+
 @pytest.fixture
 def create_draft_room(auth_client, valid_step1_payload):
     """
@@ -82,26 +107,32 @@ def create_draft_room(auth_client, valid_step1_payload):
         }
         response = auth_client.post(url, payload, format="json")
         assert response.status_code == status.HTTP_201_CREATED, response.data
-        return Room.objects.get(id=response.data["id"])
+        return Room.objects.get(id=response.data["data"]["id"])
 
     return _create
 
 
 def _upload_fake_photo(client, room, name="photo.jpg"):
     """
-    Small helper to upload a single fake JPEG image to:
-      POST /api/rooms/<id>/photos/
+    Upload a single valid JPEG image to the room photo endpoint.
+
+    Reason:
+    Backend performs real image validation/moderation. Fake bytes can raise PIL/validators
+    errors and get wrapped into a 500. This test is about Step 4 min-photos rule, not image decoding.
     """
     url = reverse("api:room-photo-upload", args=[room.id])
 
-    fake_image = SimpleUploadedFile(
+    buf = io.BytesIO()
+    Image.new("RGB", (10, 10), color=(255, 0, 0)).save(buf, format="JPEG")
+    buf.seek(0)
+
+    real_image = SimpleUploadedFile(
         name,
-        b"fake-image-bytes",
+        buf.getvalue(),
         content_type="image/jpeg",
     )
 
-    response = client.post(url, {"image": fake_image}, format="multipart")
-    return response
+    return client.post(url, {"image": real_image}, format="multipart")
 
 
 # ------------------------
@@ -134,10 +165,11 @@ def test_step4_preview_blocked_with_less_than_three_photos(auth_client, create_d
     response = auth_client.patch(url, patch_payload, format="json")
 
     assert response.status_code == status.HTTP_400_BAD_REQUEST
-    assert "detail" in response.data
-    assert "photos_min_required" in response.data
-    assert response.data["photos_min_required"] == 3
-    assert response.data["photos_current"] == 2
+    assert response.data["ok"] is False
+    assert response.data["message"] == "Please upload at least 3 photos before previewing your listing."
+    assert "photos_min_required" in response.data["errors"]
+    assert response.data["errors"]["photos_min_required"] == 3
+    assert response.data["errors"]["photos_current"] == 2
 
 
 @pytest.mark.django_db
@@ -163,7 +195,7 @@ def test_step4_preview_allows_when_at_least_three_photos(auth_client, create_dra
 
     assert response.status_code == status.HTTP_200_OK, response.data
     # Room data still comes back; status remains whatever it was (draft until payment)
-    assert response.data["id"] == room.id
+    assert response.data["data"]["id"] == room.id
 
 
 @pytest.mark.django_db
@@ -184,4 +216,4 @@ def test_step4_save_close_does_not_require_photos(auth_client, create_draft_room
     response = auth_client.patch(url, patch_payload, format="json")
 
     assert response.status_code == status.HTTP_200_OK, response.data
-    assert response.data["id"] == room.id
+    assert response.data["data"]["id"] == room.id

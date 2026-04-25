@@ -3,22 +3,23 @@ app_name = "api"
 
 from django.conf import settings
 from django.conf.urls.static import static
-from django.urls import path, include
+from django.urls import path
+from drf_spectacular.utils import extend_schema
 
-
-from rest_framework.routers import DefaultRouter
+#from rest_framework.routers import DefaultRouter
 
 from django.views.decorators.cache import cache_page
+from django.views.decorators.csrf import csrf_exempt
 
 from propertylist_app.api import views
 
-from .views import EmailOTPVerifyView, EmailOTPResendView,PhoneOTPStartView, PhoneOTPVerifyView
-
+from .views import EmailOTPVerifyView, EmailOTPResendView,PhoneOTPStartView, PhoneOTPVerifyView,RoomListAlt
+from .views.profile import DeleteAccountRequestView, DeleteAccountCancelView
 
 from propertylist_app.api.views import (
     # Rooms & Categories
     RoomAV, RoomDetailAV, RoomListGV, ModerationReportModerateActionView,
-    RoomCategorieAV, RoomCategorieDetailAV, RoomCategorieVS, RoomPreviewView, 
+    RoomCategorieAV, RoomCategorieDetailAV, RoomPreviewView, 
 
     # Reviews
     UserReviewsView,UserReviewSummaryView, ReviewCreateView, ReviewListView, ReviewDetailView,
@@ -26,8 +27,9 @@ from propertylist_app.api.views import (
     # Tenancy (rental confirmation)
     TenancyRespondView,TenancyProposeView, MyTenanciesView,TenancyStillLivingConfirmView,TenancyExtensionCreateView,TenancyExtensionRespondView,
     
-    # Tenancy-based reviews
+   # Tenancy-based reviews
     TenancyReviewCreateView,
+    TenancyReviewListView,
     
     # Search & Nearby
     SearchRoomsView, NearbyRoomsView,
@@ -42,7 +44,7 @@ from propertylist_app.api.views import (
     # Bookings & Availability
     create_booking, BookingListCreateView, BookingDetailView, BookingCancelView,
     RoomAvailabilityView, RoomAvailabilitySlotListCreateView, RoomAvailabilitySlotDeleteView, RoomAvailabilityPublicView,  FindAddressView,BookingDeleteView,
-    BookingSuspendView,BookingReviewCreateView, BookingReviewListView,
+    BookingSuspendView,
 
     # Photos
     RoomPhotoUploadView, RoomPhotoDeleteView,
@@ -51,15 +53,15 @@ from propertylist_app.api.views import (
     RegistrationView, LoginView, LogoutView,
     PasswordResetRequestView, PasswordResetConfirmView,
     MeView, UserProfileView,
-    UserAvatarUploadView, ChangeEmailView, ChangePasswordView, DeactivateAccountView, MyRoomsView,GoogleRegisterView,AppleRegisterView,MyProfilePageView,
-    CreatePasswordView,
+    UserAvatarUploadView, ChangeEmailView, ChangePasswordView, DeactivateAccountView, MyRoomsView,MyProfilePageView,
+    CreatePasswordView,TokenRefreshView,GoogleRegisterView, AppleRegisterView,
     
 
     # Soft delete
     RoomSoftDeleteView,RoomUnpublishView,
     
     #Account deletion
-    DeleteAccountRequestView,DeleteAccountCancelView,
+    #DeleteAccountRequestView,DeleteAccountCancelView,
 
     # Payments
     CreateListingCheckoutSessionView, stripe_webhook, StripeSuccessView, StripeCancelView, SavedCardsListView, CreateSetupIntentView,DetachSavedCardView,
@@ -93,8 +95,8 @@ from propertylist_app.api.views import (
 
 
 
-router = DefaultRouter()
-router.register("category", RoomCategorieVS, basename="roomcategory")  # DRF ViewSet routes
+# router = DefaultRouter()
+
 
 urlpatterns = [
     
@@ -104,14 +106,14 @@ urlpatterns = [
     path("rooms/<int:pk>/preview/",    RoomPreviewView.as_view(),   name="room-preview"), 
     
     # Cached alt list
-    path("rooms-alt/",                 cache_page(60)(RoomListGV.as_view()),  name="room-list-alt"),
-    path("", include(router.urls)),
+    path("rooms-alt/", cache_page(60)(RoomListAlt.as_view()), name="room-list-alt"),
+    
 
     # Room categories
     path("room-categories/",           RoomCategorieAV.as_view(),         name="roomcategory-list"),
     path("room-categories/<int:pk>/",  RoomCategorieDetailAV.as_view(),   name="roomcategory-detail"),
 
-    
+   
    
     #path("user-reviews/",                  UserReview.as_view(),       name="user-reviews"),
     path("users/<int:user_id>/review-summary/", UserReviewSummaryView.as_view(), name="user-review-summary"),
@@ -121,11 +123,11 @@ urlpatterns = [
     path("reviews/<int:pk>/", ReviewDetailView.as_view(), name="review-detail"),
     
     # Tenancy-based reviews
-    path("tenancies/<int:tenancy_id>/reviews/", TenancyReviewCreateView.as_view(), name="tenancy-review-create"),
+    path("tenancies/<int:tenancy_id>/reviews/", TenancyReviewListView.as_view(), name="tenancy-review-list"),
+    path("tenancies/<int:tenancy_id>/reviews/create/", TenancyReviewCreateView.as_view(), name="tenancy-review-create"),
 
 
-    # Tenancy (rental confirmation)
-    path("tenancies/<int:tenancy_id>/respond/", TenancyRespondView.as_view(), name="tenancy-respond"),
+
     # Tenancy (rental confirmation)
     path("tenancies/propose/", TenancyProposeView.as_view(), name="tenancy-propose"),
     path("tenancies/<int:tenancy_id>/respond/", TenancyRespondView.as_view(), name="tenancy-respond"),
@@ -180,9 +182,6 @@ urlpatterns = [
     path("bookings/<int:pk>/cancel/",      BookingCancelView.as_view(),     name="booking-cancel"),
     path("rooms/<int:pk>/availability/",   RoomAvailabilityView.as_view(),  name="room-availability"),
     
-    path("bookings/<int:booking_id>/reviews/", BookingReviewListView.as_view(), name="booking-reviews"),
-    path("bookings/<int:booking_id>/reviews/create/", BookingReviewCreateView.as_view(), name="booking-reviews-create"),
-
     
      
     # --- Bookings / suspend---
@@ -191,8 +190,7 @@ urlpatterns = [
 
 
     
-    # --- Bookings / cancelled ---
-    path("bookings/<int:pk>/delete/", BookingDeleteView.as_view(), name="booking-delete"),
+    
 
     # Landlord manage slots
     path("rooms/<int:pk>/availability/slots/",               RoomAvailabilitySlotListCreateView.as_view(), name="room-slots"),
@@ -234,11 +232,12 @@ urlpatterns = [
     path("auth/logout/",                 LogoutView.as_view(),               name="auth-logout"),
     path("auth/password-reset/",         PasswordResetRequestView.as_view(), name="auth-password-reset"),
     path("auth/password-reset/confirm/", PasswordResetConfirmView.as_view(), name="auth-password-reset-confirm"),
+    path("auth/token/refresh/", TokenRefreshView.as_view(), name="auth-token-refresh"),
 
-    # Social sign-up stubs (for Figma buttons)           # NEW
-    path("auth/register/google/",        GoogleRegisterView.as_view(),       name="auth-register-google"),  # NEW
-    path("auth/register/apple/",         AppleRegisterView.as_view(),        name="auth-register-apple"),   # NEW
 
+  
+    path("auth/register/google/",        csrf_exempt(GoogleRegisterView.as_view()),       name="auth-register-google"),
+    path("auth/register/apple/",         csrf_exempt(AppleRegisterView.as_view()),        name="auth-register-apple"),
 
     # --- Payments (Stripe) ---
     path("payments/checkout/rooms/<int:pk>/", CreateListingCheckoutSessionView.as_view(), name="payments-checkout-room"),

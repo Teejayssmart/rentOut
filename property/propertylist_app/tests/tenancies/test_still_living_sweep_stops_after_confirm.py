@@ -8,7 +8,7 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 
 from propertylist_app.tasks import task_tenancy_prompts_sweep
-
+from django.urls import reverse
 
 pytestmark = pytest.mark.django_db
 
@@ -35,7 +35,15 @@ def _make_tenancy(room, landlord, tenant, *, status):
 
 
 def _confirm_url(tenancy_id: int) -> str:
-    return f"/api/tenancies/{tenancy_id}/still-living/confirm/"
+    """
+    Reason:
+    Your URLconf appears to redirect to a trailing-slash URL (308).
+    PATCH in tests does not follow redirects, so we must call the final URL.
+    """
+    url = reverse("v1:tenancy-still-living-confirm", kwargs={"tenancy_id": tenancy_id})
+    if not url.endswith("/"):
+        url += "/"
+    return url
 
 
 def test_sweep_notifies_only_unconfirmed_side_then_stops_when_both_confirm(user_factory, room_factory):
@@ -87,3 +95,4 @@ def test_sweep_notifies_only_unconfirmed_side_then_stops_when_both_confirm(user_
     task_tenancy_prompts_sweep()
     final_count = Notification.objects.filter(type="tenancy_still_living_check").count()
     assert final_count == after_tenant_confirm
+    

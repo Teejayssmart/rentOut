@@ -1,7 +1,10 @@
-from django.urls import reverse
+import re
+
 from django.contrib.auth import get_user_model
-from rest_framework.test import APITestCase
+from django.core import mail
+from django.urls import reverse
 from rest_framework import status
+from rest_framework.test import APITestCase
 
 from propertylist_app.models import EmailOTP, UserProfile
 
@@ -27,14 +30,21 @@ class OnboardingFlowTests(APITestCase):
             "marketing_consent": False,
         }
         resp = self.client.post(url, payload, format="json")
-        self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED, resp.data)
 
-        user_id = resp.data["id"]
+        user_id = resp.data["data"]["id"]
         user = User.objects.get(pk=user_id)
         return user, resp
 
     def _get_latest_otp(self, user):
         return EmailOTP.objects.filter(user=user).order_by("-created_at").first()
+
+    def _get_latest_email_otp_code(self):
+        self.assertTrue(mail.outbox, "Expected at least one email in outbox.")
+        body = mail.outbox[-1].body
+        match = re.search(r"(\d{6})", body)
+        self.assertIsNotNone(match, f"Could not find 6-digit OTP in email body: {body}")
+        return match.group(1)
 
     def test_full_onboarding_flow_success(self):
         """
@@ -49,14 +59,16 @@ class OnboardingFlowTests(APITestCase):
         otp = self._get_latest_otp(user)
         self.assertIsNotNone(otp)
 
-        # Verify OTP
+        # Use the plain 6-digit code from the sent email, not otp.code (hashed in DB)
+        plain_code = self._get_latest_email_otp_code()
+
         verify_url = reverse("api:auth-verify-otp")
         verify_payload = {
             "user_id": user.id,
-            "code": otp.code,
+            "code": plain_code,
         }
         resp = self.client.post(verify_url, verify_payload, format="json")
-        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(resp.status_code, status.HTTP_200_OK, resp.data)
 
         # Profile should be marked email_verified in DB
         profile = UserProfile.objects.get(user=user)
@@ -77,7 +89,7 @@ class OnboardingFlowTests(APITestCase):
             "address_manual": "10 Downing Street, London",
         }
         resp = self.client.patch(profile_url, update_payload, format="json")
-        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(resp.status_code, status.HTTP_200_OK, resp.data)
 
         # Check values persisted correctly
         profile.refresh_from_db()
@@ -105,7 +117,7 @@ class OnboardingFlowTests(APITestCase):
             "code": "000000",  # definitely wrong
         }
         resp = self.client.post(verify_url, bad_payload, format="json")
-        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST, resp.data)
 
         profile = UserProfile.objects.get(user=user)
         self.assertFalse(profile.email_verified)

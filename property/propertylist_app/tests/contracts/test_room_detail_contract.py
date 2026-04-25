@@ -7,6 +7,42 @@ from propertylist_app.models import Room, RoomCategorie
 pytestmark = pytest.mark.django_db
 
 
+# -----------------------------
+# CANONICAL V1 ENDPOINTS ONLY
+# -----------------------------
+ROOMS_LIST_V1 = "/api/v1/rooms/"
+ROOM_DETAIL_V1_TEMPLATE = "/api/v1/rooms/{id}/"
+
+
+def _unwrap_payload(payload):
+    """
+    Supports:
+      - ok envelope: {"ok": True, "data": ...}
+      - normal payload: dict/list
+    """
+    if isinstance(payload, dict) and payload.get("ok") is True and "data" in payload:
+        return payload["data"]
+    return payload
+
+
+def _extract_list_items(payload):
+    """
+    Supports:
+      - list
+      - paginated dict: {"results": [...]}
+      - ok envelope wrapping either of the above
+    """
+    payload = _unwrap_payload(payload)
+
+    if isinstance(payload, list):
+        return payload
+
+    if isinstance(payload, dict) and isinstance(payload.get("results"), list):
+        return payload["results"]
+
+    return None
+
+
 def assert_exact_keys(obj: dict, expected_keys: set[str]) -> None:
     assert isinstance(obj, dict), f"Expected dict, got {type(obj)}"
     assert set(obj.keys()) == expected_keys, f"Keys mismatch.\nGot: {set(obj.keys())}\nExpected: {expected_keys}"
@@ -22,7 +58,7 @@ def assert_is_int(v, name: str) -> None:
 
 def seed_room_if_empty():
     """
-    Creates the minimum viable Room so /api/rooms/ is non-empty in a fresh test DB.
+    Creates the minimum viable Room so /api/v1/rooms/ is non-empty in a fresh test DB.
     Mirrors existing project tests that create Room with: title, category, price_per_month, property_owner.
     """
     if Room.objects.exists():
@@ -46,30 +82,26 @@ def seed_room_if_empty():
 def get_first_room_id(client: APIClient) -> int:
     seed_room_if_empty()
 
-    r = client.get("/api/rooms/")
-    assert r.status_code == 200, r.data
+    r = client.get(ROOMS_LIST_V1)
+    assert r.status_code == 200, getattr(r, "content", b"")
+
     data = r.json()
+    items = _extract_list_items(data)
 
-    assert isinstance(data, list) and data, "Rooms list is empty even after seeding."
-    assert isinstance(data[0], dict) and "id" in data[0], "Rooms list first item missing 'id'."
-    return int(data[0]["id"])
+    assert isinstance(items, list) and items, "Rooms list is empty even after seeding."
+    assert isinstance(items[0], dict) and "id" in items[0], "Rooms list first item missing 'id'."
+    return int(items[0]["id"])
 
 
-def test_room_detail_contract_api_and_v1_match_shape():
+def test_room_detail_contract_v1_shape_and_types():
     client = APIClient()
     room_id = get_first_room_id(client)
 
-    r_api = client.get(f"/api/rooms/{room_id}/")
-    r_v1 = client.get(f"/api/v1/rooms/{room_id}/")
+    r = client.get(ROOM_DETAIL_V1_TEMPLATE.format(id=room_id))
+    assert r.status_code == 200, getattr(r, "content", b"")
 
-    assert r_api.status_code == 200, r_api.data
-    assert r_v1.status_code == 200, r_v1.data
-
-    data_api = r_api.json()
-    data_v1 = r_v1.json()
-
-    assert isinstance(data_api, dict)
-    assert isinstance(data_v1, dict)
+    payload = _unwrap_payload(r.json())
+    assert isinstance(payload, dict), f"Expected dict payload, got {type(payload)}"
 
     expected_keys = {
         "accessible_entry",
@@ -153,13 +185,10 @@ def test_room_detail_contract_api_and_v1_match_shape():
         "view_available_days_mode",
     }
 
-    assert_exact_keys(data_api, expected_keys)
-    assert_exact_keys(data_v1, expected_keys)
+    assert_exact_keys(payload, expected_keys)
 
-    assert_is_int(data_api["id"], "id")
-    assert_is_bool(data_api["is_saved"], "is_saved")
-    assert_is_bool(data_api["is_available"], "is_available")
-    assert_is_bool(data_api["is_deleted"], "is_deleted")
-    assert_is_bool(data_api["is_shared_room"], "is_shared_room")
-
-    assert set(data_api.keys()) == set(data_v1.keys()) == expected_keys
+    assert_is_int(payload["id"], "id")
+    assert_is_bool(payload["is_saved"], "is_saved")
+    assert_is_bool(payload["is_available"], "is_available")
+    assert_is_bool(payload["is_deleted"], "is_deleted")
+    assert_is_bool(payload["is_shared_room"], "is_shared_room")

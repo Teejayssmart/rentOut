@@ -10,6 +10,10 @@ from rest_framework.test import APIClient
 from propertylist_app.models import AvailabilitySlot, Booking
 
 
+# Reason: API is versioned; using /api/v1 avoids 308 redirects from /api -> /api/v1
+BOOKINGS_URL = "/api/v1/bookings/"
+
+
 def _post_slot_booking(user, slot_id, results: Queue, errors: Queue, barrier: threading.Barrier):
     """
     Thread helper: performs a single booking POST and records exactly one result.
@@ -19,7 +23,7 @@ def _post_slot_booking(user, slot_id, results: Queue, errors: Queue, barrier: th
         barrier.wait(timeout=5)
         c = APIClient()
         c.force_authenticate(user=user)
-        res = c.post("/api/bookings/", data={"slot": slot_id}, format="json")
+        res = c.post(BOOKINGS_URL, data={"slot": slot_id}, format="json")
         results.put((res.status_code, getattr(res, "data", None)))
     except Exception as e:
         errors.put(repr(e))
@@ -58,12 +62,12 @@ def test_two_users_cannot_overbook_same_slot(user_factory, room_factory):
     if connection.vendor == "sqlite":
         c1 = APIClient()
         c1.force_authenticate(user=tenant1)
-        r1 = c1.post("/api/bookings/", data={"slot": slot.id}, format="json")
+        r1 = c1.post(BOOKINGS_URL, data={"slot": slot.id}, format="json")
         assert r1.status_code in (200, 201), getattr(r1, "data", None)
 
         c2 = APIClient()
         c2.force_authenticate(user=tenant2)
-        r2 = c2.post("/api/bookings/", data={"slot": slot.id}, format="json")
+        r2 = c2.post(BOOKINGS_URL, data={"slot": slot.id}, format="json")
         assert r2.status_code == 400, getattr(r2, "data", None)
 
         active = Booking.objects.filter(slot=slot, canceled_at__isnull=True).count()

@@ -4,7 +4,7 @@ from django.utils import timezone
 from datetime import timedelta
 
 from django.contrib.auth import get_user_model
-from propertylist_app.models import Room, RoomCategorie, Review, Booking
+from propertylist_app.models import Booking, Review, Room, RoomCategorie, Tenancy
 
 User = get_user_model()
 
@@ -40,23 +40,30 @@ def test_delete_confirm_erases_pii_and_soft_hides_content():
 
     # booking must exist because Review links to Booking
     booking = Booking.objects.create(
-        user=tenant,
+    user=tenant,
+    room=room,
+    start=timezone.now() - timedelta(days=40),
+    end=timezone.now() - timedelta(days=35),
+    status=Booking.STATUS_ACTIVE,
+    )
+
+    tenancy = Tenancy.objects.create(
         room=room,
-        start=timezone.now() - timedelta(days=40),
-        end=timezone.now() - timedelta(days=35),
-        status=Booking.STATUS_ACTIVE,
+        landlord=owner,
+        tenant=tenant,
+        move_in_date=(timezone.now() - timedelta(days=60)).date(),
+        duration_months=1,
     )
 
     review = Review.objects.create(
-        booking=booking,
+        tenancy=tenancy,
         reviewer=tenant,
         reviewee=owner,
         role=Review.ROLE_TENANT_TO_LANDLORD,
-        review_flags=["responsive"],   # any allowed flag is fine
+        review_flags=["responsive"],
         notes="Great",
         active=True,
     )
-
 
     client = APIClient()
     client.force_authenticate(user=owner)

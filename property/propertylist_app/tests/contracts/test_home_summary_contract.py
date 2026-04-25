@@ -19,16 +19,17 @@ REQUIRED_HOME_FIELDS: set[str] = set([
 
 # Candidate endpoints (update/add if your project uses a different one)
 HOME_CANDIDATE_PATHS = [
-    "/api/home/",
-    "/api/homepage/",
-    "/api/home/summary/",
-    "/api/home-summary/",
-    "/api/summary/home/",
-    "/api/cities/",              # if your home uses city list endpoint
-    "/api/city-list/",
+    "/api/v1/home/",
+    "/api/v1/homepage/",
+    "/api/v1/home/summary/",
+    "/api/v1/home-summary/",
+    "/api/v1/summary/home/",
+    "/api/v1/cities/",
+    "/api/v1/city-list/",
 ]
 
-HOME_CANDIDATE_PATHS_V1 = [p.replace("/api/", "/api/v1/") for p in HOME_CANDIDATE_PATHS]
+# Reason: HOME_CANDIDATE_PATHS already uses /api/v1; rebuilding would produce /api/v1/v1/... (invalid)
+HOME_CANDIDATE_PATHS_V1 = HOME_CANDIDATE_PATHS
 
 
 def make_authed_client() -> APIClient:
@@ -75,10 +76,13 @@ def test_home_summary_contract_api_and_v1_match_shape_and_required_fields():
     if not api_path:
         pytest.skip("No home summary endpoint found in HOME_CANDIDATE_PATHS. Add your real path(s).")
 
+    
+
     # parity status
     assert r_api.status_code == r_v1.status_code, (
         f"Status mismatch.\n{api_path} -> {r_api.status_code}\n{v1_path} -> {r_v1.status_code}"
     )
+
 
     # allow common responses
     assert r_api.status_code in (200, 401, 403), r_api.data
@@ -122,3 +126,4 @@ def test_home_summary_contract_api_and_v1_match_shape_and_required_fields():
 
         missing = REQUIRED_HOME_FIELDS - payload_keys_api
         assert not missing, f"Missing required home fields: {sorted(missing)}"
+

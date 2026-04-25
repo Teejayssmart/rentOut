@@ -19,6 +19,7 @@ def _png_bytes():
     )
 
 
+
 @pytest.mark.django_db
 def test_avatar_upload_happy_path_and_missing_file():
     u = User.objects.create_user(username="ava", password="pass123", email="a@example.com")
@@ -39,7 +40,7 @@ def test_avatar_upload_happy_path_and_missing_file():
     file = SimpleUploadedFile("tiny.png", _png_bytes(), content_type="image/png")
     r2 = c.post(url, data={"avatar": file}, format="multipart")
     assert r2.status_code == 200
-    assert "avatar" in r2.data  # usually a URL or None depending on storage
+    assert "avatar" in r2.data["data"]  # usually a URL or None depending on storage
 
 
 @pytest.mark.django_db
@@ -111,7 +112,11 @@ def test_change_password_success_mismatch_and_bad_current_and_login_with_new_pas
         format="json",
     )
     assert r_login.status_code == 200
-    assert "access" in r_login.data and "refresh" in r_login.data
+    assert r_login.data.get("ok") is True
+    assert "tokens" in r_login.data.get("data", {})
+    assert "access" in r_login.data["data"]["tokens"]
+    assert "refresh" in r_login.data["data"]["tokens"]
+
 
 
 

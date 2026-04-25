@@ -18,7 +18,16 @@ def test_moderation_staff_only_forbidden_to_regular_user():
 
     # A room + a report to moderate
     cat = RoomCategorie.objects.create(name="Perms", active=True)
-    room = Room.objects.create(title="Room A", category=cat, price_per_month=500, status="active")
+    room = Room.objects.create(
+        title="Room A",
+        description="Valid room description with enough words for tests.",
+        location="London",
+        property_type="flat",
+        category=cat,
+        property_owner=regular,
+        price_per_month=500,
+        status="active",
+    )
 
     # IMPORTANT: reporter is required (NOT NULL), and Report uses a GenericForeignKey.
     report = Report.objects.create(
@@ -42,7 +51,10 @@ def test_moderation_staff_only_forbidden_to_regular_user():
     c.force_authenticate(user=staff)
     r_ok = c.patch(url, {"status": "in_review", "resolution_notes": "Checking"}, format="json")
     assert r_ok.status_code == 200, r_ok.content
-    assert r_ok.json().get("status") in {"in_review", "resolved", "rejected"}
+    body = r_ok.json()
+    assert body.get("ok") is True
+    assert isinstance(body.get("data"), dict)
+    assert body["data"].get("status") in {"in_review", "resolved", "rejected"}
 
 
 
@@ -75,4 +87,7 @@ def test_room_update_owner_only():
     c.force_authenticate(user=owner)
     r_ok = c.patch(url, {"title": "Updated by Owner"}, format="json")
     assert r_ok.status_code == 200, r_ok.content
-    assert r_ok.json().get("title") == "Updated by Owner"
+    body = r_ok.json()
+    assert body.get("ok") is True
+    assert isinstance(body.get("data"), dict)
+    assert body["data"].get("title") == "Updated by Owner"

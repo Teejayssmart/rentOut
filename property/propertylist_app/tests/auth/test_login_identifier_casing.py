@@ -5,7 +5,7 @@ from rest_framework.test import APIClient
 
 from propertylist_app.models import UserProfile
 
-API = "/api"
+API = "/api/v1"
 
 @pytest.fixture
 def api():
@@ -22,7 +22,11 @@ def test_login_with_email_different_case_ok(api):
 
     res = api.post(f"{API}/auth/login/", {"identifier": "CASE@EXAMPLE.COM", "password": "Str0ng!Pass"}, format="json")
     assert res.status_code == 200, res.data
-    assert "access" in res.data and "refresh" in res.data
+    assert "data" in res.data and res.data["ok"] is True
+    assert "tokens" in res.data["data"]
+    assert "access" in res.data["data"]["tokens"]
+    assert "refresh" in res.data["data"]["tokens"]
+
 
 @pytest.mark.django_db
 def test_login_with_username_ok(api):

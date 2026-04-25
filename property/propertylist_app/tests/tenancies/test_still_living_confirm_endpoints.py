@@ -4,6 +4,7 @@ from datetime import date, timedelta
 
 import pytest
 from django.apps import apps
+from django.urls import reverse
 from django.utils import timezone
 from rest_framework.test import APIClient
 
@@ -56,7 +57,9 @@ def _make_tenancy(room, landlord, tenant, *, status):
 
 
 def _confirm_url(tenancy_id: int) -> str:
-    return f"/api/tenancies/{tenancy_id}/still-living/confirm/"
+    # Reason: your project redirects /api/* → /api/v1/*, which produces 308 in tests.
+    # Use the canonical v1 URL name to avoid redirects.
+    return reverse("v1:tenancy-still-living-confirm", kwargs={"tenancy_id": tenancy_id})
 
 
 def test_tenant_can_confirm_still_living(user_factory, room_factory):
@@ -138,5 +141,4 @@ def test_confirm_is_idempotent(user_factory, room_factory):
     assert res2.status_code in (200, 204)
 
     tenancy.refresh_from_db()
-    second_ts = tenancy.still_living_tenant_confirmed_at
-    assert second_ts is not None
+    assert tenancy.still_living_tenant_confirmed_at == first_ts

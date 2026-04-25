@@ -19,7 +19,16 @@ def test_moderation_staff_only_forbidden_to_regular_user():
 
     # create a room and a report to moderate
     cat = RoomCategorie.objects.create(name="Perms", active=True)
-    room = Room.objects.create(title="Room A", category=cat, price_per_month=500, status="active")
+    room = Room.objects.create(
+        title="Room A",
+        description="Test moderation room description with enough words to satisfy model and serializer expectations.",
+        location="London",
+        property_type="flat",
+        category=cat,
+        property_owner=regular,
+        price_per_month=500,
+        status="active",
+    )
 
     # attach report to the room
     report = Report.objects.create(

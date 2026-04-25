@@ -7,7 +7,7 @@ from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from propertylist_app.models import Room, Booking
+from propertylist_app.models import Room, RoomCategorie, Booking
 
 User = get_user_model()
 
@@ -47,11 +47,14 @@ class MyListingsTests(APITestCase):
             email="owner2@example.com",
             password="testpass123",
         )
+        
+        self.category = RoomCategorie.objects.create(name="Home Menu Category", active=True)
 
         # Rooms for self.owner
         self.room1 = Room.objects.create(
             title="Owner1 Room 1",
             description="Nice room 1",
+            category=self.category,
             price_per_month=500,
             location="SW1A 1AA",
             property_owner=self.owner,
@@ -60,6 +63,7 @@ class MyListingsTests(APITestCase):
         self.room2 = Room.objects.create(
             title="Owner1 Room 2",
             description="Nice room 2",
+            category=self.category,
             price_per_month=600,
             location="SW1A 2AA",
             property_owner=self.owner,
@@ -70,6 +74,7 @@ class MyListingsTests(APITestCase):
         self.other_room = Room.objects.create(
             title="Other User Room",
             description="Not mine",
+            category=self.category,
             price_per_month=700,
             location="SW1A 3AA",
             property_owner=self.other,
@@ -113,6 +118,11 @@ class MyBookingsTests(APITestCase):
             email="other@example.com",
             password="testpass123",
         )
+        
+        self.category = RoomCategorie.objects.create(
+            name="Booking Menu Category",
+            active=True,
+        )
 
         # Create a room for bookings
         self.room = Room.objects.create(
@@ -120,6 +130,7 @@ class MyBookingsTests(APITestCase):
             description="Booking test room",
             price_per_month=550,
             location="SW1A 4AA",
+            category=self.category,
             property_owner=self.other,
             property_type="flat",
         )

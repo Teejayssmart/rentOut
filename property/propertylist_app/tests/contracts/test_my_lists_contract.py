@@ -1,136 +1,234 @@
 import pytest
+from decimal import Decimal
+
 from django.contrib.auth import get_user_model
+from django.utils import timezone
 from rest_framework.test import APIClient
+
+from propertylist_app.models import Room, Booking
 
 pytestmark = pytest.mark.django_db
 
-# Candidate endpoints (adjust if yours differs)
-MY_LISTINGS_API_CANDIDATES = [
-    "/api/my-listings/",
-    "/api/rooms/me/",
-    "/api/rooms/my/",
-    "/api/users/me/listings/",
-]
-MY_BOOKINGS_API = "/api/bookings/"
-MY_LISTINGS_V1_CANDIDATES = [p.replace("/api/", "/api/v1/") for p in MY_LISTINGS_API_CANDIDATES]
+
+# -----------------------------
+# CANONICAL V1 ENDPOINTS ONLY
+# -----------------------------
+MY_LISTINGS_V1 = "/api/v1/my-listings/"
 MY_BOOKINGS_V1 = "/api/v1/bookings/"
 
-# -----------------------------
-# Update these from Figma
-# -----------------------------
-REQUIRED_MY_LISTINGS_ITEM_FIELDS: set[str] = set([
-    # example:
-    # "id", "title", "price_per_month", "photo_url", "city"
-])
 
-REQUIRED_MY_BOOKINGS_ITEM_FIELDS: set[str] = set([
-    # example:
-    # "id", "room", "start_date", "status"
-])
-
-
-def make_authed_client() -> APIClient:
+def make_authed_client() -> tuple[APIClient, object]:
+    """
+    Contract tests should not depend on login/otp flows.
+    Force-authenticate a user at the DRF test-client level.
+    """
     User = get_user_model()
     user = User.objects.create_user(
         username="contract_my_lists_user",
         email="contract_my_lists_user@test.com",
         password="StrongP@ssword1",
     )
-    c = APIClient()
-    c.force_authenticate(user=user)
-    return c
+    client = APIClient()
+    client.force_authenticate(user=user)
+    return client, user
 
 
-def _extract_first_item(payload):
+def _ensure_profile(user):
+    """
+    Some projects require user.profile to exist.
+    Create it safely if the model exists.
+    """
+    try:
+        _ = user.profile
+        return
+    except Exception:
+        pass
+
+    try:
+        from propertylist_app.models import UserProfile
+        UserProfile.objects.get_or_create(user=user)
+    except Exception:
+        return
+
+
+def _normalise_list_payload(payload):
     """
     Supports:
       - list
-      - paginated dict with 'results'
+      - paginated dict: {"results": [...]}
+      - ok envelope: {"ok": True, "data": <list|dict>}
+    Returns list or None.
     """
+    if isinstance(payload, dict) and payload.get("ok") is True and "data" in payload:
+        payload = payload["data"]
+
     if isinstance(payload, list):
-        return payload[0] if payload else None
+        return payload
+
     if isinstance(payload, dict) and isinstance(payload.get("results"), list):
-        return payload["results"][0] if payload["results"] else None
+        return payload["results"]
+
     return None
 
 
-def _find_first_listings_endpoint(c: APIClient):
-    for api_path, v1_path in zip(MY_LISTINGS_API_CANDIDATES, MY_LISTINGS_V1_CANDIDATES):
-        r_api = c.get(api_path)
-        r_v1 = c.get(v1_path)
-        if r_api.status_code == 404 and r_v1.status_code == 404:
+def _create_min_room_for_owner(owner) -> Room:
+    """
+    Create a minimal Room that satisfies NOT NULL constraints.
+    This mirrors the approach used in your other v1-only listing contract test.
+    """
+    _ensure_profile(owner)
+
+    data = {}
+
+    for field in Room._meta.fields:
+        if field.primary_key or field.auto_created:
             continue
-        return api_path, v1_path, r_api, r_v1
-    return None, None, None, None
+
+        if field.has_default():
+            continue
+
+        if field.null:
+            continue
+
+        if getattr(field, "auto_now", False) or getattr(field, "auto_now_add", False):
+            continue
+
+        # Try sensible defaults by field type
+        it = field.get_internal_type()
+
+        if it in ("CharField", "SlugField", "EmailField", "URLField", "TextField"):
+            data.setdefault(field.name, "x")
+        elif it in (
+            "IntegerField",
+            "BigIntegerField",
+            "SmallIntegerField",
+            "PositiveIntegerField",
+            "PositiveSmallIntegerField",
+        ):
+            data.setdefault(field.name, 1)
+        elif it == "DecimalField":
+            data.setdefault(field.name, Decimal("1000.00"))
+        elif it == "FloatField":
+            data.setdefault(field.name, 100.0)
+        elif it == "BooleanField":
+            data.setdefault(field.name, False)
+        elif it == "DateTimeField":
+            data.setdefault(field.name, timezone.now())
+        elif it == "DateField":
+            data.setdefault(field.name, timezone.now().date())
+        else:
+            # ForeignKey handling
+            from django.db import models
+
+            if isinstance(field, models.ForeignKey):
+                rel_model = field.remote_field.model
+
+                if rel_model == get_user_model():
+                    data.setdefault(field.name, owner)
+                elif rel_model.__name__.lower() in ("userprofile", "profile"):
+                    try:
+                        data.setdefault(field.name, owner.profile)
+                    except Exception:
+                        pass
+                else:
+                    # Last resort: try to create related object
+                    try:
+                        data.setdefault(field.name, rel_model.objects.create())
+                    except Exception:
+                        pass
+
+    # Common fields you almost certainly have
+    model_field_names = {f.name for f in Room._meta.fields}
+
+    if "title" in model_field_names:
+        data["title"] = "Contract Listing"
+
+    if "price_per_month" in model_field_names:
+        data["price_per_month"] = Decimal("1000.00")
+
+    if "property_owner" in model_field_names:
+        data["property_owner"] = owner
+
+    if "is_deleted" in model_field_names:
+        data["is_deleted"] = False
+
+    if "is_available" in model_field_names:
+        data["is_available"] = True
+
+    if "status" in model_field_names:
+        data.setdefault("status", "active")
+
+    if "listing_state" in model_field_names:
+        data.setdefault("listing_state", "active")
+
+    return Room.objects.create(**data)
 
 
-def test_my_listings_list_item_contract_api_and_v1():
-    c = make_authed_client()
-    api_path, v1_path, r_api, r_v1 = _find_first_listings_endpoint(c)
+def _create_min_booking(user, room) -> Booking:
+    """
+    Create a minimal Booking that satisfies NOT NULL constraints.
+    Your earlier failure showed Booking.start/end are required.
+    """
+    start = timezone.now() + timezone.timedelta(days=2)
+    end = start + timezone.timedelta(hours=1)
 
-    if not api_path:
-        pytest.skip("No My Listings endpoint found in candidates. Add your real path(s).")
+    data = {
+        "user": user,
+        "room": room,
+        "start": start,
+        "end": end,
+    }
 
-    assert r_api.status_code == r_v1.status_code
-    assert r_api.status_code in (200, 401, 403), r_api.data
-    if r_api.status_code != 200:
-        return
+    # If status exists and is NOT NULL, set a sensible default
+    booking_field_names = {f.name for f in Booking._meta.fields}
+    if "status" in booking_field_names:
+        data.setdefault("status", "active")
 
-    data_api = r_api.json()
-    data_v1 = r_v1.json()
-
-    first_api = _extract_first_item(data_api)
-    first_v1 = _extract_first_item(data_v1)
-
-    # If no items exist, we still keep parity; skip strict item check.
-    if not first_api and not first_v1:
-        return
-
-    assert isinstance(first_api, dict) and isinstance(first_v1, dict)
-    assert set(first_api.keys()) == set(first_v1.keys()), (
-        f"Listings item keys differ.\n/api: {sorted(first_api.keys())}\n/v1: {sorted(first_v1.keys())}"
-    )
-
-    if not REQUIRED_MY_LISTINGS_ITEM_FIELDS:
-        pytest.fail(
-            "REQUIRED_MY_LISTINGS_ITEM_FIELDS is empty.\n"
-            f"Paste your Figma required listing-item keys here. Current keys: {sorted(first_api.keys())}"
-        )
-
-    missing = REQUIRED_MY_LISTINGS_ITEM_FIELDS - set(first_api.keys())
-    assert not missing, f"Missing required My Listings item fields: {sorted(missing)}"
+    return Booking.objects.create(**data)
 
 
-def test_my_bookings_list_item_contract_api_and_v1():
-    c = make_authed_client()
+def test_my_listings_list_item_contract_v1():
+    c, user = make_authed_client()
 
-    r_api = c.get(MY_BOOKINGS_API)
-    r_v1 = c.get(MY_BOOKINGS_V1)
+    # Create at least one listing for this user so the endpoint returns non-empty list
+    _create_min_room_for_owner(user)
 
-    assert r_api.status_code == r_v1.status_code
-    assert r_api.status_code in (200, 401, 403), r_api.data
-    if r_api.status_code != 200:
-        return
+    r = c.get(MY_LISTINGS_V1)
+    assert r.status_code == 200, getattr(r, "content", b"")
 
-    data_api = r_api.json()
-    data_v1 = r_v1.json()
+    payload = r.json()
+    items = _normalise_list_payload(payload)
 
-    first_api = _extract_first_item(data_api)
-    first_v1 = _extract_first_item(data_v1)
+    assert isinstance(items, list), f"Expected list or paginated dict, got {type(payload)}"
+    assert items, "My Listings returned empty list even after creating a Room."
 
-    if not first_api and not first_v1:
-        return
+    first = items[0]
+    assert isinstance(first, dict), f"Expected list item dict, got {type(first)}"
 
-    assert isinstance(first_api, dict) and isinstance(first_v1, dict)
-    assert set(first_api.keys()) == set(first_v1.keys()), (
-        f"Bookings item keys differ.\n/api: {sorted(first_api.keys())}\n/v1: {sorted(first_v1.keys())}"
-    )
+    required_keys = {"id", "title"}
+    missing = required_keys - set(first.keys())
+    assert not missing, f"Missing required My Listings keys: {sorted(missing)}"
 
-    if not REQUIRED_MY_BOOKINGS_ITEM_FIELDS:
-        pytest.fail(
-            "REQUIRED_MY_BOOKINGS_ITEM_FIELDS is empty.\n"
-            f"Paste your Figma required booking-item keys here. Current keys: {sorted(first_api.keys())}"
-        )
 
-    missing = REQUIRED_MY_BOOKINGS_ITEM_FIELDS - set(first_api.keys())
-    assert not missing, f"Missing required My Bookings item fields: {sorted(missing)}"
+def test_my_bookings_list_item_contract_v1():
+    c, user = make_authed_client()
+
+    # Create a listing and a booking for this user so the endpoint returns non-empty list
+    room = _create_min_room_for_owner(user)
+    _create_min_booking(user, room)
+
+    r = c.get(MY_BOOKINGS_V1)
+    assert r.status_code == 200, getattr(r, "content", b"")
+
+    payload = r.json()
+    items = _normalise_list_payload(payload)
+
+    assert isinstance(items, list), f"Expected list or paginated dict, got {type(payload)}"
+    assert items, "My Bookings returned empty list even after creating a Booking."
+
+    first = items[0]
+    assert isinstance(first, dict), f"Expected list item dict, got {type(first)}"
+
+    required_keys = {"id"}
+    missing = required_keys - set(first.keys())
+    assert not missing, f"Missing required My Bookings keys: {sorted(missing)}"

@@ -163,7 +163,7 @@ def test_step1_missing_price_returns_400(auth_client, valid_step1_payload):
     response = auth_client.post(url, bad_payload, format="json")
 
     assert response.status_code == status.HTTP_400_BAD_REQUEST
-    assert "price_per_month" in response.data
+    assert "price_per_month" in response.data["errors"]
 
 
 @pytest.mark.django_db
@@ -182,7 +182,7 @@ def test_step1_negative_price_returns_400(auth_client, valid_step1_payload):
     response = auth_client.post(url, bad_payload, format="json")
 
     assert response.status_code == status.HTTP_400_BAD_REQUEST
-    assert "price_per_month" in response.data
+    assert "price_per_month" in response.data["errors"]
 
 
 # -------------------------------------------------
@@ -375,7 +375,7 @@ def test_view_available_days_everyday_mode_sets_empty_custom_dates(auth_client, 
     response = auth_client.post(url, payload, format="json")
     assert response.status_code == status.HTTP_201_CREATED, response.data
 
-    room_id = response.data["id"]
+    room_id = response.data["data"]["id"]
     room = Room.objects.get(pk=room_id)
 
     assert room.view_available_days_mode == "everyday"
@@ -403,7 +403,10 @@ def test_view_available_days_custom_mode_with_valid_dates(auth_client, valid_ste
     response = auth_client.post(url, payload, format="json")
     assert response.status_code == status.HTTP_201_CREATED, response.data
 
-    room_id = response.data["id"]
+    room_id = response.data["data"]["id"]
+    
+    
+    
     room = Room.objects.get(pk=room_id)
 
     assert room.view_available_days_mode == "custom"

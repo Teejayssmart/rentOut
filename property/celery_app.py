@@ -1,24 +1,21 @@
-# property/celery_app.py
 import os
-from celery import Celery
-from celery.schedules import crontab
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "property.settings")
 
-app = Celery("property")
+from celery import Celery
+from celery.schedules import crontab
 
-# Read CELERY_* settings from Django settings.py (namespace)
+app = Celery("property")
 app.config_from_object("django.conf:settings", namespace="CELERY")
 
-# Auto-discover tasks.py in installed apps
 app.autodiscover_tasks([
     "propertylist_app",
     "propertylist_app.notifications",
 ])
 
-# (Optional) Define schedules here if you prefer centralised config
-# NOTE: You can also keep schedules in settings.py; choose ONE place.
-# Beat schedule (single source of truth — do NOT also define in settings.py)
+# Register compatibility bridge task names.
+app.conf.imports = tuple(app.conf.get("imports", ())) + ("notifications.tasks",)
+
 app.conf.beat_schedule = {
     # Notifications
     "send-due-notifications-every-minute": {
@@ -31,12 +28,12 @@ app.conf.beat_schedule = {
     },
     "notify-upcoming-bookings-hourly": {
         "task": "propertylist_app.services.tasks.notify_upcoming_bookings",
-        "schedule": crontab(minute=0),  # every hour
+        "schedule": crontab(minute=0),
         "args": (24,),
     },
     "notify-completed-viewings-hourly": {
         "task": "propertylist_app.notifications.tasks.notify_completed_viewings",
-        "schedule": crontab(minute=0),  # every hour
+        "schedule": crontab(minute=0),
     },
 
     # Listings & accounts
@@ -60,8 +57,8 @@ app.conf.beat_schedule = {
         "task": "propertylist_app.tasks.task_tenancy_prompts_sweep",
         "schedule": crontab(hour=3, minute=20),
     },
-    "refresh_tenancy_status_and_review_windows_daily": {
+    "refresh-tenancy-status-and-review-windows-daily": {
         "task": "propertylist_app.tasks.task_refresh_tenancy_status_and_review_windows",
-        "schedule": 60 * 60 * 24,  # daily
+        "schedule": 60 * 60 * 24,
     },
 }

@@ -113,7 +113,6 @@ def test_appeal_does_not_auto_unhide_without_staff_action():
 
 
 @pytest.mark.django_db
-@pytest.mark.xfail(reason="Nice-to-have policy guard not implemented yet.")
 def test_cannot_file_appeal_for_active_room():
     """
     Optional policy we recommend: block appeals for rooms that are already ACTIVE.

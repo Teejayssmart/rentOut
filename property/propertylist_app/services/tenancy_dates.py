@@ -15,7 +15,7 @@ def compute_review_window(move_in_date, duration_months):
     end_midnight = timezone.make_aware(datetime.combine(end_date, time.min))
 
     review_open_at = end_midnight + timedelta(days=7)
-    review_deadline_at = review_open_at + timedelta(days=60)
+    review_deadline_at = review_open_at + timedelta(days=30)
     still_living_check_at = end_midnight - timedelta(days=7)
 
     return review_open_at, review_deadline_at, still_living_check_at

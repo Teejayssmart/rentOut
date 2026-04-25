@@ -8,7 +8,7 @@ from django.utils import timezone
 from django.contrib.auth import get_user_model
 from rest_framework.test import APIClient
 
-from propertylist_app.models import Room, Payment
+from propertylist_app.models import Room, RoomCategorie, Payment
 
 
 # =========================
@@ -26,15 +26,19 @@ def owner(db):
 
 @pytest.fixture
 def room(owner, db):
+    category = RoomCategorie.objects.create(
+        name="Payment Test Category",
+        active=True,
+    )
+
     return Room.objects.create(
         title="R1",
         description="d",
         price_per_month=500,
         location="SO14",
+        category=category,
         property_owner=owner,
         status="active",
-        is_available=True,
-        paid_until=None,
     )
 
 # =========================
@@ -67,8 +71,10 @@ def test_checkout_creates_session_for_owner_room(mocker, owner, room):
     )
     assert resp.status_code == 200, resp.content
     body = resp.json()
-    assert body.get("session_id") == "cs_test_123"
-    assert body.get("checkout_url") is not None
+    assert body.get("ok") is True
+    assert isinstance(body.get("data"), dict)
+    assert body["data"].get("session_id") == "cs_test_123"
+    assert body["data"].get("checkout_url") is not None
     assert Payment.objects.filter(room=room, user=owner).exists()
 
 

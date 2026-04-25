@@ -72,7 +72,7 @@ def draft_room(auth_client, valid_step1_payload):
     response = auth_client.post(url, payload, format="json")
     assert response.status_code == status.HTTP_201_CREATED, response.data
 
-    room_id = response.data["id"]
+    room_id = response.data["data"]["id"]
     return Room.objects.get(id=room_id)
 
 

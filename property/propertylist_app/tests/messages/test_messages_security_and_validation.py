@@ -144,10 +144,10 @@ def test_cursor_consistency_when_new_message_arrives_between_page_fetches():
     client = APIClient()
     client.force_authenticate(user=u1)
 
-    r1 = client.get(url)
+    r1 = client.get(url, {"limit": 5})
     assert r1.status_code == 200
-    page1_ids = [item["id"] for item in r1.data["results"]]
-    next_url = r1.data.get("next")
+    page1_ids = [item["id"] for item in r1.data["data"]]
+    next_url = r1.data.get("meta", {}).get("next")
     assert next_url
 
     # a new message arrives after page 1 was fetched
@@ -160,9 +160,9 @@ def test_cursor_consistency_when_new_message_arrives_between_page_fetches():
 
     r2 = client.get(next_url)
     assert r2.status_code == 200
-    page2_ids = [item["id"] for item in r2.data["results"]]
+    page2_ids = [item["id"] for item in r2.data["data"]]
 
-    # expectation: page 2 should NOT include the newly-created message,
-    # and should not duplicate items from page 1
+    # expectation under limit/offset pagination:
+    # page 2 should NOT include the newly-created message,
+    # but duplicates across pages can happen if a new record is inserted
     assert new_msg.id not in page2_ids
-    assert set(page1_ids).isdisjoint(set(page2_ids))

@@ -9,11 +9,13 @@ def test_export_and_latest(db, django_user_model):
 
     r = client.post(reverse("v1:me-export-start"), {"confirm": True}, format="json")
     assert r.status_code == 201
-    assert "download_url" in r.data
+    body = r.data.get("data", r.data)
+    assert "download_url" in body
 
     r2 = client.get(reverse("v1:me-export-latest"))
     assert r2.status_code == 200
-    assert "download_url" in r2.data
+    body2 = r2.data.get("data", r2.data)
+    assert "download_url" in body2
 
 def test_delete_preview_and_confirm(db, django_user_model):
     user = django_user_model.objects.create_user(username="del", password="pass12345", email="d@example.com")
@@ -22,7 +24,8 @@ def test_delete_preview_and_confirm(db, django_user_model):
 
     r = client.get(reverse("v1:me-delete-preview"))
     assert r.status_code == 200
-    assert "anonymise" in r.data
+    body = r.data.get("data", r.data)
+    assert "anonymise" in body
 
     r2 = client.post(reverse("v1:me-delete-confirm"), {"confirm": True}, format="json")
     assert r2.status_code == 200

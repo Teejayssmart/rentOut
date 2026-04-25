@@ -109,4 +109,8 @@ def test_login_requires_captcha_when_enabled(settings, monkeypatch):
         **_ip_headers(),
     )
     assert r_ok.status_code == 200, r_ok.data
-    assert "access" in r_ok.data
+    assert r_ok.data.get("ok") is True
+    assert "tokens" in r_ok.data.get("data", {})
+    assert "access" in r_ok.data["data"]["tokens"]
+    assert "refresh" in r_ok.data["data"]["tokens"]
+

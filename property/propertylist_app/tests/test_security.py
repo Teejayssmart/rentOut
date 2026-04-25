@@ -17,6 +17,7 @@ def _auth_headers(ip="127.0.0.10"):
     return {"REMOTE_ADDR": ip}
 
 
+
 @override_settings(
     # Keep your lockout logic easy to trigger in tests
     LOGIN_FAIL_LIMIT=3,
@@ -101,7 +102,7 @@ class TestLoginLockout(APITestCase):
             **_auth_headers(),
         )
         self.assertEqual(r4.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
-
+class TestRegisterThrottle(APITestCase):
     def test_success_clears_failures(self):
         # 1 wrong attempt (under lockout)
         self.client.post(
@@ -119,12 +120,25 @@ class TestLoginLockout(APITestCase):
             **_auth_headers(),
         )
         self.assertEqual(ok.status_code, status.HTTP_200_OK, ok.content)
-        self.assertIn("access", ok.data)
+        self.assertTrue(ok.data.get("ok") is True)
+        self.assertIn("data", ok.data)
+        self.assertIn("tokens", ok.data["data"])
+        self.assertIn("access", ok.data["data"]["tokens"])
+        self.assertIn("refresh", ok.data["data"]["tokens"])
+
 
 
 class TestRegisterThrottle(APITestCase):
     @override_settings(
         ENABLE_CAPTCHA=False,  # keep CAPTCHA out of this test
+        
+        CACHES={
+            "default": {
+                "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+                "LOCATION": "register-throttle-test-cache",
+            }
+        },
+        
         REST_FRAMEWORK={
             "DEFAULT_AUTHENTICATION_CLASSES": (
                 "rest_framework_simplejwt.authentication.JWTAuthentication",
@@ -151,7 +165,7 @@ class TestRegisterThrottle(APITestCase):
             "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
         },
     )
-    @pytest.mark.xfail(reason="Throttle counters isolated per test run (cache randomised)")
+    
     def test_register_anon_throttle_hits_limit(self):
         client = APIClient()
         url = reverse("v1:auth-register")
@@ -163,8 +177,10 @@ class TestRegisterThrottle(APITestCase):
                 {
                     "username": f"user{i}",
                     "email": f"user{i}@example.com",
-                    "password": "pass12345",
+                    "password": "Pass12345!",
                     "terms_accepted": True,
+                    "terms_version": "v1",
+                    "role": "seeker",
                 },
                 format="json",
                 **_auth_headers(ip="203.0.113.10"),
@@ -177,8 +193,10 @@ class TestRegisterThrottle(APITestCase):
             {
                 "username": "user2",
                 "email": "user2@example.com",
-                "password": "pass12345",
+                "password": "Pass12345!",
                 "terms_accepted": True,
+                "terms_version": "v1",
+                "role": "seeker",
             },
             format="json",
             **_auth_headers(ip="203.0.113.10"),

@@ -10,6 +10,10 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
+
+
+
+
 from pathlib import Path
 from datetime import timedelta
 import os
@@ -27,6 +31,10 @@ load_dotenv(BASE_DIR / ".env")
 # Cache TTL for geocode results (seconds)
 GEO_CACHE_TTL_SECONDS = 60 * 60 * 24 * 7  # 7 days
 
+
+OTP_EXPIRY_MINUTES = 10
+
+
 # -----------------------------
 # Core security / environment
 # -----------------------------
@@ -42,15 +50,55 @@ if not SECRET_KEY:
 
 DEBUG = os.getenv("DJANGO_DEBUG", "true").lower() in {"1", "true", "yes"}
 
+# -----------------------------
+# Production-grade security (staging + production)
+# -----------------------------
+if not DEBUG:
+    # Render terminates TLS and forwards requests to Django.
+    # This tells Django the original scheme was https.
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
+    # Force HTTPS
+    SECURE_SSL_REDIRECT = True
+
+    # Secure cookies over HTTPS only
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+
+    # Sensible baseline headers
+    SECURE_CONTENT_TYPE_NOSNIFF = True
+    SECURE_BROWSER_XSS_FILTER = True
+    X_FRAME_OPTIONS = "DENY"
+
+    # HSTS (start low; increase later once confirmed stable)
+    SECURE_HSTS_SECONDS = int(os.getenv("SECURE_HSTS_SECONDS", "3600"))  # 1 hour
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
+
+
+
 
 def _csv_env(name: str, default: str = ""):
     raw = os.getenv(name, default)
     return [x.strip() for x in raw.split(",") if x.strip()]
 
-# Always allow any *.onrender.com host + your explicit list from env
-ALLOWED_HOSTS = _csv_env("DJANGO_ALLOWED_HOSTS", "127.0.0.1,localhost")
-if ".onrender.com" not in ALLOWED_HOSTS:
-    ALLOWED_HOSTS.append(".onrender.com")
+# ALLOWED_HOSTS:
+# - production/staging (DEBUG=False): must be explicit and strict (no wildcard)
+# - local/dev (DEBUG=True): allow local + convenience wildcard for Render previews if needed
+ALLOWED_HOSTS = _csv_env(
+    "DJANGO_ALLOWED_HOSTS",
+    "127.0.0.1,localhost" if DEBUG else "",
+)
+
+if not DEBUG and not ALLOWED_HOSTS:
+    raise ImproperlyConfigured("DJANGO_ALLOWED_HOSTS must be set in production")
+
+if DEBUG:
+    # Convenience for dev only (never in production)
+    if ".onrender.com" not in ALLOWED_HOSTS:
+        ALLOWED_HOSTS.append(".onrender.com")
+
+
 
 
 # -----------------------------
@@ -59,11 +107,13 @@ if ".onrender.com" not in ALLOWED_HOSTS:
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")
 STRIPE_PUBLISHABLE_KEY = os.getenv("STRIPE_PUBLISHABLE_KEY", "")
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
-SITE_URL = os.getenv("SITE_URL", "http://127.0.0.1:8000")
+SITE_URL = os.getenv("SITE_URL", "").strip()
 
 # Frontend base URL used for links in emails
 FRONTEND_BASE_URL = os.getenv("FRONTEND_BASE_URL", "https://rentout.co.uk")
-
+IDEAL_POSTCODES_API_KEY = os.getenv("IDEAL_POSTCODES_API_KEY", "").strip()
+GOOGLE_WEB_CLIENT_ID = os.getenv("GOOGLE_WEB_CLIENT_ID", "").strip()
+APPLE_AUDIENCE = os.getenv("APPLE_AUDIENCE", "").strip()
 # -----------------------------
 # Application definition
 # -----------------------------
@@ -86,6 +136,7 @@ INSTALLED_APPS = [
     "django_celery_beat",
     "user_app",
    
+   
 
 
 ]
@@ -93,6 +144,7 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
+    "property.middleware.RequestIDMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -171,10 +223,14 @@ if DEBUG:
 else:
     STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
 
-
-
+#-----Media--------#
 MEDIA_URL = "/media/"
-MEDIA_ROOT = BASE_DIR / "media"
+
+# Use Render Disk when available so uploads persist across deploys
+RENDER_DISK_PATH = os.environ.get("RENDER_DISK_PATH", "/var/data")
+MEDIA_ROOT = Path(os.environ.get("MEDIA_ROOT", os.path.join(RENDER_DISK_PATH, "media")))
+
+
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
@@ -185,42 +241,53 @@ REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
         "rest_framework_simplejwt.authentication.JWTAuthentication",
     ],
-    "DEFAULT_PERMISSION_CLASSES": [
-        "rest_framework.permissions.AllowAny",
+        "DEFAULT_PERMISSION_CLASSES": [
+        "rest_framework.permissions.IsAuthenticated",
     ],
     "DEFAULT_THROTTLE_CLASSES": [
         "rest_framework.throttling.UserRateThrottle",
         "rest_framework.throttling.AnonRateThrottle",
         "rest_framework.throttling.ScopedRateThrottle",
     ],
+    
     "DEFAULT_THROTTLE_RATES": {
-        "user": "10000/hour",
-        "anon": "10000/hour",
-        "login": "10000/hour",
-        "register": "10000/hour",
-        "register_anon": "10000/hour",
-        "message_user": "10000/hour",
-        "messaging": "10000/hour",
-        "review-create": "10000/hour",
-        "review-detail": "10000/hour",
-        "password-reset": "10000/hour",
-        "password-reset-confirm": "10000/hour",
-        "report-create": "10000/hour",
-        "moderation": "10000/hour",
-        "otp-verify": "10000/hour",
-        "otp-resend": "10000/hour",
+        
+        "user": "120/hour",
+        "anon": "30/hour",
+
+        "login": "5/minute",
+        "register": "5/hour",
+        "register_anon": "3/hour",
+
+        "message_user": "12/hour",
+        "messaging": "24/hour",
+
+        "review-create": "5/hour",
+
+        "password-reset": "3/hour",
+        "password-reset-confirm": "5/hour",
+
+        "report-create": "3/hour",
+        "moderation": "30/hour",
+
+        "otp-verify": "5/minute",
+        "otp-resend": "2/hour",
     },
+    
+        
+        
+        
+    
     "DEFAULT_FILTER_BACKENDS": [
         "django_filters.rest_framework.DjangoFilterBackend",
         "rest_framework.filters.OrderingFilter",
     ],
-    "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.LimitOffsetPagination",
+    "DEFAULT_PAGINATION_CLASS": "propertylist_app.api.pagination.StandardLimitOffsetPagination",
     "PAGE_SIZE": 20,
     "DEFAULT_RENDERER_CLASSES": (
-        "rest_framework.renderers.JSONRenderer",
+        "propertylist_app.api.renderers.EnvelopeJSONRenderer",
     ),
     "DEFAULT_VERSIONING_CLASS": "rest_framework.versioning.URLPathVersioning",
-    "DEFAULT_VERSION": None,   
     "ALLOWED_VERSIONS": ["v1"],
     "VERSION_PARAM": "version",
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
@@ -228,21 +295,52 @@ REST_FRAMEWORK = {
     "DEFAULT_VERSION": "v1",
 }
 
+
+OTP_EXPIRY_MINUTES = 10
+OTP_MAX_ATTEMPTS = 5
+OTP_RESEND_COOLDOWN_SECONDS = 60
+
+
+
+# Reason: avoid hardcoding and ensure Swagger "Servers" matches the current environment domain.
+# property/settings.py
+
+# property/settings.py
+
 SPECTACULAR_SETTINGS = {
     "TITLE": "RentOut API",
-    "DESCRIPTION": "SpareRoom-style listings, bookings, chat, payments, and moderation.",
-    "VERSION": "1.0.0",
+    "VERSION": "v1",
+    "DESCRIPTION": "Backend API for RentOut property platform.",
+    "SERVE_INCLUDE_SCHEMA": False,
+    "SCHEMA_PATH_PREFIX": r"/api/v1",
     "SERVERS": [
-        {"url": "https://rentout-my5r.onrender.com", "description": "staging"},
+        *(
+            [{
+                "url": SITE_URL.rstrip("/"),
+                "description": "Current environment",
+            }]
+            if SITE_URL
+            else []
+        ),
+        {
+            "url": "https://rentout-staging-v2.onrender.com",
+            "description": "Staging",
+        },
     ],
-    "SWAGGER_UI_DIST": "SIDECAR",
-    "SWAGGER_UI_FAVICON_HREF": "SIDECAR",
-    "REDOC_DIST": "SIDECAR",
     
+    "ENUM_NAME_OVERRIDES": {
+        "RoomStatusEnum": "propertylist_app.api.schema_enums.ROOM_STATUS_CHOICES",
+        "BookingStatusEnum": "propertylist_app.api.schema_enums.BOOKING_STATUS_CHOICES",
+        "ReviewRoleEnum": "propertylist_app.api.schema_enums.REVIEW_ROLE_CHOICES",
+        "UserRoleEnum": "propertylist_app.api.schema_enums.USER_ROLE_CHOICES",
+        "SmokingEnum": "propertylist_app.api.schema_enums.SMOKING_CHOICES",
+        "YesNoNoPreferenceEnum": "propertylist_app.api.schema_enums.YES_NO_NO_PREFERENCE_CHOICES",
+        "StripeIntentStatusEnum": "propertylist_app.api.schema_enums.STRIPE_INTENT_STATUS_CHOICES",
+    },
+    "POSTPROCESSING_HOOKS": [
+        "propertylist_app.api.schema_hooks.wrap_success_responses",
+    ],
 }
-
-
-
 
 
 SIMPLE_JWT = {
@@ -256,13 +354,16 @@ SIMPLE_JWT = {
 # -----------------------------
 # Security / Abuse controls
 # -----------------------------
-ENABLE_CAPTCHA = os.getenv("ENABLE_CAPTCHA", "false").lower() in {"1", "true", "yes"}
-ENABLE_SOCIAL_AUTH_STUB = False
+ENABLE_CAPTCHA = os.getenv("ENABLE_CAPTCHA", "true" if not DEBUG else "false").lower() in {"1", "true", "yes"}
+CAPTCHA_PROVIDER = os.getenv("CAPTCHA_PROVIDER", "recaptcha")
+CAPTCHA_SECRET = os.getenv("CAPTCHA_SECRET", "")
+
+if ENABLE_CAPTCHA and not CAPTCHA_SECRET:
+    raise ImproperlyConfigured("CAPTCHA_SECRET must be set when CAPTCHA is enabled")
+
 
 ACCOUNT_DELETION_GRACE_DAYS = 7
 
-CAPTCHA_PROVIDER = os.getenv("CAPTCHA_PROVIDER", "recaptcha")
-CAPTCHA_SECRET = os.getenv("CAPTCHA_SECRET", "")
 
 LOGIN_FAIL_LIMIT = int(os.getenv("LOGIN_FAIL_LIMIT", "5"))
 LOGIN_LOCKOUT_SECONDS = int(os.getenv("LOGIN_LOCKOUT_SECONDS", "900"))
@@ -273,20 +374,46 @@ LOGIN_LOCKOUT_SECONDS = int(os.getenv("LOGIN_LOCKOUT_SECONDS", "900"))
 # -----------------------------
 CORS_ALLOWED_ORIGINS = _csv_env(
     "CORS_ALLOWED_ORIGINS",
-    "http://localhost:3000,http://127.0.0.1:3000",
+    "http://localhost:3000,http://127.0.0.1:3000" if DEBUG else "",
 )
+
+if not DEBUG and not CORS_ALLOWED_ORIGINS:
+    raise ImproperlyConfigured("CORS_ALLOWED_ORIGINS must be set in production")
 
 CSRF_TRUSTED_ORIGINS = _csv_env(
     "CSRF_TRUSTED_ORIGINS",
-    "http://localhost:3000,http://127.0.0.1:3000",
+    "http://localhost:3000,http://127.0.0.1:3000" if DEBUG else "",
 )
+
+if not DEBUG and not CSRF_TRUSTED_ORIGINS:
+    raise ImproperlyConfigured("CSRF_TRUSTED_ORIGINS must be set in production")
 # -----------------------------
 # Email
 # -----------------------------
 EMAIL_BACKEND = os.getenv(
-    "EMAIL_BACKEND", "django.core.mail.backends.console.EmailBackend"
+    "EMAIL_BACKEND",
+    "django.core.mail.backends.smtp.EmailBackend" if not DEBUG else "django.core.mail.backends.console.EmailBackend",
 )
+
+EMAIL_HOST = os.getenv("EMAIL_HOST", "")
+EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
+EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "true").lower() == "true"
+EMAIL_USE_SSL = os.getenv("EMAIL_USE_SSL", "false").lower() == "true"
+EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "")
+EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
+
 DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", "no-reply@rentout.local")
+SERVER_EMAIL = os.getenv("SERVER_EMAIL", DEFAULT_FROM_EMAIL)
+
+if not DEBUG:
+    missing_email = [
+        k for k in ["EMAIL_HOST", "EMAIL_HOST_USER", "EMAIL_HOST_PASSWORD"]
+        if not os.getenv(k)
+    ]
+    if missing_email:
+        raise ImproperlyConfigured(
+            f"Missing required email env vars in production: {', '.join(missing_email)}"
+        )
 
 # -----------------------------
 # Media policy knobs used by validators
@@ -305,6 +432,8 @@ if USE_S3:
     DEFAULT_FILE_STORAGE = "storages.backends.s3boto3.S3Boto3Storage"
 
     AWS_STORAGE_BUCKET_NAME = os.getenv("AWS_STORAGE_BUCKET_NAME", "")
+    if not AWS_STORAGE_BUCKET_NAME:
+        raise ImproperlyConfigured("AWS_STORAGE_BUCKET_NAME must be set when USE_S3=True")
     AWS_S3_REGION_NAME = os.getenv("AWS_S3_REGION_NAME", "eu-west-2")
     AWS_S3_SIGNATURE_VERSION = "s3v4"
     AWS_S3_ADDRESSING_STYLE = "virtual"
@@ -336,14 +465,22 @@ WEBHOOK_SECRETS = {
 # -----------------------------
 # Caching
 # -----------------------------
+REDIS_URL = os.getenv("REDIS_CACHE_URL")
+
+if not REDIS_URL and not DEBUG:
+    raise ImproperlyConfigured("REDIS_CACHE_URL must be set in production")
+
 CACHES = {
     "default": {
-        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
-        "LOCATION": "throttle-cache",
+        "BACKEND": "django.core.cache.backends.redis.RedisCache",
+        "LOCATION": REDIS_URL or "redis://127.0.0.1:6379/2",
+        "KEY_PREFIX": "rentcrib",
     }
 }
 
-CACHE_KEY_PREFIX = "rentout"
+CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "redis://127.0.0.1:6379/0")
+CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", "redis://127.0.0.1:6379/1")
+
 CACHE_DEFAULT_TTL = 60
 CACHE_SEARCH_TTL = 120
 
@@ -353,15 +490,26 @@ CACHE_SEARCH_TTL = 120
 GDPR_RETENTION = {
     "export_link_days": 7,
 }
-GDPR_HASH_SALT = os.getenv("GDPR_HASH_SALT", "change-this-in-prod")
+GDPR_HASH_SALT = os.getenv("GDPR_HASH_SALT", "dev-insecure-salt")
+
+if not DEBUG and GDPR_HASH_SALT == "dev-insecure-salt":
+    raise ImproperlyConfigured("GDPR_HASH_SALT must be set in production")
 
 # -----------------------------
 # Celery (single canonical configuration)
 # NOTE: Beat schedule must live in celery_app.py (NOT here)
 # -----------------------------
-CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "redis://127.0.0.1:6379/0")
-CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", "redis://127.0.0.1:6379/1")
+
 CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
+
+# Celery routing safety: even if django-celery-beat PeriodicTask queue/routing_key are NULL,
+# Celery will still publish tasks to the queue our worker consumes.
+CELERY_TASK_DEFAULT_QUEUE = "celery"
+CELERY_TASK_DEFAULT_ROUTING_KEY = "celery"
+CELERY_TASK_DEFAULT_EXCHANGE = "celery"
+CELERY_TASK_DEFAULT_EXCHANGE_TYPE = "direct"
+
+
 
 CELERY_TASK_ALWAYS_EAGER = False
 CELERY_TASK_TIME_LIMIT = 60
@@ -375,5 +523,35 @@ CELERY_TASK_ROUTES = {
 
 
 
-
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "filters": {
+        "request_id": {"()": "property.logging.RequestIDLogFilter"},
+    },
+    "formatters": {
+        "standard": {
+            "format": "%(levelname)s %(asctime)s request_id=%(request_id)s %(name)s %(message)s"
+        },
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "filters": ["request_id"],
+            "formatter": "standard",
+        },
+    },
+    "root": {
+        "handlers": ["console"],
+        "level": "INFO",
+    },
+    # Keep django.request visible (500s etc)
+    "loggers": {
+        "django.request": {
+            "handlers": ["console"],
+            "level": "WARNING",
+            "propagate": True,
+        },
+    },
+}
 

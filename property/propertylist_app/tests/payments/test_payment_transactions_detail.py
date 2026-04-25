@@ -3,7 +3,7 @@ from django.urls import reverse
 from rest_framework.test import APIClient
 from django.contrib.auth import get_user_model
 
-from propertylist_app.models import Payment, UserProfile, Room
+from propertylist_app.models import Payment, Room, RoomCategorie, UserProfile
 
 
 @pytest.mark.django_db
@@ -19,8 +19,20 @@ def test_user_can_view_own_transaction_detail():
     User = get_user_model()
     user = User.objects.create_user(username="u1", password="pass12345")
     UserProfile.objects.create(user=user, stripe_customer_id="cus_1")
+    
+    category = RoomCategorie.objects.create(
+            name="Payment Detail Category 1",
+            active=True,
+        )
 
-    room = Room.objects.create(title="My Room", property_owner=user, price_per_month=500)
+    room = Room.objects.create(
+        title="My Room",
+        description="Payment detail room",
+        price_per_month=500,
+        location="SO14",
+        category=category,
+        property_owner=user,
+    )
 
     payment = Payment.objects.create(
         user=user,
@@ -51,8 +63,21 @@ def test_user_cannot_view_someone_else_transaction():
 
     UserProfile.objects.create(user=user1, stripe_customer_id="cus_1")
     UserProfile.objects.create(user=user2, stripe_customer_id="cus_2")
-
-    room = Room.objects.create(title="Other Room", property_owner=user2, price_per_month=600)
+    
+    category = RoomCategorie.objects.create(
+            name="Payment Detail Category 2",
+            active=True,
+        )
+            
+    
+    room = Room.objects.create(
+        title="Other Room",
+        description="Other payment detail room",
+        price_per_month=600,
+        location="SO15",
+        category=category,
+        property_owner=user2,
+    )
 
     payment = Payment.objects.create(
         user=user2,

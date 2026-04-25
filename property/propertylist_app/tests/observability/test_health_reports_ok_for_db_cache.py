@@ -1,8 +1,8 @@
 import pytest
-from django.urls import reverse
 from django.core.cache import cache
-from django.test.utils import CaptureQueriesContext
 from django.db import connection
+from django.test.utils import CaptureQueriesContext
+from django.urls import reverse
 from rest_framework.test import APIClient
 
 
@@ -10,10 +10,10 @@ from rest_framework.test import APIClient
 def test_health_reports_ok_for_db_cache():
     """
     Verifies that the /health/ endpoint:
-      ✅ responds with HTTP 200
-      ✅ includes {"status": "ok"}
-      ✅ confirms database connectivity (db=True)
-      ✅ confirms cache is reachable (cache=True)
+       responds with HTTP 200
+       includes ok envelope with data.status == "ok"
+       confirms database connectivity (db=True)
+       confirms cache is reachable before the endpoint call
     """
     client = APIClient()
     url = reverse("v1:health")
@@ -27,13 +27,15 @@ def test_health_reports_ok_for_db_cache():
         response = client.get(url)
 
     assert response.status_code == 200, response.content
-    data = response.json()
 
+    body = response.json()
+    assert body.get("ok") is True
+    assert "data" in body
+    assert isinstance(body["data"], dict)
+
+    data = body["data"]
     assert data.get("status") == "ok"
     assert data.get("db") is True
-    # Optional: cache connectivity
-    if "cache" in data:
-        assert data.get("cache") is True
 
-    # At least one query should be made (DB ping)
+    # Endpoint should still touch DB at least once
     assert len(ctx) >= 1

@@ -29,12 +29,14 @@ def _assert_ok_envelope(resp):
     assert "data" in resp.data, resp.data
 
 
+
 def test_a3_homepage_returns_ok_envelope():
     c = APIClient()
 
     # reason: avoid reverse() naming issues; assert the real integration path
-    r = c.get("/api/home/")
+    r = c.get("/api/v1/home/")
     _assert_ok_envelope(r)
+
 
 
 def test_a3_thread_mark_read_returns_ok_envelope():
@@ -47,7 +49,8 @@ def test_a3_thread_mark_read_returns_ok_envelope():
     # reason: your Message model uses "body" (not "content")
     Message.objects.create(thread=thread, sender=u, body="hi")
 
-    r = c.post(f"/api/messages/threads/{thread.id}/read/", {}, format="json")
+    r = c.post(f"/api/v1/messages/threads/{thread.id}/read/", {}, format="json")
+
     _assert_ok_envelope(r)
 
 
@@ -80,7 +83,7 @@ def test_a3_booking_cancel_returns_ok_envelope():
         status="active",
     )
 
-    r = c.post(f"/api/bookings/{booking.id}/cancel/", {}, format="json")
+    r = c.post(f"/api/v1/bookings/{booking.id}/cancel/", {}, format="json")
     _assert_ok_envelope(r)
 
 
@@ -101,5 +104,5 @@ def test_a3_room_save_toggle_returns_ok_envelope():
         property_owner=owner,
     )
 
-    r = c.post(f"/api/rooms/{room.id}/save-toggle/", {}, format="json")
+    r = c.post(f"/api/v1/rooms/{room.id}/save-toggle/", {}, format="json")
     _assert_ok_envelope(r)

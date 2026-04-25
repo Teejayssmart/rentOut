@@ -4,7 +4,7 @@ from django.contrib.auth import get_user_model
 from propertylist_app.models import Room, RoomCategorie, Review
 from datetime import timedelta
 from django.utils import timezone
-from propertylist_app.models import Booking
+from propertylist_app.models import Booking, Review, Room, RoomCategorie, Tenancy
 
 User = get_user_model()
 
@@ -31,15 +31,23 @@ def test_delete_preview_counts():
     )
 
     booking = Booking.objects.create(
-        user=tenant,
+    user=tenant,
+    room=room,
+    start=timezone.now() - timedelta(days=40),
+    end=timezone.now() - timedelta(days=35),
+    status=Booking.STATUS_ACTIVE,
+    )
+
+    tenancy = Tenancy.objects.create(
         room=room,
-        start=timezone.now() - timedelta(days=40),
-        end=timezone.now() - timedelta(days=35),
-        status=Booking.STATUS_ACTIVE,
+        landlord=user,
+        tenant=tenant,
+        move_in_date=(timezone.now() - timedelta(days=60)).date(),
+        duration_months=1,
     )
 
     Review.objects.create(
-        booking=booking,
+        tenancy=tenancy,
         reviewer=tenant,
         reviewee=user,
         role=Review.ROLE_TENANT_TO_LANDLORD,
@@ -56,8 +64,10 @@ def test_delete_preview_counts():
     assert r.status_code == 200
     data = r.json()
 
-    # New structure: look under "anonymise" for user-generated objects
-    anon = data.get("anonymise", {})
+    # API uses the standard {ok, data, message} envelope
+    payload = data.get("data", {})
+
+    anon = payload.get("anonymise", {})
     assert "rooms" in anon and "reviews" in anon and "messages" in anon, data
 
     # We created exactly 1 room and 1 review; messages may be 0 (tolerant check)
@@ -66,5 +76,5 @@ def test_delete_preview_counts():
     assert anon["messages"] >= 0
 
     # Optional: ensure other sections exist (tolerant—just presence)
-    assert "delete" in data
-    assert "retain_non_pii" in data
+    assert "delete" in payload
+    assert "retain_non_pii" in payload

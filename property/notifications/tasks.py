@@ -1,11 +1,17 @@
 """
-Bridge module so imports like `from notifications.tasks import ...` keep working.
+Bridge module so old task paths keep working.
 
-Your actual implementations live in:
-- propertylist_app.notifications.tasks
+Celery Beat uses:
+- notifications.tasks.send_due_notifications
+- notifications.tasks.notify_listing_expiring
 """
 
-from propertylist_app.notifications.tasks import (  # noqa: F401
+from propertylist_app.notifications.tasks import (
     send_due_notifications,
     notify_listing_expiring,
+)
+
+__all__ = (
+    "send_due_notifications",
+    "notify_listing_expiring",
 )

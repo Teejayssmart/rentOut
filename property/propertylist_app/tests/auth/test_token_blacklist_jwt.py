@@ -16,21 +16,21 @@ def test_logout_blacklists_refresh_token_cannot_refresh_anymore(api_client, djan
 
     login_url = reverse("v1:auth-login")
     logout_url = reverse("v1:auth-logout")
-    refresh_url = reverse("token_refresh")
+    refresh_url = reverse("v1:auth-token-refresh")
 
     # Login expects "identifier"
     resp = api_client.post(login_url, {"identifier": "bob", "password": "pass1234"}, format="json")
     assert resp.status_code == status.HTTP_200_OK, resp.data
 
-    access = resp.data["access"]
-    refresh = resp.data["refresh"]
+    access = resp.data["data"]["tokens"]["access"]
+    refresh = resp.data["data"]["tokens"]["refresh"]
 
     # Logout blacklists refresh token
     api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
     out = api_client.post(logout_url, {"refresh": refresh}, format="json")
     assert out.status_code in (200, 204), out.data
 
-    # Refresh should now fail
+    # Refresh should now fail (blacklisted)
     r2 = api_client.post(refresh_url, {"refresh": refresh}, format="json")
     assert r2.status_code in (400, 401), r2.data
 
@@ -46,13 +46,13 @@ def test_blacklisted_refresh_token_stays_blacklisted_on_reuse(api_client, django
 
     login_url = reverse("v1:auth-login")
     logout_url = reverse("v1:auth-logout")
-    refresh_url = reverse("token_refresh")
+    refresh_url = reverse("v1:auth-token-refresh")
 
     resp = api_client.post(login_url, {"identifier": "kate", "password": "pass1234"}, format="json")
     assert resp.status_code == status.HTTP_200_OK, resp.data
 
-    access = resp.data["access"]
-    refresh = resp.data["refresh"]
+    access = resp.data["data"]["tokens"]["access"]
+    refresh = resp.data["data"]["tokens"]["refresh"]
 
     api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
     out = api_client.post(logout_url, {"refresh": refresh}, format="json")

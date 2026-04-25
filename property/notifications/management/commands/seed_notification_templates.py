@@ -40,6 +40,100 @@ TEMPLATES = [
             "Renew now: {{ renew_url }}\n"
         ),
     },
+    
+    
+        # -------------------------
+    # Tenancy lifecycle
+    # -------------------------
+    {
+        "key": "tenancy.proposed",
+        "subject": "Tenancy proposal for {{ room_title }}",
+        "body": (
+            "Hi {{ user.first_name }},\n\n"
+            "A tenancy proposal was sent for: {{ room_title }}.\n\n"
+            "Open here: {{ cta_url }}\n"
+        ),
+    },
+    {
+        "key": "tenancy.updated",
+        "subject": "Tenancy proposal updated for {{ room_title }}",
+        "body": (
+            "Hi {{ user.first_name }},\n\n"
+            "The tenancy proposal was updated for: {{ room_title }}.\n\n"
+            "Open here: {{ cta_url }}\n"
+        ),
+    },
+    {
+        "key": "tenancy.confirmed",
+        "subject": "Tenancy confirmed for {{ room_title }}",
+        "body": (
+            "Hi {{ user.first_name }},\n\n"
+            "Tenancy is confirmed for: {{ room_title }}.\n\n"
+            "Open here: {{ cta_url }}\n"
+        ),
+    },
+    {
+        "key": "tenancy.cancelled",
+        "subject": "Tenancy cancelled for {{ room_title }}",
+        "body": (
+            "Hi {{ user.first_name }},\n\n"
+            "Tenancy was cancelled for: {{ room_title }}.\n\n"
+            "Open here: {{ cta_url }}\n"
+        ),
+    },
+
+    # -------------------------
+    # Tenancy prompts
+    # -------------------------
+    {
+        "key": "tenancy.still_living_check",
+        "subject": "Tenancy check for {{ room_title }}",
+        "body": (
+            "Hi {{ user.first_name }},\n\n"
+            "Quick check: is the tenant still living at {{ room_title }}?\n\n"
+            "Respond here: {{ cta_url }}\n"
+        ),
+    },
+    {
+        "key": "tenancy.review_available",
+        "subject": "Review available for {{ room_title }}",
+        "body": (
+            "Hi {{ user.first_name }},\n\n"
+            "You can now leave a review for {{ room_title }}.\n\n"
+            "Open here: {{ cta_url }}\n"
+        ),
+    },
+
+    # -------------------------
+    # Tenancy extension
+    # -------------------------
+    {
+        "key": "tenancy.extension.proposed",
+        "subject": "Tenancy extension proposed for {{ room_title }}",
+        "body": (
+            "Hi {{ user.first_name }},\n\n"
+            "A tenancy extension was proposed for {{ room_title }}.\n\n"
+            "Open here: {{ cta_url }}\n"
+        ),
+    },
+    {
+        "key": "tenancy.extension.accepted",
+        "subject": "Tenancy extension accepted for {{ room_title }}",
+        "body": (
+            "Hi {{ user.first_name }},\n\n"
+            "The tenancy extension was accepted for {{ room_title }}.\n\n"
+            "Open here: {{ cta_url }}\n"
+        ),
+    },
+    {
+        "key": "tenancy.extension.rejected",
+        "subject": "Tenancy extension rejected for {{ room_title }}",
+        "body": (
+            "Hi {{ user.first_name }},\n\n"
+            "The tenancy extension was rejected for {{ room_title }}.\n\n"
+            "Open here: {{ cta_url }}\n"
+        ),
+    },
 ]
 
 class Command(BaseCommand):

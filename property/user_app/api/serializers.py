@@ -2,7 +2,7 @@ from django.contrib.auth.models import User
 from rest_framework import serializers
 from django.core.validators import RegexValidator
 from propertylist_app.models import Payment
-
+from propertylist_app.validators import normalise_email, sanitize_plain_text
 
 
 class RegistrationSerializer(serializers.ModelSerializer):
@@ -14,11 +14,13 @@ class RegistrationSerializer(serializers.ModelSerializer):
         extra_kwargs = {'password': {'write_only': True}}
 
     def validate_email(self, value):
-        if User.objects.filter(email=value).exists():
+        value = normalise_email(value)
+        if User.objects.filter(email__iexact=value).exists():
             raise serializers.ValidationError("This email is already registered.")
         return value
 
     def validate_username(self, value):
+        value = sanitize_plain_text(value, max_len=30)
         if len(value) < 3 or len(value) > 30:
             raise serializers.ValidationError("Username must be between 3 and 30 characters.")
         RegexValidator(

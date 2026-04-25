@@ -19,6 +19,7 @@ from propertylist_app.models import (
     Message,
     DataExport,
     Booking,
+    Tenancy,
 )
 
 # NOTE: We call concrete URLs to avoid depending on URL names.
@@ -42,7 +43,9 @@ def test_export_creates_artifact(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "MEDIA_ROOT", tmp_path, raising=False)
     # Keep MEDIA_URL; default in settings is '/media/' – fine for this test.
 
-    user = User.objects.create_user(username="gdpr_user", password="pass123", email="u@example.com")
+    user = User.objects.create_user(
+        username="gdpr_user", password="pass123", email="u@example.com"
+    )
     client = APIClient()
     client.force_authenticate(user=user)
 
@@ -50,11 +53,17 @@ def test_export_creates_artifact(tmp_path, monkeypatch):
     assert r.status_code == 201, r.content
 
     data = r.json()
-    assert "download_url" in data
-    assert data.get("status") in {"processing", "ready", None, ""}  # build_export_zip may update to "ready"
+    payload = data.get("data", {})
+
+    assert data.get("ok") is True
+    assert "download_url" in payload
+    assert "expires_at" in payload
+    assert payload.get("status") in {"processing", "ready", None, ""}
 
     # Extract the path component and map it to MEDIA_ROOT
-    parsed = urlparse(data["download_url"])
+    download_url = payload["download_url"]
+    parsed = urlparse(download_url)
+
     # Expect something like /media/exports/user_xxx.zip
     # Remove the MEDIA_URL prefix from the path:
     media_prefix = settings.MEDIA_URL.rstrip("/") if settings.MEDIA_URL else "/media"
@@ -74,26 +83,38 @@ def test_delete_preview_counts():
     The preview endpoint correctly reports what data will be affected.
     We create some user data and expect non-zero counts in the preview.
     """
-    owner = User.objects.create_user(username="del_owner", password="pass123", email="o@example.com")
+    owner = User.objects.create_user(
+        username="del_owner", password="pass123", email="o@example.com"
+    )
     cat = RoomCategorie.objects.create(name="MyCat", active=True)
-    room = Room.objects.create(title="My Room", category=cat, price_per_month=500, property_owner=owner)
-    # Some content tied to the user
+    room = Room.objects.create(
+        title="My Room", category=cat, price_per_month=500, property_owner=owner
+    )
+
     tenant = User.objects.create_user(
-    username="del_tenant",
-    password="pass123",
-    email="del_tenant@example.com",
+        username="del_tenant",
+        password="pass123",
+        email="del_tenant@example.com",
     )
 
     booking = Booking.objects.create(
-        user=tenant,
+    user=tenant,
+    room=room,
+    start=timezone.now() - timedelta(days=40),
+    end=timezone.now() - timedelta(days=35),
+    status=Booking.STATUS_ACTIVE,
+    )
+
+    tenancy = Tenancy.objects.create(
         room=room,
-        start=timezone.now() - timedelta(days=40),
-        end=timezone.now() - timedelta(days=35),
-        status=Booking.STATUS_ACTIVE,
+        landlord=owner,
+        tenant=tenant,
+        move_in_date=(timezone.now() - timedelta(days=60)).date(),
+        duration_months=1,
     )
 
     Review.objects.create(
-        booking=booking,
+        tenancy=tenancy,
         reviewer=tenant,
         reviewee=owner,
         role=Review.ROLE_TENANT_TO_LANDLORD,
@@ -113,11 +134,19 @@ def test_delete_preview_counts():
     assert r.status_code == 200, r.content
 
     data = r.json()
-    # We can't rely on exact schema of preview_erasure(), but it should reflect some non-zero impact.
-    # Common keys: counts or similar. Accept any structure that includes a positive indication.
-    # Try a few likely places:
-    payload_text = json.dumps(data).lower()
-    # Expect at least one numeric value > 0 to appear (rooms/reviews/messages/etc.)
+    payload = data.get("data", {})
+    anon = payload.get("anonymise", {})
+
+    assert data.get("ok") is True
+    assert "rooms" in anon and "reviews" in anon and "messages" in anon, data
+    assert anon["rooms"] >= 1
+    assert anon["reviews"] >= 1
+    assert anon["messages"] >= 1
+    assert "delete" in payload
+    assert "retain_non_pii" in payload
+
+    # Optional tolerant guard to make debugging easier if schema shifts later
+    payload_text = json.dumps(payload).lower()
     assert any(s in payload_text for s in ["room", "review", "message", "count", "total"])
 
 
@@ -130,25 +159,38 @@ def test_delete_confirm_erases_pii_and_soft_hides_content():
       - soft-hide or anonymise related content (room no longer publicly attributable)
     The exact anonymisation policy may vary; this test uses tolerant checks.
     """
-    owner = User.objects.create_user(username="erase_me", password="pass123", email="erase@example.com")
+    owner = User.objects.create_user(
+        username="erase_me", password="pass123", email="erase@example.com"
+    )
     cat = RoomCategorie.objects.create(name="GDPR", active=True)
-    room = Room.objects.create(title="GDPR Room", category=cat, price_per_month=700, property_owner=owner)
+    room = Room.objects.create(
+        title="GDPR Room", category=cat, price_per_month=700, property_owner=owner
+    )
+
     tenant2 = User.objects.create_user(
-    username="erase_tenant",
-    password="pass123",
-    email="erase_tenant@example.com",
+        username="erase_tenant",
+        password="pass123",
+        email="erase_tenant@example.com",
     )
 
     booking2 = Booking.objects.create(
-        user=tenant2,
+    user=tenant2,
+    room=room,
+    start=timezone.now() - timedelta(days=40),
+    end=timezone.now() - timedelta(days=35),
+    status=Booking.STATUS_ACTIVE,
+    )
+
+    tenancy2 = Tenancy.objects.create(
         room=room,
-        start=timezone.now() - timedelta(days=40),
-        end=timezone.now() - timedelta(days=35),
-        status=Booking.STATUS_ACTIVE,
+        landlord=owner,
+        tenant=tenant2,
+        move_in_date=(timezone.now() - timedelta(days=60)).date(),
+        duration_months=1,
     )
 
     Review.objects.create(
-        booking=booking2,
+        tenancy=tenancy2,
         reviewer=tenant2,
         reviewee=owner,
         role=Review.ROLE_TENANT_TO_LANDLORD,
@@ -156,7 +198,6 @@ def test_delete_confirm_erases_pii_and_soft_hides_content():
         notes="Great",
         active=True,
     )
-
 
     client = APIClient()
     client.force_authenticate(user=owner)

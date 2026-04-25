@@ -8,6 +8,9 @@ from rest_framework.test import APIClient
 
 pytestmark = pytest.mark.django_db
 
+# Reason: Your API is versioned; using /api/v1 avoids 308 redirects from /api -> /api/v1
+API_BASE = "/api/v1"
+
 
 def _get_model(app_label: str, model_name: str):
     return __import__("django.apps").apps.apps.get_model(app_label, model_name)
@@ -67,7 +70,7 @@ def test_extension_create_by_landlord_creates_proposal(user_factory, room_factor
     client = APIClient()
     _auth(client, landlord)
 
-    url = f"/api/tenancies/{tenancy.id}/extensions/"
+    url = f"{API_BASE}/tenancies/{tenancy.id}/extensions/"
     res = client.post(url, data={"proposed_duration_months": 6}, format="json")
 
     assert res.status_code == 201
@@ -88,7 +91,7 @@ def test_extension_create_by_tenant_creates_proposal(user_factory, room_factory)
     client = APIClient()
     _auth(client, tenant)
 
-    url = f"/api/tenancies/{tenancy.id}/extensions/"
+    url = f"{API_BASE}/tenancies/{tenancy.id}/extensions/"
     res = client.post(url, data={"proposed_duration_months": 9}, format="json")
 
     assert res.status_code == 201
@@ -109,7 +112,7 @@ def test_extension_create_forbidden_for_non_party(user_factory, room_factory):
     client = APIClient()
     _auth(client, outsider)
 
-    url = f"/api/tenancies/{tenancy.id}/extensions/"
+    url = f"{API_BASE}/tenancies/{tenancy.id}/extensions/"
     res = client.post(url, data={"proposed_duration_months": 6}, format="json")
 
     assert res.status_code == 403
@@ -136,7 +139,7 @@ def test_extension_respond_accept_updates_tenancy(user_factory, room_factory):
     client = APIClient()
     _auth(client, tenant)
 
-    url = f"/api/tenancies/{tenancy.id}/extensions/{ext.id}/respond/"
+    url = f"{API_BASE}/tenancies/{tenancy.id}/extensions/{ext.id}/respond/"
     res = client.patch(url, data={"action": "accept"}, format="json")
 
     assert res.status_code == 200
@@ -169,7 +172,7 @@ def test_extension_respond_reject_leaves_tenancy_unchanged(user_factory, room_fa
     client = APIClient()
     _auth(client, tenant)
 
-    url = f"/api/tenancies/{tenancy.id}/extensions/{ext.id}/respond/"
+    url = f"{API_BASE}/tenancies/{tenancy.id}/extensions/{ext.id}/respond/"
     res = client.patch(url, data={"action": "reject"}, format="json")
 
     assert res.status_code == 200
@@ -202,7 +205,7 @@ def test_extension_respond_forbidden_for_proposer(user_factory, room_factory):
     client = APIClient()
     _auth(client, landlord)
 
-    url = f"/api/tenancies/{tenancy.id}/extensions/{ext.id}/respond/"
+    url = f"{API_BASE}/tenancies/{tenancy.id}/extensions/{ext.id}/respond/"
     res = client.patch(url, data={"action": "accept"}, format="json")
 
     assert res.status_code == 403
@@ -229,7 +232,7 @@ def test_extension_prevents_multiple_open_proposals(user_factory, room_factory):
     client = APIClient()
     _auth(client, tenant)
 
-    url = f"/api/tenancies/{tenancy.id}/extensions/"
+    url = f"{API_BASE}/tenancies/{tenancy.id}/extensions/"
     res = client.post(url, data={"proposed_duration_months": 9}, format="json")
 
     assert res.status_code == 400
@@ -248,7 +251,7 @@ def test_extension_disallowed_when_tenancy_ended(user_factory, room_factory):
     client = APIClient()
     _auth(client, landlord)
 
-    url = f"/api/tenancies/{tenancy.id}/extensions/"
+    url = f"{API_BASE}/tenancies/{tenancy.id}/extensions/"
     res = client.post(url, data={"proposed_duration_months": 6}, format="json")
 
     assert res.status_code == 400

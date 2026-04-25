@@ -1,63 +1,61 @@
 import pytest
-from django.urls import reverse
-from rest_framework import status
+from rest_framework.test import APIClient
 
 
 @pytest.mark.django_db
-def test_find_address_valid_postcode(client):
-    """
-    When a valid postcode is sent,
-    the view should return 200 with some kind of address data.
+def test_find_address_requires_postcode():
+    client = APIClient()
+    resp = client.get("/api/v1/search/find-address/")
 
-    We don't care exactly *which* addresses yet, only that:
-      - status = 200
-      - response is not empty
-    Your real view can return either:
-      - a list of strings, or
-      - a dict with an 'addresses' key, etc.
-    Adjust the assertions later if your shape is different.
-    """
-
-    url = reverse("api:search-find-address")
-
-    response = client.get(url, {"postcode": "SW1A1AA"})
-
-    assert response.status_code == status.HTTP_200_OK
-
-    # Basic shape checks, but tolerant:
-    assert response.data is not None
-    # For many APIs you'll either get a list or a dict with a list inside
-    assert isinstance(response.data, (list, dict))
+    assert resp.status_code == 400
+    data = resp.json()
+    assert data["ok"] is False
+    assert data["message"] == "Query param 'postcode' is required."
 
 
 @pytest.mark.django_db
-def test_find_address_missing_postcode(client):
-    """
-    Request without 'postcode' should return 400.
-    """
+def test_find_address_returns_addresses(monkeypatch):
+    client = APIClient()
 
-    url = reverse("api:search-find-address")
-    response = client.get(url)  # no query params
+    def fake_fetch(postcode):
+        assert postcode == "SW1A 1AA"
+        return [
+            {"id": "addr_1", "label": "10 Downing Street, Westminster, London, SW1A 2AA"},
+            {"id": "addr_2", "label": "11 Downing Street, Westminster, London, SW1A 2AB"},
+        ]
 
-    assert response.status_code == status.HTTP_400_BAD_REQUEST
-    # Expect DRF-style validation error containing 'postcode'
-    # reason: A4 envelope stores field-level validation errors under field_errors
-    assert response.data.get("ok") is False
-    assert response.data.get("code") == "validation_error"
-    assert "postcode" in response.data.get("field_errors", {})
+    monkeypatch.setattr(
+        "propertylist_app.api.views.public._fetch_ideal_postcodes_suggestions",
+        fake_fetch,
+    )
 
+    resp = client.get("/api/v1/search/find-address/?postcode=SW1A 1AA")
+    assert resp.status_code == 200
+
+    data = resp.json()
+    assert data["ok"] is True
+    assert "data" in data
+    assert "addresses" in data["data"]
+    assert len(data["data"]["addresses"]) == 2
+    assert data["data"]["addresses"][0]["id"] == "addr_1"
+    assert "Downing Street" in data["data"]["addresses"][0]["label"]
 
 
 @pytest.mark.django_db
-def test_find_address_invalid_postcode(client):
-    """
-    Invalid postcode format should fail validation.
-    Because your FindAddressSerializer.validate_postcode uses
-    normalize_uk_postcode, we expect a 400 here.
-    """
+def test_find_address_returns_empty_list(monkeypatch):
+    client = APIClient()
 
-    url = reverse("api:search-find-address")
-    response = client.get(url, {"postcode": "XYZ"})
+    def fake_fetch(postcode):
+        return []
 
-    # If you ever decide to return 404 for "not found", you can allow both.
-    assert response.status_code in (status.HTTP_400_BAD_REQUEST, status.HTTP_404_NOT_FOUND)
+    monkeypatch.setattr(
+       "propertylist_app.api.views.public._fetch_ideal_postcodes_suggestions",
+        fake_fetch,
+    )
+
+    resp = client.get("/api/v1/search/find-address/?postcode=ZZ1 1ZZ")
+    assert resp.status_code == 200
+
+    data = resp.json()
+    assert data["ok"] is True
+    assert data["data"]["addresses"] == []

@@ -14,6 +14,7 @@ from django.db.models import Q, F, CheckConstraint
 from django.db.models.functions import Lower
 from django.utils import timezone
 from django.utils.text import slugify
+from django.contrib.auth.hashers import check_password, make_password
 
 
 # ---------------------------
@@ -519,22 +520,10 @@ class Room(SoftDeleteModel):
 
     def save(self, *args, **kwargs):
         if self.property_owner_id is None:
-            UserModel = get_user_model()
-            owner = UserModel.objects.order_by("id").first()
-            if owner is None:
-                owner = UserModel.objects.create_user(
-                    username=f"system_{uuid4().hex[:8]}",
-                    password="!auto!",
-                    email="",
-                )
-            self.property_owner = owner
+            raise ValidationError({"property_owner": "property_owner is required."})
 
         if self.category_id is None:
-            cat, _ = RoomCategorie.objects.get_or_create(
-                name="General",
-                defaults={"key": "general", "slug": "general", "active": True},
-            )
-            self.category = cat
+            raise ValidationError({"category": "category is required."})
 
         super().save(*args, **kwargs)
 
@@ -560,13 +549,41 @@ class UserProfile(models.Model):
     avatar = models.ImageField(upload_to="avatars/", null=True, blank=True)
     stripe_customer_id = models.CharField(max_length=100, blank=True, default="")
     read_receipts_enabled = models.BooleanField(default=True)
+
     avg_landlord_rating = models.FloatField(default=0.0)
     number_landlord_ratings = models.PositiveIntegerField(default=0)
     avg_tenant_rating = models.FloatField(default=0.0)
     number_tenant_ratings = models.PositiveIntegerField(default=0)
-    ROLE_CHOICES = (("landlord", "Landlord"), ("seeker", "Seeker"))
-    role = models.CharField(max_length=20, choices=ROLE_CHOICES, default="seeker", db_index=True)
-    
+
+    # App/user role
+    ROLE_CHOICES = (
+        ("landlord", "Landlord"),
+        ("seeker", "Seeker"),
+    )
+    role = models.CharField(
+        max_length=20,
+        choices=ROLE_CHOICES,
+        default="seeker",
+        db_index=True,
+    )
+
+    # Admin dashboard role
+    ADMIN_ROLE_CHOICES = (
+        ("", "No admin role"),
+        ("super_admin", "Super Admin"),
+        ("ops_admin", "Operations Admin"),
+        ("moderator", "Moderation Admin"),
+        ("finance_admin", "Finance Admin"),
+        ("support_admin", "Support Admin"),
+    )
+    admin_role = models.CharField(
+        max_length=30,
+        choices=ADMIN_ROLE_CHOICES,
+        blank=True,
+        default="",
+        db_index=True,
+    )
+
     pending_deletion_requested_at = models.DateTimeField(null=True, blank=True)
     pending_deletion_scheduled_for = models.DateTimeField(null=True, blank=True)
 
@@ -587,7 +604,6 @@ class UserProfile(models.Model):
         ("non_binary", "Non-binary"),
         ("prefer_not_to_say", "Prefer not to say"),
     )
-
     occupation = models.CharField(max_length=100, blank=True, default="")
     gender = models.CharField(max_length=32, choices=GENDER_CHOICES, blank=True, default="")
     postcode = models.CharField(max_length=12, blank=True, default="")
@@ -599,27 +615,23 @@ class UserProfile(models.Model):
     phone_verified = models.BooleanField(default=False, db_index=True)
     phone_verified_at = models.DateTimeField(null=True, blank=True)
     advertiser_verified = models.BooleanField(default=False, db_index=True)
+
     terms_accepted_at = models.DateTimeField(null=True, blank=True)
     terms_version = models.CharField(max_length=20, blank=True, default="")
     marketing_consent = models.BooleanField(default=False)
-    # search engine indexing (default for all my listings)
-    allow_search_indexing_default = models.BooleanField(default=True)
-    
-    
-    # models.py (inside UserProfile model)
 
-    # NEW: preferred language for UI (kept simple)
+    # Search engine indexing default for all my listings
+    allow_search_indexing_default = models.BooleanField(default=True)
+
     PREFERRED_LANGUAGE_CHOICES = [
         ("en-GB", "English (UK)"),
         ("en-US", "English (US)"),
     ]
-
     preferred_language = models.CharField(
         max_length=10,
         choices=PREFERRED_LANGUAGE_CHOICES,
         default="en-GB",
     )
-
 
     notify_rentout_updates = models.BooleanField(default=True)
     notify_reminders = models.BooleanField(default=True)
@@ -630,7 +642,6 @@ class UserProfile(models.Model):
 
     def __str__(self):
         return f"{self.user.username} profile"
-
 
 # --------
 # AuditLog
@@ -700,6 +711,40 @@ class RoomImage(models.Model):
     )
 
     objects = RoomImageQuerySet.as_manager()
+    
+    
+    def save(self, *args, **kwargs):
+        """
+        Reason:
+        Images created via Django Admin bypass RoomPhotoUploadView,
+        so they can stay with default status='pending'.
+
+        This applies auto-approval consistently on CREATE (Admin/API/shell),
+        but does not override manual moderation (approved/rejected).
+        """
+        is_new = self.pk is None
+
+        # Only auto-approve on create, and only when still pending.
+        if is_new and self.status == "pending" and self.image:
+            try:
+                from propertylist_app.services.image import should_auto_approve_upload
+
+                file_obj = getattr(self.image, "file", None)
+                if file_obj and should_auto_approve_upload(file_obj):
+                    self.status = "approved"
+
+                # Important: reset pointer for Django storage save
+                if file_obj:
+                    try:
+                        file_obj.seek(0)
+                    except Exception:
+                        pass
+
+            except Exception:
+                # if anything goes wrong, leave as pending for manual moderation
+                pass
+
+        super().save(*args, **kwargs)
 
 
 # -----------------
@@ -758,6 +803,24 @@ class Booking(models.Model):
 
     def __str__(self):
         return f"Booking #{self.id} for {self.room} by {self.user}"
+
+    
+    def can_transition_to(self, new_status: str) -> bool:
+        """
+        Enforce booking state machine.
+        """
+        if self.is_deleted:
+            return False
+
+        if self.status == self.STATUS_ACTIVE:
+            return new_status in {self.STATUS_CANCELLED, self.STATUS_SUSPENDED}
+
+        # terminal states
+        if self.status in {self.STATUS_CANCELLED, self.STATUS_SUSPENDED}:
+            return False
+
+        return False
+
 
     def cancel(self):
         self.status = self.STATUS_CANCELLED
@@ -921,21 +984,10 @@ class Review(models.Model):
         (ROLE_LANDLORD_TO_TENANT, "Landlord → Tenant"),
     )
 
-    booking = models.ForeignKey(
-        Booking,
-        on_delete=models.CASCADE,
-        related_name="reviews",
-        null=True,
-        blank=True,
-    )
-
-
     tenancy = models.ForeignKey(
         "Tenancy",
         on_delete=models.CASCADE,
         related_name="reviews",
-        null=True,
-        blank=True,
     )
   
      
@@ -974,7 +1026,6 @@ class Review(models.Model):
     class Meta:
         ordering = ["-submitted_at"]
         constraints = [
-            models.UniqueConstraint(fields=["booking", "role"], name="uq_review_once_per_booking_role"),
             models.UniqueConstraint(fields=["tenancy", "role"], name="uq_review_once_per_tenancy_role"),
         ]
 
@@ -985,18 +1036,8 @@ class Review(models.Model):
         end_dt = None
 
         # Prefer tenancy end-date flow (new)
-        if self.tenancy and self.tenancy.review_open_at:
-            end_dt = self.tenancy.review_open_at  # reveal at review_open_at (which is end + 7 days)
-        elif self.booking:
-            end_dt = getattr(self.booking, "end", None) or getattr(self.booking, "end_date", None)
-
-        if self.reveal_at is None and end_dt:
-            # If tenancy flow, reveal_at == review_open_at
-            # If legacy booking flow, keep your existing “+30 days” rule
-            if self.tenancy and self.tenancy.review_open_at:
-                self.reveal_at = end_dt
-            else:
-                self.reveal_at = end_dt + timedelta(days=30)
+        if self.reveal_at is None and self.tenancy and self.tenancy.review_open_at:
+            self.reveal_at = self.tenancy.review_open_at
 
         #  IMPORTANT FIX:
         # Only auto-calc rating from flags if flags were actually supplied.
@@ -1047,12 +1088,18 @@ class Review(models.Model):
 # ---------------
 # WebhookReceipt
 # ---------------
+# WebhookReceipt is the canonical store for webhook idempotency.
+# We use unique event_id values here to prevent duplicate processing
+# of the same provider webhook event, including Stripe retries.
+
 class WebhookReceipt(models.Model):
     source = models.CharField(max_length=50, db_index=True)
     event_id = models.CharField(max_length=255, unique=True)
     received_at = models.DateTimeField(auto_now_add=True)
     payload = models.JSONField(null=True, blank=True)
     headers = models.JSONField(null=True, blank=True)
+    processed = models.BooleanField(default=False)
+    processed_at = models.DateTimeField(null=True, blank=True)
 
 
 # ---------
@@ -1169,6 +1216,8 @@ class Notification(models.Model):
 
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="notifications")
     type = models.CharField(max_length=32, choices=Type.choices, default=Type.MESSAGE)
+    target_type = models.CharField(max_length=50, blank=True, null=True)
+    target_id = models.BigIntegerField(blank=True, null=True)
 
     thread = models.ForeignKey(
         "MessageThread",
@@ -1209,6 +1258,7 @@ class Payment(models.Model):
         STRIPE = "stripe", "Stripe"
 
     class Status(models.TextChoices):
+        CREATED = "created", "Created"
         REQUIRES_PAYMENT = "requires_payment_method", "Requires payment"
         REQUIRES_ACTION = "requires_action", "Requires action"
         PROCESSING = "processing", "Processing"
@@ -1336,7 +1386,7 @@ class EmailOTP(models.Model):
         choices=PURPOSE_CHOICES,
         default=PURPOSE_EMAIL_VERIFY,
     )
-    code = models.CharField(max_length=6)
+    code = models.CharField(max_length=128)
     created_at = models.DateTimeField(auto_now_add=True)
     expires_at = models.DateTimeField()
     used_at = models.DateTimeField(null=True, blank=True)
@@ -1352,23 +1402,33 @@ class EmailOTP(models.Model):
         return timezone.now() >= self.expires_at
 
     def matches(self, value: str) -> bool:
-        return self.code == (value or "").strip()
+        raw = (value or "").strip()
+        if not raw:
+            return False
+        return check_password(raw, self.code)
 
     def mark_used(self) -> None:
         self.used_at = timezone.now()
         self.save(update_fields=["used_at"])
 
     @classmethod
-    def create_for(cls, user, code: str, ttl_minutes: int = 10, purpose: str = PURPOSE_EMAIL_VERIFY):
+    def create_for(
+        cls,
+        user,
+        code: str,
+        ttl_minutes: int | None = None,
+        purpose: str = PURPOSE_EMAIL_VERIFY,
+    ):
+        ttl_minutes = (
+            settings.OTP_EXPIRY_MINUTES if ttl_minutes is None else ttl_minutes
+        )
         expires_at = timezone.now() + timedelta(minutes=ttl_minutes)
         return cls.objects.create(
             user=user,
             purpose=purpose,
-            code=str(code).strip(),
+            code=make_password(str(code).strip()),
             expires_at=expires_at,
         )
-
-
 
 # -----
 # PhoneOTP
@@ -1376,7 +1436,7 @@ class EmailOTP(models.Model):
 class PhoneOTP(models.Model):
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="phone_otps")
     phone = models.CharField(max_length=15)
-    code = models.CharField(max_length=6)
+    code = models.CharField(max_length=128)
     created_at = models.DateTimeField(auto_now_add=True)
     expires_at = models.DateTimeField()
     used_at = models.DateTimeField(null=True, blank=True)
@@ -1395,3 +1455,25 @@ class PhoneOTP(models.Model):
     @property
     def is_used(self) -> bool:
         return self.used_at is not None
+    
+    
+    def matches(self, value: str) -> bool:
+        raw = (value or "").strip()
+        if not raw:
+            return False
+        return check_password(raw, self.code)
+
+    def mark_used(self) -> None:
+        self.used_at = timezone.now()
+        self.save(update_fields=["used_at"])
+
+    @classmethod
+    def create_for(cls, *, user, phone: str, code: str, ttl_minutes: int | None = None):
+        ttl_minutes = settings.OTP_EXPIRY_MINUTES if ttl_minutes is None else ttl_minutes
+        expires_at = timezone.now() + timedelta(minutes=ttl_minutes)
+        return cls.objects.create(
+            user=user,
+            phone=phone,
+            code=make_password(str(code).strip()),
+            expires_at=expires_at,
+        )

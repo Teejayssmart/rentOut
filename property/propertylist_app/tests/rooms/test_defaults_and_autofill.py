@@ -1,12 +1,15 @@
 import pytest
+
 from datetime import date, timedelta
 
 from django.urls import reverse
+
 from rest_framework import status
 from rest_framework.test import APIClient
 
 from propertylist_app.models import Room
 
+from django.core.exceptions import ValidationError
 
 @pytest.fixture
 def api_client():
@@ -98,32 +101,14 @@ def test_step1_defaults_autofill(auth_client, valid_step1_payload, landlord_user
 
 
 @pytest.mark.django_db
-def test_room_model_autofills_owner_and_category_when_missing(landlord_user):
-    """
-    Direct model-level test (no API):
+def test_room_model_requires_owner_and_category():
+    with pytest.raises(ValidationError) as exc:
+        Room.objects.create(
+            title="Invalid room",
+            description="Simple room created directly from the model.",
+            price_per_month="500.00",
+            location="SW1A 2AA, London",
+            property_type="flat",
+        )
 
-    If we create a Room without:
-    - property_owner
-    - category
-
-    then Room.save() should:
-    - pick the first user in the DB as property_owner (landlord_user here)
-    - create / attach the 'General' category automatically
-    """
-    room = Room.objects.create(
-        title="Autofilled room",
-        description="Simple room created directly from the model.",
-        price_per_month="500.00",
-        location="SW1A 2AA, London",
-        property_type="flat",
-        # Intentionally no property_owner and no category here.
-    )
-
-    room.refresh_from_db()
-
-    # Owner auto-filled (first user in DB is landlord_user)
-    assert room.property_owner == landlord_user
-
-    # Category auto-filled to the 'General' category
-    assert room.category is not None
-    assert room.category.name.lower() == "general"
+    assert "property_owner" in exc.value.message_dict

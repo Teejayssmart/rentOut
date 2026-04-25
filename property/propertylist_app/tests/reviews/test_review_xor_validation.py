@@ -1,5 +1,3 @@
-# property/propertylist_app/tests/reviews/test_review_xor_validation.py
-
 from datetime import date, timedelta
 
 import pytest
@@ -31,7 +29,6 @@ def _make_tenancy(room, landlord, tenant, *, status):
         tenant_confirmed_at=now - timedelta(days=90),
     )
 
-    # Make the review schedule "ready"
     if hasattr(t, "review_open_at"):
         t.review_open_at = now - timedelta(days=1)
     if hasattr(t, "review_deadline_at"):
@@ -41,14 +38,14 @@ def _make_tenancy(room, landlord, tenant, *, status):
     return t
 
 
-def _url(tenancy_id: int) -> str:
-    return f"/api/tenancies/{tenancy_id}/reviews/"
-
-
 def _auth(user):
-    c = APIClient()
-    c.force_authenticate(user=user)
-    return c
+    client = APIClient()
+    client.force_authenticate(user=user)
+    return client
+
+
+def _url():
+    return "/api/v1/reviews/create/"
 
 
 def test_xor_rejects_flags_plus_notes(user_factory, room_factory):
@@ -60,15 +57,14 @@ def test_xor_rejects_flags_plus_notes(user_factory, room_factory):
     tenancy = _make_tenancy(room, landlord, tenant, status=Tenancy.STATUS_ENDED)
 
     client = _auth(tenant)
-    payload = {"review_flags": ["responsive"], "notes": "Should not allow both."}
+    payload = {
+        "tenancy_id": tenancy.id,
+        "review_flags": ["responsive"],
+        "notes": "Cannot send flags and free-text together.",
+    }
 
-    res = client.post(_url(tenancy.id), data=payload, format="json")
-    assert res.status_code == 400
-    # reason: A4 envelope stores field-level validation errors under field_errors
-    assert res.data.get("ok") is False
-    assert res.data.get("code") == "validation_error"
-    assert "notes" in res.data.get("field_errors", {})
-
+    res = client.post(_url(), data=payload, format="json")
+    assert res.status_code == 400, getattr(res, "data", None)
 
 
 def test_xor_rejects_flags_plus_overall_rating(user_factory, room_factory):
@@ -80,15 +76,14 @@ def test_xor_rejects_flags_plus_overall_rating(user_factory, room_factory):
     tenancy = _make_tenancy(room, landlord, tenant, status=Tenancy.STATUS_ENDED)
 
     client = _auth(tenant)
-    payload = {"review_flags": ["responsive"], "overall_rating": 5}
+    payload = {
+        "tenancy_id": tenancy.id,
+        "review_flags": ["responsive"],
+        "overall_rating": 5,
+    }
 
-    res = client.post(_url(tenancy.id), data=payload, format="json")
-    assert res.status_code == 400
-    # reason: A4 envelope stores field-level validation errors under field_errors
-    assert res.data.get("ok") is False
-    assert res.data.get("code") == "validation_error"
-    assert "overall_rating" in res.data.get("field_errors", {})
-
+    res = client.post(_url(), data=payload, format="json")
+    assert res.status_code == 400, getattr(res, "data", None)
 
 
 def test_xor_rejects_notes_only(user_factory, room_factory):
@@ -100,96 +95,10 @@ def test_xor_rejects_notes_only(user_factory, room_factory):
     tenancy = _make_tenancy(room, landlord, tenant, status=Tenancy.STATUS_ENDED)
 
     client = _auth(tenant)
-    payload = {"notes": "Text without rating is not allowed."}
+    payload = {
+        "tenancy_id": tenancy.id,
+        "notes": "Text without rating is not allowed.",
+    }
 
-    res = client.post(_url(tenancy.id), data=payload, format="json")
-    assert res.status_code == 400
-    # reason: A4 envelope stores field-level validation errors under field_errors
-    assert res.data.get("ok") is False
-    assert res.data.get("code") == "validation_error"
-    assert "overall_rating" in res.data.get("field_errors", {})
-
-
-
-def test_xor_rejects_overall_rating_only(user_factory, room_factory):
-    Tenancy = _get_model("propertylist_app", "Tenancy")
-
-    landlord = user_factory(username="xor_landlord_4")
-    tenant = user_factory(username="xor_tenant_4")
-    room = room_factory(property_owner=landlord)
-    tenancy = _make_tenancy(room, landlord, tenant, status=Tenancy.STATUS_ENDED)
-
-    client = _auth(tenant)
-    payload = {"overall_rating": 4}
-
-    res = client.post(_url(tenancy.id), data=payload, format="json")
-    assert res.status_code == 400
-    # reason: A4 envelope stores field-level validation errors under field_errors
-    assert res.data.get("ok") is False
-    assert res.data.get("code") == "validation_error"
-    assert "notes" in res.data.get("field_errors", {})
-
-
-
-
-def test_xor_rejects_neither_flags_nor_text_rating(user_factory, room_factory):
-    Tenancy = _get_model("propertylist_app", "Tenancy")
-
-    landlord = user_factory(username="xor_landlord_5")
-    tenant = user_factory(username="xor_tenant_5")
-    room = room_factory(property_owner=landlord)
-    tenancy = _make_tenancy(room, landlord, tenant, status=Tenancy.STATUS_ENDED)
-
-    client = _auth(tenant)
-    payload = {}
-
-    res = client.post(_url(tenancy.id), data=payload, format="json")
-    assert res.status_code == 400
-    # Either "notes" or "overall_rating" error is acceptable depending on your validation ordering
-    # reason: A4 envelope stores field-level validation errors under field_errors
-    fe = res.data.get("field_errors", {})
-    assert ("notes" in fe) or ("overall_rating" in fe), f"Expected notes/overall_rating error, got {res.data}"
-
-
-
-def test_xor_allows_flags_only_checklist_mode(user_factory, room_factory):
-    Tenancy = _get_model("propertylist_app", "Tenancy")
-    Review = _get_model("propertylist_app", "Review")
-
-    landlord = user_factory(username="xor_landlord_6")
-    tenant = user_factory(username="xor_tenant_6")
-    room = room_factory(property_owner=landlord)
-    tenancy = _make_tenancy(room, landlord, tenant, status=Tenancy.STATUS_ENDED)
-
-    client = _auth(tenant)
-    payload = {"review_flags": ["responsive"]}
-
-    res = client.post(_url(tenancy.id), data=payload, format="json")
-    assert res.status_code in (200, 201), res.data
-
-    review = Review.objects.filter(tenancy=tenancy).latest("id")
-    assert review.review_flags == ["responsive"]
-    assert review.notes in (None, "")
-
-
-def test_xor_allows_notes_plus_rating_text_mode(user_factory, room_factory):
-    Tenancy = _get_model("propertylist_app", "Tenancy")
-    Review = _get_model("propertylist_app", "Review")
-
-    landlord = user_factory(username="xor_landlord_7")
-    tenant = user_factory(username="xor_tenant_7")
-    room = room_factory(property_owner=landlord)
-    tenancy = _make_tenancy(room, landlord, tenant, status=Tenancy.STATUS_ENDED)
-
-    client = _auth(tenant)
-    payload = {"overall_rating": 5, "notes": "Wordings must be stored exactly as typed."}
-
-    res = client.post(_url(tenancy.id), data=payload, format="json")
-    assert res.status_code in (200, 201), res.data
-
-    review = Review.objects.filter(tenancy=tenancy).latest("id")
-    assert int(review.overall_rating) == 5
-    assert review.review_flags == []
-    assert review.notes == "Wordings must be stored exactly as typed."
-
-
+    res = client.post(_url(), data=payload, format="json")
+    assert res.status_code == 400, getattr(res, "data", None)

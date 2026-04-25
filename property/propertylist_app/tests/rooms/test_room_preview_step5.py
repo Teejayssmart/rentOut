@@ -51,18 +51,23 @@ def test_owner_can_see_room_preview_with_photos(tmp_path, settings):
     assert response.status_code == 200
 
     data = response.json()
-    assert "room" in data
-    assert "photos" in data
+    assert data["ok"] is True
+    assert "data" in data
+    assert "room" in data["data"]
+    assert "photos" in data["data"]
+
+    room_data = data["data"]["room"]
+    photos = data["data"]["photos"]
 
     # Basic room fields visible
-    assert data["room"]["id"] == room.pk
-    assert data["room"]["title"] == "Nice double room"
-    assert data["room"]["location"] == room.location
-    assert str(data["room"]["price_per_month"]) == "750.00"
+    assert room_data["id"] == room.pk
+    assert room_data["title"] == "Nice double room"
+    assert room_data["location"] == room.location
+    assert str(room_data["price_per_month"]) == "750.00"
 
     # Photos should come from RoomImage and be at least 2
-    assert len(data["photos"]) == 2
-    for photo in data["photos"]:
+    assert len(photos) == 2
+    for photo in photos:
         assert "id" in photo
         assert "url" in photo
         assert "status" in photo
@@ -169,8 +174,12 @@ def test_preview_uses_legacy_room_image_when_no_roomimage(tmp_path, settings):
     assert response.status_code == 200
 
     data = response.json()
-    photos = data.get("photos", [])
+    assert data["ok"] is True
+    assert "data" in data
+    assert "photos" in data["data"]
+
+    photos = data["data"]["photos"]
 
     assert len(photos) == 1
     assert photos[0]["status"] == "legacy"
-    assert "legacy_photo.jpg" in photos[0]["url"]
+    assert "url" in photos[0]

@@ -7,8 +7,9 @@ from rest_framework.test import APIClient
 
 from propertylist_app.models import MessageThread, Message
 
+
 @pytest.mark.django_db
-def test_messages_default_ordering_desc_and_cursor_next():
+def test_messages_default_ordering_desc_and_limit_offset_next():
     # users
     u1 = User.objects.create_user(username="alice", email="a@x.com", password="pass12345")
     u2 = User.objects.create_user(username="bob", email="b@x.com", password="pass12345")
@@ -23,41 +24,49 @@ def test_messages_default_ordering_desc_and_cursor_next():
 
     # create 6 messages spaced 1 minute apart (older -> newer)
     base = timezone.now() - timedelta(minutes=6)
-    msgs = []
     for i in range(6):
-        m = Message.objects.create(
+        Message.objects.create(
             thread=thread,
             sender=u1 if i % 2 == 0 else u2,
             body=f"Message {i+1}",
             created=base + timedelta(minutes=i),
         )
-        msgs.append(m)
 
     url = reverse("v1:thread-messages", kwargs={"thread_id": thread.pk})
 
-    # 1) First page (no cursor): should return 5 newest messages, newest first
-    r1 = client.get(url)
+    # 1) First page with explicit limit=5: should return 5 newest messages, newest first
+    r1 = client.get(url, {"limit": 5})
     assert r1.status_code == 200
 
-    # expect pagination structure with 'results' and 'next'
-    assert "results" in r1.data
-    assert len(r1.data["results"]) == 5
-    assert "next" in r1.data
+    body1 = r1.json()
+    assert body1.get("ok") is True
+    assert isinstance(body1.get("data"), list)
+    assert isinstance(body1.get("meta"), dict)
 
-    # newest is Message 6; oldest on this page is Message 2
-    bodies_page1 = [item["body"] for item in r1.data["results"]]
+    items1 = body1["data"]
+    meta1 = body1["meta"]
+
+    assert len(items1) == 5
+    bodies_page1 = [item["body"] for item in items1]
     assert bodies_page1 == ["Message 6", "Message 5", "Message 4", "Message 3", "Message 2"]
 
-    # 2) Follow the 'next' cursor to get older items (should return the remaining oldest message)
-    next_url = r1.data["next"]
-    assert next_url, "Expected a next cursor link for the remaining messages"
+    next_url = meta1.get("next")
+    assert next_url, "Expected a next link for the remaining messages"
 
+    # 2) Follow next page: should return the remaining oldest message
     r2 = client.get(next_url)
     assert r2.status_code == 200
-    assert "results" in r2.data
 
-    bodies_page2 = [item["body"] for item in r2.data["results"]]
-    assert bodies_page2 == ["Message 1"]  # only the oldest remains
+    body2 = r2.json()
+    assert body2.get("ok") is True
+    assert isinstance(body2.get("data"), list)
+    assert isinstance(body2.get("meta"), dict)
+
+    items2 = body2["data"]
+    meta2 = body2["meta"]
+
+    bodies_page2 = [item["body"] for item in items2]
+    assert bodies_page2 == ["Message 1"]
 
     # and no further pages
-    assert not r2.data.get("next")
+    assert not meta2.get("next")

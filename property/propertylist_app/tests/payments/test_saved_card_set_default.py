@@ -29,7 +29,8 @@ def test_set_default_card_success(monkeypatch):
     r = client.post(url, {}, format="json")
 
     assert r.status_code == 200, r.content
-    assert r.data["detail"] == "Default card updated."
+    payload = r.data.get("data", r.data)
+    assert payload["detail"] == "Default card updated."
     assert called["customer_id"] == "cus_test_123"
     assert called["default_pm"] == "pm_test_999"
 

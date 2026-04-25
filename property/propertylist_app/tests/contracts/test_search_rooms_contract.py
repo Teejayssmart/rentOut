@@ -5,15 +5,16 @@ from rest_framework.test import APIClient
 pytestmark = pytest.mark.django_db
 
 
-# ✅ EDIT THESE TWO VALUES based on what you found in the shell output
-SEARCH_PATH_API = "/api/search/rooms/"
+# -----------------------------
+# CANONICAL V1 ENDPOINT ONLY
+# -----------------------------
 SEARCH_PATH_V1 = "/api/v1/search/rooms/"
 
 
 def make_authed_client() -> APIClient:
     """
-    If your search endpoint is public, this still works.
-    If it requires auth, this avoids 401/403 failures.
+    Reason: Some search endpoints are protected in this project.
+    We force-auth to avoid 401/403 breaking contract tests.
     """
     User = get_user_model()
     user = User.objects.create_user(
@@ -28,18 +29,22 @@ def make_authed_client() -> APIClient:
 
 def _normalise_payload(payload):
     """
-    Search endpoints sometimes return:
+    Search endpoints may return:
       - list
       - dict pagination envelope (e.g. {"results": [...], ...})
-    Normalise to: (envelope_type, keys_if_dict, first_item_if_list_or_results)
+      - ok envelope {"ok": True, "data": <list|dict>}
+    Normalise to: (kind, keys_if_dict, first_item_if_list_or_results)
     """
+    # ok envelope
+    if isinstance(payload, dict) and payload.get("ok") is True and "data" in payload:
+        payload = payload["data"]
+
     if isinstance(payload, list):
         first = payload[0] if payload else None
         return ("list", None, first)
 
     if isinstance(payload, dict):
         keys = set(payload.keys())
-        # common pagination key
         if "results" in payload and isinstance(payload["results"], list):
             first = payload["results"][0] if payload["results"] else None
             return ("dict(results)", keys, first)
@@ -48,39 +53,33 @@ def _normalise_payload(payload):
     return (type(payload).__name__, None, None)
 
 
-def test_search_rooms_contract_api_and_v1_match_shape():
+def test_search_rooms_contract_v1_shape_is_stable():
     """
-    Contract parity:
-      - /api/... and /api/v1/... must return the SAME top-level type
-      - if dict: same top-level keys
-      - if list (or dict with results): first item key-shape must match
+    V1 contract:
+      - status 200
+      - payload is either list or dict (including pagination dict)
+      - if list/results has at least one item, that item is a dict
+    Note: we do NOT enforce a fixed keyset here because search payloads
+    can legitimately evolve (filters/additions). This locks shape only.
     """
     client = make_authed_client()
 
-    # Use a minimal query param to reduce chances of a 400 (many search endpoints want at least something)
+    # Minimal params to avoid validation errors.
+    # If your endpoint requires something non-empty, change this one line only.
     params = {"q": ""}
 
-    r_api = client.get(SEARCH_PATH_API, params)
-    r_v1 = client.get(SEARCH_PATH_V1, params)
+    r = client.get(SEARCH_PATH_V1, params)
+    assert r.status_code == 200, getattr(r, "content", b"")
 
-    assert r_api.status_code == 200, r_api.data
-    assert r_v1.status_code == 200, r_v1.data
+    data = r.json()
+    kind, keys, first = _normalise_payload(data)
 
-    data_api = r_api.json()
-    data_v1 = r_v1.json()
+    assert kind in ("list", "dict", "dict(results)"), f"Unexpected payload type: {kind}"
 
-    api_kind, api_keys, api_first = _normalise_payload(data_api)
-    v1_kind, v1_keys, v1_first = _normalise_payload(data_v1)
+    # If it’s a dict, keys must exist
+    if keys is not None:
+        assert isinstance(keys, set) and keys, "Dict payload must have keys."
 
-    # Top-level envelope parity
-    assert api_kind == v1_kind, f"Envelope differs: /api={api_kind}, /v1={v1_kind}"
-
-    # Dict envelope parity (including pagination envelopes)
-    if api_keys is not None:
-        assert api_keys == v1_keys, f"Top-level keys differ.\n/api: {sorted(api_keys)}\n/v1: {sorted(v1_keys)}"
-
-    # Item parity if we can compare items
-    if isinstance(api_first, dict) and isinstance(v1_first, dict):
-        assert set(api_first.keys()) == set(v1_first.keys()), (
-            f"First item keys differ.\n/api: {sorted(api_first.keys())}\n/v1: {sorted(v1_first.keys())}"
-        )
+    # If we have a first item to inspect, it must be a dict
+    if first is not None:
+        assert isinstance(first, dict), f"First item must be dict, got {type(first)}"
