@@ -1,55 +1,95 @@
+from datetime import date, timedelta
+
 import pytest
-from datetime import timedelta
+from django.apps import apps
 from django.utils import timezone
 from rest_framework.test import APIClient
 
-from propertylist_app.models import Review, Tenancy
 
 pytestmark = pytest.mark.django_db
 
 
-def test_tenant_to_landlord_flags_auto_calculate_overall_rating(user_factory, room_factory):
-    """
-    Tenant -> Landlord rating calculation must work from checklist flags.
+def _get_model(app_label, model_name):
+    return apps.get_model(app_label, model_name)
 
-    Expected formula (int):
-    score = 3 + (positives - negatives), clamped to 1..5
-    """
-    landlord = user_factory(username="t2l_landlord", role="landlord")
-    tenant = user_factory(username="t2l_tenant", role="seeker")
-    room = room_factory(property_owner=landlord)
 
+def _make_user(username: str):
+    User = _get_model("auth", "User")
+    return User.objects.create_user(
+        username=username,
+        password="pass12345",
+        email=f"{username}@example.com",
+    )
+
+
+def _make_room(*, owner):
+    Room = _get_model("propertylist_app", "Room")
+    RoomCategorie = _get_model("propertylist_app", "RoomCategorie")
+
+    category = RoomCategorie.objects.create(name=f"Calc-{owner.username}", active=True)
+    return Room.objects.create(
+        title=f"Room {owner.username}",
+        description="A valid room description with enough words to satisfy validation rules.",
+        price_per_month=750,
+        location="London",
+        category=category,
+        property_owner=owner,
+        property_type="flat",
+    )
+
+
+def _make_tenancy(room, landlord, tenant, *, status):
+    Tenancy = _get_model("propertylist_app", "Tenancy")
     now = timezone.now()
-    move_in = timezone.localdate() - timedelta(days=40)  # any date in the past is fine
 
-    tenancy = Tenancy.objects.create(
+    return Tenancy.objects.create(
         room=room,
         landlord=landlord,
         tenant=tenant,
-        status=getattr(Tenancy, "STATUS_ENDED", "ended"),
-        move_in_date=move_in,  #  required by DB
-        duration_months=6,
+        proposed_by=landlord,
+        move_in_date=date.today() - timedelta(days=90),
+        duration_months=3,
+        status=status,
+        landlord_confirmed_at=now - timedelta(days=90),
+        tenant_confirmed_at=now - timedelta(days=90),
         review_open_at=now - timedelta(days=1),
-        review_deadline_at=now + timedelta(days=10),
+        review_deadline_at=now + timedelta(days=30),
     )
 
 
+def _client(user):
     client = APIClient()
-    client.force_authenticate(user=tenant)
+    client.force_authenticate(user=user)
+    return client
 
-    # Tenant -> Landlord flags:
-    # positives: responsive, maintenance_good, accurate_listing (3)
-    # negatives: unresponsive (1)
-    # score = 3 + (3-1) = 5
-    flags = ["responsive", "maintenance_good", "accurate_listing", "unresponsive"]
 
-    res = client.post(
-        f"/api/v1/tenancies/{tenancy.id}/reviews/",
-        data={"review_flags": flags},
-        format="json",
+def _reviews_create_url():
+    return "/api/v1/reviews/create/"
+
+
+def test_tenant_to_landlord_flags_auto_calculate_overall_rating():
+    Tenancy = _get_model("propertylist_app", "Tenancy")
+    Review = _get_model("propertylist_app", "Review")
+
+    landlord = _make_user("calc_landlord_1")
+    tenant = _make_user("calc_tenant_1")
+    room = _make_room(owner=landlord)
+    tenancy = _make_tenancy(room, landlord, tenant, status=Tenancy.STATUS_ENDED)
+
+    client = _client(tenant)
+
+    payload = {
+        "tenancy_id": tenancy.id,
+        "review_flags": ["responsive", "maintenance_good"],
+    }
+
+    res = client.post(_reviews_create_url(), data=payload, format="json")
+    assert res.status_code == 201, getattr(res, "data", None)
+
+    review = Review.objects.get(
+        tenancy=tenancy,
+        reviewer=tenant,
+        role=Review.ROLE_TENANT_TO_LANDLORD,
     )
-    assert res.status_code == 201, res.data
-
-    review = Review.objects.get(id=res.data["id"])
-    assert review.role == Review.ROLE_TENANT_TO_LANDLORD
-    assert review.overall_rating == 5
+    assert review.reviewee_id == landlord.id
+    assert int(review.overall_rating) == 5

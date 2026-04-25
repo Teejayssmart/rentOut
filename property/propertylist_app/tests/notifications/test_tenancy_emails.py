@@ -26,6 +26,7 @@ def test_tenancy_proposed_queues_email():
 
     cat = RoomCategorie.objects.create(name="Any", active=True)
     room = Room.objects.create(
+        property_owner=landlord,
         title="Room 1",
         description="desc",
         price_per_month=500,
@@ -68,6 +69,7 @@ def test_still_living_check_queues_email_for_missing_side():
 
     cat = RoomCategorie.objects.create(name="Any2", active=True)
     room = Room.objects.create(
+        property_owner=landlord,
         title="Room 2",
         description="desc",
         price_per_month=600,
@@ -117,6 +119,7 @@ def test_review_available_queues_email():
 
     cat = RoomCategorie.objects.create(name="Any3", active=True)
     room = Room.objects.create(
+        property_owner=landlord,
         title="Room 3",
         description="desc",
         price_per_month=700,
@@ -157,6 +160,7 @@ def test_tenancy_extension_proposed_queues_email():
 
     cat = RoomCategorie.objects.create(name="Any4", active=True)
     room = Room.objects.create(
+        property_owner=landlord,
         title="Room 4",
         description="desc",
         price_per_month=800,

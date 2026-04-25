@@ -50,15 +50,23 @@ def _extract_first_id(payload):
     return None
 
 
-def _assert_error_envelope(resp):
+def _assert_error_or_removed_route(resp):
     """
-    Your API error contract uses a consistent dict body.
-    We do NOT hard-code exact keys here, we only assert it's a dict.
+    Booking-review routes are legacy/removed because reviews are tenancy-based now.
+
+    If the request reaches DRF, we expect a JSON error body.
+    If the URL no longer exists, Django may return plain HTML 404.
+    Both are acceptable for these legacy booking-review contract checks.
     """
-    assert resp.status_code in (400, 401, 403, 404, 409, 429), getattr(resp, "content", b"")
+    assert resp.status_code in (400, 401, 403, 404, 405, 409, 429), getattr(resp, "content", b"")
+
+    content_type = resp.get("Content-Type", "")
+    if "application/json" not in content_type:
+        assert resp.status_code in (404, 405)
+        return
+
     data = resp.json()
     assert isinstance(data, dict), f"Error body must be a dict, got {type(data)}"
-
 
 def _assert_success_shape_parity(data):
     """
@@ -119,7 +127,7 @@ def test_booking_reviews_list_contract_v1_if_any_exist():
     r = client.get(f"/api/v1/bookings/{booking.id}/reviews/")
 
     if r.status_code != 200:
-        _assert_error_envelope(r)
+        _assert_error_or_removed_route(r)
         return
 
     data = r.json()
@@ -141,7 +149,7 @@ def test_booking_reviews_not_found_contract_v1():
     if r.status_code == 200:
         # If your system returns 200 here, it's unexpected — force visibility
         pytest.fail("Expected not-found/permission error, got 200.")
-    _assert_error_envelope(r)
+    _assert_error_or_removed_route(r)
 
 
 def test_booking_reviews_create_not_found_contract_v1():
@@ -158,4 +166,4 @@ def test_booking_reviews_create_not_found_contract_v1():
 
     if r.status_code == 200:
         pytest.fail("Expected not-found/permission error, got 200.")
-    _assert_error_envelope(r)
+    _assert_error_or_removed_route(r)

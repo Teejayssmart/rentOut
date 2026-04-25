@@ -13,7 +13,7 @@ def test_apple_register_requires_identity_token():
     assert response.status_code == 400
     assert response.data["ok"] is False
     assert response.data["message"] == "Missing identity_token"
-    assert response.data["data"] is None
+    assert response.data.get("data") is None
 
 
 def test_apple_register_rejects_invalid_token(monkeypatch):
@@ -36,7 +36,7 @@ def test_apple_register_rejects_invalid_token(monkeypatch):
     assert response.status_code == 400
     assert response.data["ok"] is False
     assert response.data["message"] == "Invalid Apple identity token"
-    assert response.data["data"] is None
+    assert response.data.get("data") is None
 
 
 def test_apple_register_accepts_valid_token(monkeypatch):

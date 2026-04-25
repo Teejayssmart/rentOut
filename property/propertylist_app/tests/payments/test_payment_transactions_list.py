@@ -5,7 +5,12 @@ from django.contrib.auth import get_user_model
 from django.utils import timezone
 from datetime import timedelta
 
-from propertylist_app.models import Payment, UserProfile, Room
+from propertylist_app.models import Payment, UserProfile, Room, RoomCategorie
+
+
+
+def make_category(name="Payment List Category"):
+    return RoomCategorie.objects.create(name=name, active=True)
 
 
 @pytest.mark.django_db
@@ -26,8 +31,26 @@ def test_user_sees_only_their_own_payments():
     UserProfile.objects.create(user=user1, stripe_customer_id="cus_1")
     UserProfile.objects.create(user=user2, stripe_customer_id="cus_2")
 
-    room1 = Room.objects.create(title="Room One", property_owner=user1, price_per_month=500)
-    room2 = Room.objects.create(title="Room Two", property_owner=user2, price_per_month=600)
+    cat1 = make_category("Payment List Category 1")
+    cat2 = make_category("Payment List Category 2")
+
+    room1 = Room.objects.create(
+        title="Room One",
+        description="Payment list room one",
+        price_per_month=500,
+        location="SO14",
+        category=cat1,
+        property_owner=user1,
+    )
+
+    room2 = Room.objects.create(
+        title="Room Two",
+        description="Payment list room two",
+        price_per_month=600,
+        location="SO15",
+        category=cat2,
+        property_owner=user2,
+    )
 
 
 
@@ -66,7 +89,16 @@ def test_search_by_listing_title():
     user = User.objects.create_user(username="user", password="pass12345")
     UserProfile.objects.create(user=user, stripe_customer_id="cus_test")
 
-    room = Room.objects.create(title="Cosy London Room", property_owner=user, price_per_month=700)
+    cat = make_category("Payment Search Category")
+
+    room = Room.objects.create(
+        title="Cosy London Room",
+        description="Payment search room",
+        price_per_month=700,
+        location="London",
+        category=cat,
+        property_owner=user,
+    )
 
 
 
@@ -96,7 +128,16 @@ def test_date_filter_last_7_days():
     user = User.objects.create_user(username="user", password="pass12345")
     UserProfile.objects.create(user=user, stripe_customer_id="cus_test")
 
-    room = Room.objects.create(title="Room", property_owner=user, price_per_month=800)
+    cat = make_category("Payment Date Filter Category")
+
+    room = Room.objects.create(
+        title="Room",
+        description="Payment date filter room",
+        price_per_month=800,
+        location="SO16",
+        category=cat,
+        property_owner=user,
+    )
 
 
 

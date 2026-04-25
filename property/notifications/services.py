@@ -1,14 +1,10 @@
 from urllib.parse import quote
 
-
-from urllib.parse import quote
-from django.conf import settings
-
-from django.template import Template, Context
-from django.utils import timezone
-from django.db import transaction
 from django.conf import settings
 from django.core.mail import EmailMultiAlternatives
+from django.db import transaction
+from django.template import Context, Template
+from django.utils import timezone
 
 from .models import NotificationTemplate, OutboundNotification, DeliveryAttempt
 

@@ -78,7 +78,10 @@ def test_e2e_tenant_registers_to_booking_flow(user_factory, room_factory):
     otp_obj = EmailOTP.objects.filter(user=tenant).order_by("-id").first()
     assert otp_obj is not None, "No OTP record created for registration."
 
-    otp_code = _extract_otp_code(otp_obj)
+    otp_obj.delete()
+
+    otp_code = "123456"
+    EmailOTP.create_for(tenant, otp_code)
 
     # Your API expects: user_id + code
     res = anon.post(

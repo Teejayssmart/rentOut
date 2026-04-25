@@ -1,8 +1,12 @@
+import json
+
+
 
 from django.db.models import Count, Exists, Max, OuterRef, Q, Subquery
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.contrib.auth import get_user_model
+from django.conf import settings
 
 from rest_framework import generics, serializers, status
 from rest_framework.exceptions import ValidationError
@@ -13,6 +17,14 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.throttling import ScopedRateThrottle, UserRateThrottle
 from drf_spectacular.utils import extend_schema, OpenApiResponse,inline_serializer,OpenApiParameter
 from drf_spectacular.types import OpenApiTypes
+
+
+from urllib.parse import quote
+from urllib.request import Request, urlopen
+
+
+
+
 
 
 from propertylist_app.models import (
@@ -1291,13 +1303,17 @@ class ContactMessageCreateView(generics.CreateAPIView):
             )
 
         self.perform_create(serializer)
-        headers = self.get_success_headers(serializer.data)
-        return ok_response(
+        response = ok_response(
             serializer.data,
             message="Contact message submitted successfully.",
             status_code=status.HTTP_201_CREATED,
-            headers=headers,
         )
+
+        headers = self.get_success_headers(serializer.data)
+        for key, value in headers.items():
+            response[key] = value
+
+        return response
 
         
 class ThreadMoveToBinRequestSerializer(serializers.Serializer):

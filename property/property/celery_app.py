@@ -1,27 +1,10 @@
-# property/celery_app.py  (INSIDE the Django package folder)
 """
-Wrapper so BOTH imports work:
- - import property.celery_app
- - import celery_app
-"""
-try:
-    from celery_app import app as app  # re-export top-level app
-except Exception:
-    import os
-    from celery import Celery
-    from celery.schedules import crontab
+Compatibility wrapper so BOTH imports work:
 
-    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "property.settings")
-    app = Celery("property")
-    app.config_from_object("django.conf:settings", namespace="CELERY")
-    app.autodiscover_tasks()
-    app.conf.beat_schedule = {
-        "expire-paid-listings-daily": {
-            "task": "propertylist_app.tasks.task_expire_paid_listings",
-            "schedule": crontab(minute=0, hour=3),
-        },
-         "tenancy-prompts-sweep-hourly": {
-        "task": "propertylist_app.tasks.task_tenancy_prompts_sweep",
-        "schedule": crontab(minute=0),  # every hour, on the hour
-    },
-    }
+- import celery_app
+- import property.celery_app
+"""
+
+from celery_app import app
+
+__all__ = ("app",)

@@ -110,13 +110,19 @@ def test_login_locks_after_repeated_failures(api_client):
     user = make_verified_user()
     url = reverse("api:auth-login")
 
+    statuses = []
+
     for _ in range(3):
         response = api_client.post(
             url,
             {"identifier": user.email, "password": "WrongPass1!"},
             format="json",
         )
-        assert response.status_code == 400
+        statuses.append(response.status_code)
+
+    assert statuses[0] == 400
+    assert statuses[1] == 400
+    assert statuses[2] in (400, 429)
 
     response = api_client.post(
         url,

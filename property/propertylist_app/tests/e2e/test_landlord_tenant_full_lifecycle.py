@@ -17,22 +17,22 @@ def _auth(client: APIClient, user):
     return client
 
 
+def _unwrap(response):
+    if isinstance(response.data, dict) and response.data.get("ok") is True:
+        return response.data.get("data", {})
+    return response.data
+
+
 @override_settings(DEBUG_PROPAGATE_EXCEPTIONS=True)
 def test_e2e_landlord_tenant_full_lifecycle(monkeypatch, user_factory, room_factory, tmp_path):
     """
     End-to-end journey across modules:
 
-    landlord: room exists -> upload photo -> pay (checkout) -> webhook finalises (paid_until extended) -> notification
-    tenant: booking preflight -> create booking -> booking notification -> start thread -> send message
+    landlord: room exists -> upload photo -> pay -> webhook finalises -> notification
+    tenant: booking -> message thread -> tenancy proposal -> confirmation -> tenancy review
     """
 
-    # Force file uploads to go to a writable temp folder during tests
-    # Reason: prevents 500s caused by MEDIA_ROOT pointing to a production path (e.g. /var/data) or unwritable location
     with override_settings(MEDIA_ROOT=str(tmp_path)):
-
-        # -----------------------------
-        # arrange users + room
-        # -----------------------------
         landlord = user_factory(username="landlord1", email="landlord1@test.com", role="landlord")
         tenant = user_factory(username="tenant1", email="tenant1@test.com", role="seeker")
 
@@ -47,9 +47,6 @@ def test_e2e_landlord_tenant_full_lifecycle(monkeypatch, user_factory, room_fact
         landlord_client = _auth(APIClient(), landlord)
         tenant_client = _auth(APIClient(), tenant)
 
-        # -----------------------------
-        # capture tenancy notification task calls
-        # -----------------------------
         tenancy_task_calls = []
 
         def fake_delay(tenancy_id, event):
@@ -60,25 +57,16 @@ def test_e2e_landlord_tenant_full_lifecycle(monkeypatch, user_factory, room_fact
 
         monkeypatch.setattr(tasks.task_send_tenancy_notification, "delay", fake_delay)
 
-        # -----------------------------
-        # landlord uploads photo
-        # endpoint: rooms/<pk>/photos/
-        # -----------------------------
-        # Make upload deterministic in tests:
-        # Reason: the endpoint uses moderation + validators that may raise in test env
-        # (and then your global error envelope returns a generic 500).
         import propertylist_app.api.views as api_views
+        import propertylist_app.api.views.rooms as room_views
 
-        monkeypatch.setattr(api_views, "should_auto_approve_upload", lambda _f: True)
+        monkeypatch.setattr(room_views, "should_auto_approve_upload", lambda _f: True)
 
-        # These two are called inside the upload view; if they raise a non-DjangoValidationError
-        # the view would 500. We no-op them for this e2e flow test.
-        if hasattr(api_views, "validate_listing_photos"):
-            monkeypatch.setattr(api_views, "validate_listing_photos", lambda files, max_mb=5: None)
-        if hasattr(api_views, "assert_no_duplicate_files"):
-            monkeypatch.setattr(api_views, "assert_no_duplicate_files", lambda files: None)
+        if hasattr(room_views, "validate_listing_photos"):
+            monkeypatch.setattr(room_views, "validate_listing_photos", lambda files, max_mb=5: None)
+        if hasattr(room_views, "assert_no_duplicate_files"):
+            monkeypatch.setattr(room_views, "assert_no_duplicate_files", lambda files: None)
 
-        # real 1x1 PNG so ImageField/Pillow validation cannot crash and return 500
         png_b64 = (
             "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8"
             "/w8AAn8B9pWZ8QAAAABJRU5ErkJggg=="
@@ -93,10 +81,6 @@ def test_e2e_landlord_tenant_full_lifecycle(monkeypatch, user_factory, room_fact
         )
         assert res.status_code in (200, 201), getattr(res, "data", res.content)
 
-        # -----------------------------
-        # landlord starts checkout
-        # endpoint: payments/checkout/rooms/<pk>/
-        # -----------------------------
         class _FakeStripeObj:
             def __init__(self, _id):
                 self.id = _id
@@ -118,18 +102,13 @@ def test_e2e_landlord_tenant_full_lifecycle(monkeypatch, user_factory, room_fact
         )
         assert res.status_code == 200, getattr(res, "data", res.content)
 
-        # handle either raw or enveloped success payload
-        payload = res.data.get("data") if isinstance(res.data, dict) and res.data.get("ok") is True else res.data
+        payload = _unwrap(res)
         assert payload.get("session_id") == "cs_test_123"
         assert payload.get("checkout_url") is not None
 
         payment = Payment.objects.get(room=room, user=landlord)
         assert payment.status == "created"
 
-        # -----------------------------
-        # webhook finalises payment
-        # endpoint: payments/webhook/
-        # -----------------------------
         def fake_construct_event(*, payload, sig_header, secret, **kwargs):
             return {
                 "type": "checkout.session.completed",
@@ -144,7 +123,6 @@ def test_e2e_landlord_tenant_full_lifecycle(monkeypatch, user_factory, room_fact
                     }
                 },
             }
-
 
         monkeypatch.setattr(api_views.stripe.Webhook, "construct_event", fake_construct_event)
 
@@ -167,10 +145,6 @@ def test_e2e_landlord_tenant_full_lifecycle(monkeypatch, user_factory, room_fact
 
         assert Notification.objects.filter(user=landlord, title="Payment confirmed").exists()
 
-        # -----------------------------
-        # tenant booking pre-flight (optional but part of flow)
-        # endpoint: bookings/create/
-        # -----------------------------
         start_dt = timezone.now() - timedelta(days=2)
         end_dt = timezone.now() - timedelta(days=2, hours=-1)
 
@@ -186,10 +160,6 @@ def test_e2e_landlord_tenant_full_lifecycle(monkeypatch, user_factory, room_fact
         )
         assert res.status_code == 200, getattr(res, "data", res.content)
 
-        # -----------------------------
-        # tenant creates booking
-        # endpoint: bookings/
-        # -----------------------------
         res = tenant_client.post(
             "/api/v1/bookings/",
             data={
@@ -203,11 +173,6 @@ def test_e2e_landlord_tenant_full_lifecycle(monkeypatch, user_factory, room_fact
 
         assert Notification.objects.filter(user=tenant, title="Booking confirmed").exists()
 
-        # -----------------------------
-        # tenant starts thread from room and sends a message
-        # endpoint: rooms/<room_id>/start-thread/
-        # endpoint: messages/threads/<thread_id>/messages/
-        # -----------------------------
         res = tenant_client.post(
             f"/api/v1/rooms/{room.id}/start-thread/",
             data={"body": "Hi, is the room still available?"},
@@ -215,7 +180,7 @@ def test_e2e_landlord_tenant_full_lifecycle(monkeypatch, user_factory, room_fact
         )
         assert res.status_code in (200, 201), getattr(res, "data", res.content)
 
-        payload = res.data.get("data") if isinstance(res.data, dict) and res.data.get("ok") is True else res.data
+        payload = _unwrap(res)
         thread_id = payload.get("id") or payload.get("thread_id")
         assert thread_id, payload
 
@@ -226,10 +191,6 @@ def test_e2e_landlord_tenant_full_lifecycle(monkeypatch, user_factory, room_fact
         )
         assert res.status_code in (200, 201), getattr(res, "data", res.content)
 
-        # -----------------------------
-        # tenancy propose (tenant proposes to landlord)
-        # endpoint: /api/v1/tenancies/propose/
-        # -----------------------------
         move_in = timezone.localdate() + timedelta(days=1)
         res = tenant_client.post(
             "/api/v1/tenancies/propose/",
@@ -243,7 +204,7 @@ def test_e2e_landlord_tenant_full_lifecycle(monkeypatch, user_factory, room_fact
         )
         assert res.status_code == 201, getattr(res, "data", res.content)
 
-        payload = res.data.get("data") if isinstance(res.data, dict) and res.data.get("ok") is True else res.data
+        payload = _unwrap(res)
         tenancy_id = payload["id"]
         assert (tenancy_id, "proposed") in tenancy_task_calls
 
@@ -254,10 +215,6 @@ def test_e2e_landlord_tenant_full_lifecycle(monkeypatch, user_factory, room_fact
         assert tenancy.status in ("proposed", "confirmed", "active")
         assert tenancy.tenant_confirmed_at is not None
 
-        # -----------------------------
-        # landlord confirms
-        # endpoint: /api/v1/tenancies/<id>/respond/
-        # -----------------------------
         res = landlord_client.post(
             f"/api/v1/tenancies/{tenancy_id}/respond/",
             data={"action": "confirm"},
@@ -272,18 +229,19 @@ def test_e2e_landlord_tenant_full_lifecycle(monkeypatch, user_factory, room_fact
         assert tenancy.review_open_at is not None
         assert tenancy.review_deadline_at is not None
 
-        # open review window for test
         tenancy.review_open_at = timezone.now() - timedelta(days=1)
         tenancy.review_deadline_at = timezone.now() + timedelta(days=30)
         tenancy.save(update_fields=["review_open_at", "review_deadline_at"])
 
-        # -----------------------------
-        # tenant submits tenancy review
-        # endpoint: /api/v1/tenancies/<id>/reviews/
-        # -----------------------------
+        # Reviews are created through the central review-create endpoint.
+        # Booking/viewing routes do not create reviews.
         res = tenant_client.post(
-            f"/api/v1/tenancies/{tenancy_id}/reviews/",
-            data={"overall_rating": 5, "notes": "All good."},
+            "/api/v1/reviews/create/",
+            data={
+                "tenancy_id": tenancy_id,
+                "overall_rating": 5,
+                "notes": "All good.",
+            },
             format="json",
         )
         assert res.status_code == 201, getattr(res, "data", res.content)
@@ -291,3 +249,4 @@ def test_e2e_landlord_tenant_full_lifecycle(monkeypatch, user_factory, room_fact
         review = Review.objects.filter(tenancy_id=tenancy_id, reviewer_id=tenant.id).first()
         assert review is not None
         assert review.reviewee_id == landlord.id
+        assert int(review.overall_rating) == 5

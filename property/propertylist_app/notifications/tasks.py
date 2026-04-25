@@ -109,6 +109,7 @@ def _allowed_to_send_template(*, profile: UserProfile, template_key: str) -> boo
     return bool(getattr(profile, "notify_rentout_updates", True))
 
 
+@shared_task(name="notifications.tasks.notify_listing_expiring")
 def notify_listing_expiring(days_ahead: int = 3) -> None:
     """
     Queue EMAIL notifications for listings expiring within `days_ahead` days.
@@ -147,109 +148,50 @@ def notify_listing_expiring(days_ahead: int = 3) -> None:
             )
 
 
+@shared_task(name="notifications.tasks.send_due_notifications")
 def send_due_notifications() -> dict:
     """
-    Deliver all due notifications scheduled up to now.
-    Respects NotificationPreference.email_enabled.
-    Records DeliveryAttempt and updates OutboundNotification status.
-
-    Returns a small summary dict for tests/monitoring.
+    Deliver all due notifications using the single NotificationService pipeline.
     """
+    from notifications.services import NotificationService
+
     now = timezone.now()
+
     qs = (
         OutboundNotification.objects.select_related("user")
-        .filter(scheduled_for__lte=now, channel="email")
-        .exclude(status__in=[OutboundNotification.STATUS_SENT, OutboundNotification.STATUS_SKIPPED])
+        .filter(scheduled_for__lte=now, channel=NotificationTemplate.CHANNEL_EMAIL)
+        .exclude(
+            status__in=[
+                OutboundNotification.STATUS_SENT,
+                OutboundNotification.STATUS_SKIPPED,
+            ]
+        )
     )
 
-    from_email = getattr(settings, "DEFAULT_FROM_EMAIL", "noreply@rentout.co.uk")
-
+    found = qs.count()
     sent_count = 0
     failed_count = 0
     skipped_count = 0
 
     for notif in qs:
-        user = notif.user
+        NotificationService.deliver(notif)
+        notif.refresh_from_db()
 
-        # preference check
-        pref = NotificationPreference.objects.filter(user=user).first()
-        if not user.email or (pref and not pref.email_enabled):
-            skipped_count += 1
-            notif.status = OutboundNotification.STATUS_SKIPPED
-            notif.sent_at = None
-            notif.error = "Email disabled or missing address"
-            notif.save(update_fields=["status", "sent_at", "error"])
-            DeliveryAttempt.objects.create(
-                notification=notif, provider="email", success=False, response="skipped: prefs/email"
-            )
-            continue
-
-        # Prefer values stored on OutboundNotification, else load from NotificationTemplate.
-        subject = getattr(notif, "subject", None)
-        body = getattr(notif, "body", None)
-
-        if not subject or not body:
-            tmpl = NotificationTemplate.objects.filter(
-                key=notif.template_key,
-                is_active=True,
-                channel=NotificationTemplate.CHANNEL_EMAIL,
-            ).first()
-
-            if tmpl:
-                subject = subject or (tmpl.subject or "Notification")
-                body = body or (tmpl.body or "You have a new notification.")
-            else:
-                subject = subject or "Notification"
-                body = body or "You have a new notification."
-
-        # Render {{ ... }} placeholders using notif.context
-        ctx = _enrich_context(getattr(notif, "context", None) or {})
-
-        first = (getattr(user, "first_name", "") or "").strip()
-        if not first:
-            first = (getattr(user, "username", "") or "").strip()
-
-        ctx.setdefault("user", {})
-        ctx["user"].setdefault("first_name", first)
-
-        subject = _render_template_string(subject, ctx)
-        body = _render_template_string(body, ctx)
-
-        # send via wrapper (tests patch notifications.services.send_mail)
-        try:
-            html = _html_email(subject, body, _inbox_link())
-            result = send_mail(subject, body, from_email, [user.email], html_message=html)
-        except Exception as e:
-            failed_count += 1
-            notif.status = OutboundNotification.STATUS_FAILED
-            notif.error = str(e)
-            notif.save(update_fields=["status", "error"])
-            DeliveryAttempt.objects.create(
-                notification=notif, provider="email", success=False, response=f"exception: {e}"
-            )
-            continue
-
-        if result and result > 0:
+        if notif.status == OutboundNotification.STATUS_SENT:
             sent_count += 1
-            notif.status = OutboundNotification.STATUS_SENT
-            notif.sent_at = timezone.now()
-            notif.error = ""
-            notif.save(update_fields=["status", "sent_at", "error"])
-            DeliveryAttempt.objects.create(
-                notification=notif, provider="email", success=True, response=f"sent:{result}"
-            )
-        else:
+        elif notif.status == OutboundNotification.STATUS_SKIPPED:
+            skipped_count += 1
+        elif notif.status == OutboundNotification.STATUS_FAILED:
             failed_count += 1
-            notif.status = OutboundNotification.STATUS_FAILED
-            notif.error = "send_mail returned 0"
-            notif.save(update_fields=["status", "error"])
-            DeliveryAttempt.objects.create(
-                notification=notif, provider="email", success=False, response="returned 0"
-            )
 
-    return {"sent": sent_count, "failed": failed_count, "skipped": skipped_count, "found": qs.count()}
-
-
+    return {
+        "sent": sent_count,
+        "failed": failed_count,
+        "skipped": skipped_count,
+        "found": found,
+    }
+    
+    
 @shared_task
 def notify_completed_viewings(hours_back: int = 24) -> int:
     """

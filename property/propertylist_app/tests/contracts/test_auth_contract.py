@@ -1,5 +1,7 @@
 import pytest
 from django.urls import reverse
+from django.contrib.auth import get_user_model
+
 from rest_framework.test import APIClient
 
 from propertylist_app.models import EmailOTP
@@ -139,11 +141,28 @@ def test_verify_otp_contract_success_and_failure_api_and_v1():
     assert otp_api and otp_api.code
     assert otp_v1 and otp_v1.code
 
+    raw_code_api = "123456"
+    raw_code_v1 = "654321"
+
+    otp_api.delete()
+    otp_v1.delete()
+
+    User = get_user_model()
+
+    user_api = User.objects.get(id=user_id_api)
+    user_v1 = User.objects.get(id=user_id_v1)
+
+    EmailOTP.create_for(user_api, raw_code_api)
+    EmailOTP.create_for(user_v1, raw_code_v1)
+        
+    
+    
+    
     # --- /api/ verify success
     r_ok_api = post_json(
         client,
         reverse("api:auth-verify-otp"),
-        {"user_id": user_id_api, "code": otp_api.code},
+        {"user_id": user_id_api, "code": raw_code_api},
     )
     assert r_ok_api.status_code == 200, r_ok_api.data
     body_ok_api = r_ok_api.json()
@@ -164,9 +183,9 @@ def test_verify_otp_contract_success_and_failure_api_and_v1():
 
     # --- /api/v1/ verify success
     r_ok_v1 = post_json(
-        client,
-        reverse("v1:auth-verify-otp"),
-        {"user_id": user_id_v1, "code": otp_v1.code},
+    client,
+    reverse("v1:auth-verify-otp"),
+    {"user_id": user_id_v1, "code": raw_code_v1},
     )
     assert r_ok_v1.status_code == 200, r_ok_v1.data
     body_ok_v1 = r_ok_v1.json()
@@ -208,10 +227,19 @@ def test_login_contract_success_and_failure_api():
     otp = EmailOTP.objects.filter(user_id=user_id).order_by("-created_at").first()
     assert otp and otp.code
 
+
+    raw_code = "112233"
+
+    otp.delete()
+    User = get_user_model()
+    user = User.objects.get(id=user_id)
+
+    EmailOTP.create_for(user, raw_code)
+
     r_verify = post_json(
         client,
         reverse("api:auth-verify-otp"),
-        {"user_id": user_id, "code": otp.code},
+        {"user_id": user_id, "code": raw_code},
     )
     assert r_verify.status_code == 200, r_verify.data
 

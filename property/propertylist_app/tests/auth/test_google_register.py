@@ -13,7 +13,7 @@ def test_google_register_requires_token():
     assert response.status_code == 400
     assert response.data["ok"] is False
     assert response.data["message"] == "Missing token"
-    assert response.data["data"] is None
+    assert response.data.get("data") is None
 
 
 def test_google_register_rejects_invalid_token():
@@ -27,7 +27,7 @@ def test_google_register_rejects_invalid_token():
     assert response.status_code == 400
     assert response.data["ok"] is False
     assert response.data["message"] == "Invalid Google token"
-    assert response.data["data"] is None
+    assert response.data.get("data") is None
 
 
 def test_google_register_accepts_valid_token(monkeypatch):

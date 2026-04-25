@@ -102,7 +102,7 @@ urlpatterns = [
     
     
     # Redirect any old /api/<path> (except the explicit auth + schema routes above) to /api/v1/<path>
-    re_path(r"^api/(?P<path>.*)$", redirect_api_to_v1),
+    re_path(r"^api/(?!v1/)(?P<path>.*)$", redirect_api_to_v1),
 
 ]
 

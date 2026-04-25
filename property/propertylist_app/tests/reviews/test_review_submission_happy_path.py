@@ -1,5 +1,3 @@
-# property/propertylist_app/tests/reviews/test_review_submission_happy_path.py
-
 from datetime import date, timedelta
 
 import pytest
@@ -31,7 +29,7 @@ def _make_tenancy(room, landlord, tenant, *, status):
         tenant_confirmed_at=now - timedelta(days=90),
     )
 
-    # make review schedule "ready" (avoid: Tenancy review schedule is not ready yet.)
+    # make review schedule ready
     if hasattr(t, "review_open_at"):
         t.review_open_at = now - timedelta(days=1)
     if hasattr(t, "review_deadline_at"):
@@ -41,8 +39,8 @@ def _make_tenancy(room, landlord, tenant, *, status):
     return t
 
 
-def _reviews_url(tenancy_id):
-    return f"/api/v1/tenancies/{tenancy_id}/reviews/"
+def _reviews_url(_tenancy_id):
+    return "/api/v1/reviews/create/"
 
 
 def test_tenant_can_submit_tenant_to_landlord_review_when_schedule_ready(user_factory, room_factory):
@@ -68,7 +66,10 @@ def test_tenant_can_submit_tenant_to_landlord_review_when_schedule_ready(user_fa
     res = client.post(_reviews_url(tenancy.id), data=payload, format="json")
     assert res.status_code in (200, 201), getattr(res, "data", None)
 
-    r = Review.objects.filter(tenancy=tenancy, role=Review.ROLE_TENANT_TO_LANDLORD).latest("id")
+    r = Review.objects.filter(
+        tenancy=tenancy,
+        role=Review.ROLE_TENANT_TO_LANDLORD,
+    ).latest("id")
     assert r.reviewer_id == tenant.id
     assert r.reviewee_id == landlord.id
     assert int(r.overall_rating) == 5
@@ -97,7 +98,10 @@ def test_landlord_can_submit_landlord_to_tenant_review_when_schedule_ready(user_
     res = client.post(_reviews_url(tenancy.id), data=payload, format="json")
     assert res.status_code in (200, 201), getattr(res, "data", None)
 
-    r = Review.objects.filter(tenancy=tenancy, role=Review.ROLE_LANDLORD_TO_TENANT).latest("id")
+    r = Review.objects.filter(
+        tenancy=tenancy,
+        role=Review.ROLE_LANDLORD_TO_TENANT,
+    ).latest("id")
     assert r.reviewer_id == landlord.id
     assert r.reviewee_id == tenant.id
     assert int(r.overall_rating) == 4

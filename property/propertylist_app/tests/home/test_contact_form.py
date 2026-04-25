@@ -38,9 +38,9 @@ class ContactFormTests(APITestCase):
         resp = self.client.post(self.url, data=payload, format="json")
 
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("field_errors", resp.data)
-        self.assertIn("email", resp.data["field_errors"])
-        self.assertIn("message", resp.data["field_errors"])
+        self.assertIn("errors", resp.data)
+        self.assertIn("email", resp.data["errors"])
+        self.assertIn("message", resp.data["errors"])
 
 
     def test_contact_does_not_require_authentication(self):

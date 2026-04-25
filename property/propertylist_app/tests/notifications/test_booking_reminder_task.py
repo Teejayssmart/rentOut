@@ -1,33 +1,55 @@
 import pytest
 from datetime import timedelta
-from django.utils import timezone
-from django.contrib.auth import get_user_model
 
-from propertylist_app.models import Booking, Room, UserProfile, Notification
+from django.contrib.auth import get_user_model
+from django.utils import timezone
+
+from propertylist_app.models import (
+    Booking,
+    Notification,
+    Room,
+    RoomCategorie,
+    UserProfile,
+)
 from propertylist_app.services.tasks import notify_upcoming_bookings
 
 
 pytestmark = pytest.mark.django_db
 
 
+def _mk_category(name="Test Category"):
+    return RoomCategorie.objects.create(name=name, active=True)
+
+
 def _mk_booking(user, room, start, end=None, *, cancelled=False, deleted=False):
     if end is None:
         end = start + timedelta(hours=1)
+
     booking = Booking.objects.create(user=user, room=room, start=start, end=end)
+
     if cancelled:
         booking.canceled_at = timezone.now()
         booking.save(update_fields=["canceled_at"])
+
     if deleted:
         booking.is_deleted = True
         booking.deleted_at = timezone.now()
         booking.save(update_fields=["is_deleted", "deleted_at"])
+
     return booking
 
 
 def test_notify_upcoming_bookings_creates_notification_when_in_window_and_opted_in():
     User = get_user_model()
     user = User.objects.create_user(username="u1", password="pass12345")
-    room = Room.objects.create(title="Room A", property_owner=user, price_per_month=1000)
+    category = _mk_category("Booking Reminder A")
+
+    room = Room.objects.create(
+        title="Room A",
+        property_owner=user,
+        category=category,
+        price_per_month=1000,
+    )
 
     profile, _ = UserProfile.objects.get_or_create(user=user)
     profile.notify_reminders = True
@@ -44,7 +66,14 @@ def test_notify_upcoming_bookings_creates_notification_when_in_window_and_opted_
 def test_notify_upcoming_bookings_skips_when_notify_reminders_off():
     User = get_user_model()
     user = User.objects.create_user(username="u2", password="pass12345")
-    room = Room.objects.create(title="Room B", property_owner=user, price_per_month=1000)
+    category = _mk_category("Booking Reminder B")
+
+    room = Room.objects.create(
+        title="Room B",
+        property_owner=user,
+        category=category,
+        price_per_month=1000,
+    )
 
     profile, _ = UserProfile.objects.get_or_create(user=user)
     profile.notify_reminders = False
@@ -61,7 +90,14 @@ def test_notify_upcoming_bookings_skips_when_notify_reminders_off():
 def test_notify_upcoming_bookings_skips_cancelled_bookings():
     User = get_user_model()
     user = User.objects.create_user(username="u3", password="pass12345")
-    room = Room.objects.create(title="Room C", property_owner=user, price_per_month=1000)
+    category = _mk_category("Booking Reminder C")
+
+    room = Room.objects.create(
+        title="Room C",
+        property_owner=user,
+        category=category,
+        price_per_month=1000,
+    )
 
     profile, _ = UserProfile.objects.get_or_create(user=user)
     profile.notify_reminders = True
@@ -78,7 +114,14 @@ def test_notify_upcoming_bookings_skips_cancelled_bookings():
 def test_notify_upcoming_bookings_skips_deleted_bookings():
     User = get_user_model()
     user = User.objects.create_user(username="u4", password="pass12345")
-    room = Room.objects.create(title="Room D", property_owner=user, price_per_month=1000)
+    category = _mk_category("Booking Reminder D")
+
+    room = Room.objects.create(
+        title="Room D",
+        property_owner=user,
+        category=category,
+        price_per_month=1000,
+    )
 
     profile, _ = UserProfile.objects.get_or_create(user=user)
     profile.notify_reminders = True
@@ -95,7 +138,14 @@ def test_notify_upcoming_bookings_skips_deleted_bookings():
 def test_notify_upcoming_bookings_no_duplicates_on_repeat_runs():
     User = get_user_model()
     user = User.objects.create_user(username="u5", password="pass12345")
-    room = Room.objects.create(title="Room E", property_owner=user, price_per_month=1000)
+    category = _mk_category("Booking Reminder E")
+
+    room = Room.objects.create(
+        title="Room E",
+        property_owner=user,
+        category=category,
+        price_per_month=1000,
+    )
 
     profile, _ = UserProfile.objects.get_or_create(user=user)
     profile.notify_reminders = True
