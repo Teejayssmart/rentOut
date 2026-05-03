@@ -1,4 +1,4 @@
-import pytest
+﻿import pytest
 from django.contrib.auth import get_user_model
 from django.urls import reverse
 from rest_framework.test import APIClient
@@ -46,4 +46,7 @@ def test_create_password_rejects_mismatch():
     url = reverse("api:user-create-password")
     r = c.post(url, {"new_password": "StrongPass123!@", "confirm_password": "Different123!@"}, format="json")
     assert r.status_code == 400
-    assert "confirm_password" in r.data
+    assert r.data["ok"] is False
+    assert r.data["code"] == "validation_error"
+    assert "confirm_password" in r.data["field_errors"]
+

@@ -1,4 +1,4 @@
-import logging
+﻿import logging
 
 from datetime import datetime
 from django.db import transaction
@@ -33,7 +33,7 @@ from propertylist_app.api.serializers import (
     BookingPreflightResponseSerializer,
 )
 from ..serializers import BookingCreateRequestSerializer, BookingResponseEnvelopeSerializer
-from .common import ok_response, _pagination_meta, _wrap_response_success
+from .common import ok_response, _pagination_meta, _wrap_response_success, error_response
 
 
 
@@ -85,9 +85,10 @@ def create_booking(request):
     start_str = request.data.get("start")
     end_str = request.data.get("end")
     if not room_id or not start_str or not end_str:
-        return Response(
-            {"detail": "room, start, and end are required."},
-            status=status.HTTP_400_BAD_REQUEST,
+        return error_response(
+            message="room, start, and end are required.",
+            status_code=status.HTTP_400_BAD_REQUEST,
+            code="missing_required_fields",
         )
 
     room = get_object_or_404(Room, pk=room_id)
@@ -95,9 +96,10 @@ def create_booking(request):
         start_dt = datetime.fromisoformat(start_str)
         end_dt = datetime.fromisoformat(end_str)
     except Exception:
-        return Response(
-            {"detail": "start and end must be ISO 8601 datetimes."},
-            status=status.HTTP_400_BAD_REQUEST,
+        return error_response(
+            message="start and end must be ISO 8601 datetimes.",
+            status_code=status.HTTP_400_BAD_REQUEST,
+            code="invalid_datetime",
         )
 
     Booking.objects.select_for_update().filter(room=room)
@@ -110,9 +112,9 @@ def create_booking(request):
         request_hash=info["request_hash"],
     )
 
-    return Response(
+    return ok_response(
         {"detail": "Validated. Ready to create booking."},
-        status=status.HTTP_200_OK,
+        status_code=status.HTTP_200_OK,
     )
 
 
@@ -352,12 +354,12 @@ class BookingListCreateView(generics.ListCreateAPIView):
             },
             status=status.HTTP_200_OK,
         )
-        
-    
-    
-    
+
+
+
+
 class BookingDetailView(generics.RetrieveAPIView):
-    """GET /api/bookings/<id>/ → see my booking"""
+    """GET /api/bookings/<id>/ â†’ see my booking"""
     serializer_class = BookingSerializer
     permission_classes = [IsAuthenticated]
 
@@ -427,21 +429,24 @@ class BookingCancelView(APIView):
         booking = get_object_or_404(qs, pk=pk)
 
         if booking.status == Booking.STATUS_CANCELLED or booking.canceled_at is not None:
-            return Response(
-                {"detail": "Booking already cancelled."},
-                status=status.HTTP_400_BAD_REQUEST,
+            return error_response(
+                message="Booking already cancelled.",
+                status_code=status.HTTP_400_BAD_REQUEST,
+                code="booking_already_cancelled",
             )
 
         if booking.status == Booking.STATUS_SUSPENDED:
-            return Response(
-                {"detail": "Suspended bookings cannot be cancelled."},
-                status=status.HTTP_400_BAD_REQUEST,
+            return error_response(
+                message="Suspended bookings cannot be cancelled.",
+                status_code=status.HTTP_400_BAD_REQUEST,
+                code="booking_suspended",
             )
 
         if booking.start <= timezone.now():
-            return Response(
-                {"detail": "Cannot cancel after booking has started."},
-                status=status.HTTP_400_BAD_REQUEST,
+            return error_response(
+                message="Cannot cancel after booking has started.",
+                status_code=status.HTTP_400_BAD_REQUEST,
+                code="booking_started",
             )
 
         booking.status = Booking.STATUS_CANCELLED
@@ -499,37 +504,39 @@ class BookingSuspendView(APIView):
         booking = get_object_or_404(Booking, pk=pk, is_deleted=False)
 
         if booking.user != request.user:
-            return Response(
-                {
-                    "ok": False,
-                    "message": "You are not allowed to suspend this booking.",
-                },
-                status=status.HTTP_403_FORBIDDEN,
+            return error_response(
+                message="You are not allowed to suspend this booking.",
+                status_code=status.HTTP_403_FORBIDDEN,
+                code="permission_denied",
             )
 
         if booking.status == Booking.STATUS_SUSPENDED:
-            return Response(
-                {"detail": "Booking already suspended."},
-                status=status.HTTP_400_BAD_REQUEST,
+            return error_response(
+                message="Booking already suspended.",
+                status_code=status.HTTP_400_BAD_REQUEST,
+                code="booking_already_suspended",
             )
 
         if booking.status == Booking.STATUS_CANCELLED or booking.canceled_at is not None:
-            return Response(
-                {"detail": "Cancelled bookings cannot be suspended."},
-                status=status.HTTP_400_BAD_REQUEST,
+            return error_response(
+                message="Cancelled bookings cannot be suspended.",
+                status_code=status.HTTP_400_BAD_REQUEST,
+                code="booking_cancelled",
             )
 
         if booking.start <= timezone.now():
-            return Response(
-                {"detail": "Cannot suspend after booking has started."},
-                status=status.HTTP_400_BAD_REQUEST,
+            return error_response(
+                message="Cannot suspend after booking has started.",
+                status_code=status.HTTP_400_BAD_REQUEST,
+                code="booking_started",
             )
 
         if booking.status != Booking.STATUS_ACTIVE:
-            return Response(
-                {"detail": "Only active bookings can be suspended."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return error_response(
+                    message="Only active bookings can be suspended.",
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    code="booking_not_active",
+                )
 
         booking.status = Booking.STATUS_SUSPENDED
         booking.canceled_at = timezone.now()
@@ -550,7 +557,7 @@ class BookingSuspendView(APIView):
             },
             status_code=status.HTTP_200_OK,
         )
-        
+
 class BookingDeleteView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -579,24 +586,24 @@ class BookingDeleteView(APIView):
         now = timezone.now()
 
         if booking.status == Booking.STATUS_SUSPENDED:
-            return Response(
-                {"detail": "Suspended bookings cannot be deleted."},
-                status=status.HTTP_400_BAD_REQUEST,
+            return error_response(
+                message="Suspended bookings cannot be deleted.",
+                status_code=status.HTTP_400_BAD_REQUEST,
+                code="booking_suspended",
             )
 
         if booking.status == Booking.STATUS_CANCELLED or booking.canceled_at is not None:
-            return Response(
-                {"detail": "Cancelled bookings cannot be deleted."},
-                status=status.HTTP_400_BAD_REQUEST,
+            return error_response(
+                message="Cancelled bookings cannot be deleted.",
+                status_code=status.HTTP_400_BAD_REQUEST,
+                code="booking_cancelled",
             )
 
         if booking.start and booking.start <= now:
-            return Response(
-                {
-                    "ok": False,
-                    "message": "Cannot delete a booking that has started.",
-                },
-                status=status.HTTP_400_BAD_REQUEST,
+            return error_response(
+                message="Cannot delete a booking that has started.",
+                status_code=status.HTTP_400_BAD_REQUEST,
+                code="booking_started",
             )
 
         booking.is_deleted = True
@@ -618,4 +625,5 @@ class BookingDeleteView(APIView):
 
 
 
-    
+
+

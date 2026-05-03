@@ -1,4 +1,4 @@
-#Standard/library
+﻿#Standard/library
 from datetime import datetime, timezone as dt_timezone
 import logging
 import jwt
@@ -95,7 +95,7 @@ logger = logger_auth
 #DRF throttling
 from rest_framework.throttling import ScopedRateThrottle
 
-
+from .common import error_response
 
 
 
@@ -351,8 +351,8 @@ class RegistrationView(generics.CreateAPIView):
             message="Registration successful.",
             status_code=status.HTTP_201_CREATED,
         )
-        
-        
+
+
 @method_decorator(csrf_exempt, name="dispatch")
 class GoogleRegisterView(APIView):
     permission_classes = [AllowAny]
@@ -439,19 +439,16 @@ class GoogleRegisterView(APIView):
 
         refresh = RefreshToken.for_user(user)
 
-        return Response(
+        return ok_response(
             {
-                "ok": True,
-                "message": "Login successful",
-                "data": {
-                    "refresh": str(refresh),
-                    "access": str(refresh.access_token),
-                },
+                "refresh": str(refresh),
+                "access": str(refresh.access_token),
             },
-            status=status.HTTP_200_OK,
+            message="Login successful",
+            status_code=status.HTTP_200_OK,
         )
-                       
-                       
+
+
 @method_decorator(csrf_exempt, name="dispatch")
 class AppleRegisterView(APIView):
     permission_classes = [AllowAny]
@@ -511,7 +508,7 @@ class AppleRegisterView(APIView):
             )
 
         email = payload.get("email", "").strip().lower()
-        
+
         User = get_user_model()
         user, created = User.objects.get_or_create(
             email=email,
@@ -526,17 +523,14 @@ class AppleRegisterView(APIView):
 
         refresh = RefreshToken.for_user(user)
 
-        return Response(
+        return ok_response(
             {
-                "ok": True,
-                "message": "Login successful",
-                "data": {
-                    "refresh": str(refresh),
-                    "access": str(refresh.access_token),
-                },
+                "refresh": str(refresh),
+                "access": str(refresh.access_token),
             },
-            status=status.HTTP_200_OK,
-        )   
+            message="Login successful",
+            status_code=status.HTTP_200_OK,
+        )
 
 
 
@@ -584,7 +578,7 @@ class LoginView(APIView):
         ),
     )
     def post(self, request, *args, **kwargs):
-        
+
 
         try:
             data = request.data.copy()
@@ -602,18 +596,19 @@ class LoginView(APIView):
 
             if identifier_for_lock and is_locked_out(ip, identifier_for_lock):
                 logger.warning("login_lockout ip=%s identifier=%s", ip, identifier_for_lock)
-                return Response(
-                    {"detail": "Too many failed attempts. Try again later."},
-                    status=status.HTTP_429_TOO_MANY_REQUESTS,
+                return error_response(
+                    message="Too many failed attempts. Try again later.",
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    code="lockout",
                 )
 
             if getattr(settings, "ENABLE_CAPTCHA", False):
                 token = (data.get("captcha_token") or "").strip()
                 if not views_mod.verify_captcha(token, ip):
                     logger.warning("login_captcha_failed ip=%s identifier=%s", ip, (identifier_for_lock or "-"))
-                    return Response(
-                        {"detail": "CAPTCHA verification failed."},
-                        status=status.HTTP_400_BAD_REQUEST,
+                    return error_response(
+                        message="CAPTCHA verification failed.",
+                        status_code=status.HTTP_400_BAD_REQUEST,
                     )
 
             ser = LoginSerializer(data=data)
@@ -641,9 +636,9 @@ class LoginView(APIView):
 
                 if not profile or not getattr(profile, "email_verified", False):
                     logger.warning("login_email_not_verified ip=%s user_id=%s", ip, user.id)
-                    return Response(
-                        {"detail": "Please verify your email with the 6-digit code we sent."},
-                        status=status.HTTP_403_FORBIDDEN,
+                    return error_response(
+                        message="Please verify your email with the 6-digit code we sent.",
+                        status_code=status.HTTP_403_FORBIDDEN,
                     )
 
                 clear_login_failures(ip, identifier_for_lock or identifier)
@@ -674,23 +669,24 @@ class LoginView(APIView):
 
             if identifier_for_lock and is_locked_out(ip, identifier_for_lock):
                 logger.warning("login_lockout ip=%s identifier=%s", ip, identifier_for_lock)
-                return Response(
-                    {"detail": "Too many failed attempts. Try again later."},
-                    status=status.HTTP_429_TOO_MANY_REQUESTS,
+                return error_response(
+                    message="Too many failed attempts. Try again later.",
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    code="lockout",
                 )
 
             logger.warning("login_invalid_credentials ip=%s identifier=%s", ip, (identifier_for_lock or identifier))
-            return Response(
-                {"detail": "Invalid credentials."},
-                status=status.HTTP_400_BAD_REQUEST,
+            return error_response(
+                message="Invalid credentials.",
+                status_code=status.HTTP_400_BAD_REQUEST,
             )
 
         except Exception:
             logger.exception("LoginView crashed")
             raise
-        
-        
-        
+
+
+
 class LogoutView(APIView):
     permission_classes = [IsAuthenticated]
     versioning_class = None
@@ -727,8 +723,8 @@ class LogoutView(APIView):
 
         # Reason: A3/C1 consistent success envelope
         return ok_response({"detail": "Logged out."}, status_code=status.HTTP_200_OK)
-    
-    
+
+
 class TokenRefreshView(APIView):
     permission_classes = [AllowAny]
     versioning_class = None
@@ -817,9 +813,9 @@ class PasswordResetRequestView(APIView):
         if settings.ENABLE_CAPTCHA:
             token = (request.data.get("captcha_token") or "").strip()
             if not views_mod.verify_captcha(token, request.META.get("REMOTE_ADDR")):
-                return Response(
-                    {"detail": "CAPTCHA verification failed."},
-                    status=status.HTTP_400_BAD_REQUEST,
+                return error_response(
+                    message="CAPTCHA verification failed.",
+                    status_code=status.HTTP_400_BAD_REQUEST,
                 )
 
         ser = PasswordResetRequestSerializer(data=request.data)
@@ -828,7 +824,7 @@ class PasswordResetRequestView(APIView):
         email = ser.validated_data["email"].strip()
         UserModel = get_user_model()
 
-        # Always return a generic response (don’t reveal if email exists)
+        # Always return a generic response (donâ€™t reveal if email exists)
         generic_response = ok_response(
             {"detail": "If that email exists, a reset code has been sent."},
             status_code=status.HTTP_200_OK,
@@ -916,9 +912,13 @@ class PasswordResetConfirmView(APIView):
         try:
             user = UserModel.objects.get(email__iexact=email)
         except UserModel.DoesNotExist:
-            return Response({"detail": "Invalid token."}, status=status.HTTP_400_BAD_REQUEST)
-        
-        
+            return error_response(
+                message="Invalid token.",
+                status_code=status.HTTP_400_BAD_REQUEST,
+                code="invalid_token",
+            )
+
+
         otp = (
             EmailOTP.objects.filter(
                 user=user,
@@ -930,21 +930,33 @@ class PasswordResetConfirmView(APIView):
         )
 
         if not otp:
-            return Response({"detail": "Invalid token."}, status=status.HTTP_400_BAD_REQUEST)
+            return error_response(
+                    message="Invalid token.",
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    code="invalid_token",
+                )
 
         if otp.is_expired:
-            return Response({"detail": "Token expired."}, status=status.HTTP_400_BAD_REQUEST)
-
-        if otp.attempts >= settings.OTP_MAX_ATTEMPTS:
-            return Response(
-                {"detail": "Too many attempts. Request a new reset code."},
-                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            return error_response(
+                message="Token expired.",
+                status_code=status.HTTP_400_BAD_REQUEST,
+                code="token_expired",
             )
 
+        if otp.attempts >= settings.OTP_MAX_ATTEMPTS:
+            return error_response(
+                message="Too many attempts. Request a new reset code.",
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                code="rate_limited",
+            )
         if not otp.matches(token):
             otp.attempts = int(otp.attempts or 0) + 1
             otp.save(update_fields=["attempts"])
-            return Response({"detail": "Invalid token."}, status=status.HTTP_400_BAD_REQUEST)
+            return error_response(
+                message="Invalid token.",
+                status_code=status.HTTP_400_BAD_REQUEST,
+                code="invalid_token",
+            )
 
         # Token is valid: mark used + set new password
         otp.mark_used()
@@ -986,24 +998,29 @@ class CreatePasswordView(APIView):
 
         # Social users may have no password yet
         if user.has_usable_password():
-            return Response(
-                {"detail": "Password already exists. Use change password instead."},
-                status=status.HTTP_400_BAD_REQUEST,
+            return error_response(
+                message="Password already exists. Use change password instead.",
+                status_code=status.HTTP_400_BAD_REQUEST,
+                code="password_exists",
             )
 
         new_password = request.data.get("new_password")
         confirm_password = request.data.get("confirm_password")
 
         if not new_password or not confirm_password:
-            return Response(
-                {"detail": "new_password and confirm_password are required."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return error_response(
+                    message="new_password and confirm_password are required.",
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    code="missing_password_fields",
+                )
 
         if new_password != confirm_password:
-            return Response(
-                {"confirm_password": "Passwords do not match."},
-                status=status.HTTP_400_BAD_REQUEST,
+            return error_response(
+                message="Passwords do not match.",
+                status_code=status.HTTP_400_BAD_REQUEST,
+                code="validation_error",
+                field_errors={"confirm_password": ["Passwords do not match."]},
+                details={"confirm_password": ["Passwords do not match."]},
             )
 
         from django.contrib.auth.password_validation import validate_password
@@ -1012,9 +1029,12 @@ class CreatePasswordView(APIView):
         try:
             validate_password(new_password, user=user)
         except DjangoValidationError as e:
-            return Response(
-                {"new_password": list(e.messages)},
-                status=status.HTTP_400_BAD_REQUEST,
+            return error_response(
+                message="Invalid password.",
+                status_code=status.HTTP_400_BAD_REQUEST,
+                code="validation_error",
+                field_errors={"new_password": list(e.messages)},
+                details={"new_password": list(e.messages)},
             )
 
         user.set_password(new_password)
@@ -1027,7 +1047,8 @@ class CreatePasswordView(APIView):
 
 
 
-                                            
-        
-        
-        
+
+
+
+
+

@@ -1,4 +1,4 @@
-from django.contrib.auth import get_user_model, password_validation,authenticate
+﻿from django.contrib.auth import get_user_model, password_validation,authenticate
 User = get_user_model()
 from rest_framework import serializers
 from django.contrib.contenttypes.models import ContentType
@@ -90,9 +90,9 @@ class UserReviewListSerializer(serializers.ModelSerializer):
         if request is not None:
             return request.build_absolute_uri(url)
         return url
-    
-      
-    
+
+
+
 class ReviewSerializer(serializers.ModelSerializer):
     review_mode = serializers.SerializerMethodField()
     display_summary = serializers.SerializerMethodField()
@@ -222,7 +222,7 @@ class ReviewSerializer(serializers.ModelSerializer):
 class ReviewCreateSerializer(serializers.Serializer):
     tenancy_id = serializers.IntegerField()
 
-    #  allow manual rating input (1–5) when flags are not provided
+    #  allow manual rating input (1â€“5) when flags are not provided
     overall_rating = serializers.IntegerField(min_value=1, max_value=5, required=False)
 
     review_flags = serializers.ListField(
@@ -257,8 +257,8 @@ class ReviewCreateSerializer(serializers.Serializer):
     "property_care_poor",
     "broke_rules",
     }
-    
-    
+
+
 
     def validate(self, attrs):
         request = self.context["request"]
@@ -345,7 +345,7 @@ class ReviewCreateSerializer(serializers.Serializer):
         attrs["reviewer"] = user
         attrs["reviewee"] = reviewee
         attrs["role"] = role
-        
+
 
         return attrs
 
@@ -457,7 +457,7 @@ class TenancyProposalSerializer(serializers.Serializer):
                     {"room_id": "You must have completed a viewing for this room before proposing a tenancy."}
                 )
 
-        
+
 
         attrs["room"] = room
         attrs["landlord"] = landlord
@@ -493,7 +493,7 @@ class TenancyProposalSerializer(serializers.Serializer):
         )
 
         if not created:
-            # “last write wins” update
+            # â€œlast write winsâ€ update
             tenancy.landlord = landlord  # keep consistent with room owner
             tenancy.proposed_by = user
             tenancy.move_in_date = validated_data["move_in_date"]
@@ -519,7 +519,7 @@ class TenancyProposalSerializer(serializers.Serializer):
 
         return tenancy
 
-    
+
 class TenancyRespondSerializer(serializers.Serializer):
     """
     Handles actions on an existing tenancy proposal:
@@ -624,7 +624,7 @@ class TenancyRespondSerializer(serializers.Serializer):
         if user.id == tenancy.tenant_id and tenancy.tenant_confirmed_at is None:
             tenancy.tenant_confirmed_at = now
 
-        # if both confirmed → lock schedule + set status
+        # if both confirmed â†’ lock schedule + set status
         if tenancy.landlord_confirmed_at and tenancy.tenant_confirmed_at:
             today = timezone.localdate()
             tenancy.status = STATUS_ACTIVE if tenancy.move_in_date <= today else STATUS_CONFIRMED
@@ -637,7 +637,7 @@ class TenancyRespondSerializer(serializers.Serializer):
 
 
 
-    
+
 class TenancyDetailSerializer(serializers.ModelSerializer):
     class Meta:
         model = Tenancy
@@ -666,8 +666,8 @@ class UserReviewSummarySerializer(serializers.Serializer):
     overall_rating_average = serializers.FloatField(allow_null=True)
 
 
-    
-    
+
+
 
 # --------------------
 # Room Serializer
@@ -788,7 +788,7 @@ class RoomSerializer(serializers.ModelSerializer):
         return cleaned
 
     def validate_security_deposit(self, value):
-        # normalise_price handles strings like "£200" or "200.00"
+        # normalise_price handles strings like "Â£200" or "200.00"
         value = normalise_price(value)
         # allow zero, but cap it to something sensible
         return validate_price(value, min_val=0.0, max_val=50000.0)
@@ -846,7 +846,7 @@ class RoomSerializer(serializers.ModelSerializer):
         if available_from is not None:
             validate_available_from(available_from)
 
-        # ----- Minimum / maximum rental period (months, 1–12) -----
+        # ----- Minimum / maximum rental period (months, 1â€“12) -----
         # Support PATCH: if a field is not in attrs, fall back to instance
         min_stay = attrs.get(
             "min_stay_months",
@@ -1155,8 +1155,8 @@ class RoomSerializer(serializers.ModelSerializer):
             )
 
         return normalised
-    
-    
+
+
 # --------------------
 # Room Preview Serializer (Step 5/5)
 # --------------------
@@ -1222,7 +1222,7 @@ class SearchFiltersSerializer(serializers.Serializer):
     page = serializers.IntegerField(required=False)
     offset = serializers.IntegerField(required=False)
     ordering = serializers.CharField(required=False)
-    
+
     def validate_q(self, value):
         return sanitize_search_text(value, max_len=200)
 
@@ -1245,24 +1245,24 @@ class SearchFiltersSerializer(serializers.Serializer):
     ALLOWED_ORDER_FIELDS = {"price_per_month", "available_from", "created_at"}
 
     # ========== Advanced search filters ==========
-    # “Rooms in existing shares”
+    # â€œRooms in existing sharesâ€
     include_shared = serializers.BooleanField(required=False)
 
-    # “Rooms suitable for ages”
+    # â€œRooms suitable for agesâ€
     min_age = serializers.IntegerField(required=False)
     max_age = serializers.IntegerField(required=False)
 
-    # “Length of stay”
+    # â€œLength of stayâ€
     min_stay_months = serializers.IntegerField(required=False)
     max_stay_months = serializers.IntegerField(required=False)
 
-    # “Rooms for”
+    # â€œRooms forâ€
     room_for = serializers.ChoiceField(
         choices=["any", "females", "males", "couples"],
         required=False,
     )
 
-    # “Room sizes”
+    # â€œRoom sizesâ€
     room_size = serializers.ChoiceField(
         choices=["dont_mind", "single", "double"],
         required=False,
@@ -1271,7 +1271,7 @@ class SearchFiltersSerializer(serializers.Serializer):
 
 
     ALLOWED_ORDER_FIELDS = {"price_per_month", "available_from", "created_at", "updated_at"}
-    
+
     # -----------------------------
     # Advanced Search II - Step 2/3
     # -----------------------------
@@ -1338,14 +1338,14 @@ class SearchFiltersSerializer(serializers.Serializer):
         required=False,
     )
     posted_within_days = serializers.IntegerField(required=False, min_value=1, max_value=365)
-    # make “false” meaningful (currently view only filters when true)
+    # make â€œfalseâ€ meaningful (currently view only filters when true)
     furnished = serializers.BooleanField(required=False)
     bills_included = serializers.BooleanField(required=False)
     parking_available = serializers.BooleanField(required=False)
 
-    
-    
-    
+
+
+
 
     def validate(self, attrs):
         # existing price / pagination rules
@@ -1366,7 +1366,7 @@ class SearchFiltersSerializer(serializers.Serializer):
         if attrs.get("min_stay_months") is not None or attrs.get("max_stay_months") is not None:
             validate_numeric_range(attrs.get("min_stay_months"), attrs.get("max_stay_months"))
 
-        # rating range sanity (1–5)
+        # rating range sanity (1â€“5)
         if attrs.get("min_rating") is not None or attrs.get("max_rating") is not None:
             validate_numeric_range(attrs.get("min_rating"), attrs.get("max_rating"))
 
@@ -1532,7 +1532,7 @@ class RegistrationSerializer(serializers.ModelSerializer):
         # minimal payload; FE knows to show OTP step next
         masked = (
             instance.email[:2]
-            + "•••@"
+            + "â€¢â€¢â€¢@"
             + instance.email.split("@")[-1]
             if instance.email
             else ""
@@ -1544,14 +1544,14 @@ class RegistrationSerializer(serializers.ModelSerializer):
             "email_masked": masked,
             "need_otp": True,
         }
-        
 
-    
+
+
 class LoginSerializer(serializers.Serializer):
     identifier = serializers.CharField()  # username OR email
     password = serializers.CharField(write_only=True)
- 
- 
+
+
 class LoginTokensSerializer(serializers.Serializer):
     access = serializers.CharField()
     refresh = serializers.CharField()
@@ -1718,8 +1718,8 @@ class UserProfileSerializer(serializers.ModelSerializer):
             data["gender"] = ""
 
         return data
-    
-    
+
+
 
 class LoginSuccessDataSerializer(serializers.Serializer):
     tokens = LoginTokensSerializer()
@@ -1729,8 +1729,8 @@ class LoginSuccessDataSerializer(serializers.Serializer):
 
 class LoginResponseSerializer(serializers.Serializer):
     ok = serializers.BooleanField()
-    data = LoginSuccessDataSerializer()    
-    
+    data = LoginSuccessDataSerializer()
+
 class TokenPairWithExpirySerializer(serializers.Serializer):
     access = serializers.CharField()
     refresh = serializers.CharField()
@@ -1808,9 +1808,9 @@ class AccountDeleteCancelSerializer(serializers.Serializer):
         return attrs
 
 
-        
 
-        
+
+
 
 
 
@@ -1846,7 +1846,7 @@ def _age_in_years(dob: date) -> int:
 
 
 
-    
+
 class ReviewCardSerializer(serializers.ModelSerializer):
     reviewer_name = serializers.CharField(source="reviewer.username", read_only=True)
     reviewer_avatar = serializers.SerializerMethodField()
@@ -1878,8 +1878,8 @@ class ReviewCardSerializer(serializers.ModelSerializer):
         if request is not None:
             return request.build_absolute_uri(url)
         return url
-    
-    
+
+
 class ProfilePageSerializer(serializers.Serializer):
         # header/user
         id = serializers.IntegerField()
@@ -1912,8 +1912,8 @@ class ProfilePageSerializer(serializers.Serializer):
         tenant_rating_average = serializers.FloatField(allow_null=True)
 
         # preview list (2 cards like your screenshot)
-        reviews_preview = ReviewCardSerializer(many=True)    
-            
+        reviews_preview = ReviewCardSerializer(many=True)
+
 
 class MessageCreateSerializer(serializers.Serializer):
     body = serializers.CharField(allow_blank=False, trim_whitespace=True)
@@ -1927,7 +1927,7 @@ class MessageCreateSerializer(serializers.Serializer):
     def create(self, validated_data):
         return Message.objects.create(**validated_data)
 
-   
+
 
 class ContactMessageSerializer(serializers.ModelSerializer):
     class Meta:
@@ -2123,7 +2123,13 @@ class MessageThreadSerializer(serializers.ModelSerializer):
 
     @extend_schema_field(MessageSerializer(allow_null=True))
     def get_last_message(self, obj):
-        msg = obj.messages.order_by("-created").first()
+        prefetched_messages = getattr(obj, "_prefetched_objects_cache", {}).get("messages")
+
+        if prefetched_messages is not None:
+            msg = max(prefetched_messages, key=lambda m: m.created, default=None)
+        else:
+            msg = obj.messages.order_by("-created").first()
+
         return MessageSerializer(msg).data if msg else None
 
     @extend_schema_field(serializers.IntegerField())
@@ -2131,6 +2137,9 @@ class MessageThreadSerializer(serializers.ModelSerializer):
         request = self.context.get("request")
         if not request or not request.user.is_authenticated:
             return 0
+        if hasattr(obj, "unread_count"):
+            return obj.unread_count
+
         return obj.messages.exclude(sender=request.user).exclude(
             reads__user=request.user
         ).count()
@@ -2254,8 +2263,8 @@ class BookingCreateRequestSerializer(serializers.Serializer):
 
     def create(self, validated_data):
         return Booking.objects.create(**validated_data)
-    
-    
+
+
 class BookingResponseEnvelopeSerializer(serializers.Serializer):
     ok = serializers.BooleanField()
     data = BookingSerializer()
@@ -2332,8 +2341,8 @@ class PaymentTransactionListSerializer(serializers.ModelSerializer):
 class WebhookAckSerializer(serializers.Serializer):
     ok = serializers.BooleanField(required=False)
     detail = serializers.CharField(required=False)
-    
-    
+
+
 class StripeWebhookEventRequestSerializer(serializers.Serializer):
     id = serializers.CharField(required=False)
     type = serializers.CharField(required=False)
@@ -2356,8 +2365,8 @@ class StripeWebhookAckResponseSerializer(serializers.Serializer):
 
 
 class StripeWebhookErrorResponseSerializer(serializers.Serializer):
-    detail = serializers.CharField()    
-    
+    detail = serializers.CharField()
+
 
 class PaymentTransactionDetailSerializer(serializers.ModelSerializer):
     listing_title = serializers.CharField(source="room.title", read_only=True)
@@ -2488,7 +2497,7 @@ class ReportSerializer(serializers.ModelSerializer):
             if request and request.user and request.user.is_authenticated:
                 room = Room.objects.filter(pk=attrs["object_id"]).first()
 
-                # NEW: policy guard — you cannot file an appeal for a room that is already active
+                # NEW: policy guard â€” you cannot file an appeal for a room that is already active
                 # Reason: appeals are meant for hidden/removed listings; appealing an active listing is meaningless noise.
                 reason = (attrs.get("reason") or "").strip().lower()
                 if room and reason == "appeal" and getattr(room, "status", None) == "active":
@@ -2572,7 +2581,7 @@ class EmailOTPResendSerializer(serializers.Serializer):
     """
     user_id = serializers.IntegerField()
     confirm = serializers.BooleanField()
-    
+
 
 class OnboardingCompleteSerializer(serializers.Serializer):
     confirm = serializers.BooleanField()
@@ -2605,10 +2614,10 @@ class PhoneOTPVerifySerializer(serializers.Serializer):
         v = (value or "").strip()
         if len(v) != 6 or not v.isdigit():
             raise serializers.ValidationError("OTP must be 6 digits.")
-        return v   
-    
-    
-    
+        return v
+
+
+
 class NotificationPreferencesSerializer(serializers.ModelSerializer):
     class Meta:
         model = UserProfile
@@ -2646,15 +2655,15 @@ class InboxItemSerializer(serializers.Serializer):
 
     # optional helper for routing in frontend
     deep_link = serializers.CharField(allow_blank=True, required=False)
-    
-    
+
+
 class ProviderWebhookRequestSerializer(serializers.Serializer):
     payload = serializers.JSONField()
 
 class ProviderWebhookResponseSerializer(serializers.Serializer):
-    detail = serializers.CharField()    
-    
-    
+    detail = serializers.CharField()
+
+
 class ChangePasswordRequestSerializer(serializers.Serializer):
     current_password = serializers.CharField()
     new_password = serializers.CharField()
@@ -2662,17 +2671,17 @@ class ChangePasswordRequestSerializer(serializers.Serializer):
 
 class CreatePasswordRequestSerializer(serializers.Serializer):
     new_password = serializers.CharField()
-    confirm_password = serializers.CharField()    
-    
-    
+    confirm_password = serializers.CharField()
+
+
 class ChangeEmailRequestSerializer(serializers.Serializer):
     current_password = serializers.CharField()
     new_email = serializers.EmailField()
 
     def validate_new_email(self, value):
         return normalise_email(value)
-    
-    
+
+
 class LogoutRequestSerializer(serializers.Serializer):
     refresh = serializers.CharField()
 
@@ -2683,4 +2692,5 @@ class LogoutDataSerializer(serializers.Serializer):
 
 class LogoutResponseSerializer(serializers.Serializer):
     ok = serializers.BooleanField()
-    data = LogoutDataSerializer()     
+    data = LogoutDataSerializer()
+

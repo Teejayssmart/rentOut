@@ -483,7 +483,7 @@ paths:
   /api/v1/bookings/{id}/:
     get:
       operationId: bookings_retrieve
-      description: GET /api/bookings/<id>/ → see my booking
+      description: GET /api/bookings/<id>/ â†’ see my booking
       parameters:
       - in: path
         name: id
@@ -1222,7 +1222,7 @@ paths:
     get:
       operationId: moderation_reports_list
       description: GET /api/moderation/reports/?status=open|in_review|resolved|rejected
-        — staff only.
+        â€” staff only.
       parameters:
       - name: limit
         required: false
@@ -1359,7 +1359,7 @@ paths:
       operationId: moderation_rooms_status_partial_update
       description: |-
         PATCH /api/moderation/rooms/<id>/status/
-        Body: {"status": "active"|"hidden"} — staff only.
+        Body: {"status": "active"|"hidden"} â€” staff only.
       parameters:
       - in: path
         name: id
@@ -1921,7 +1921,7 @@ paths:
       description: |-
         POST /api/reports/
         Body:
-          {"target_type": "room"|"review"|"message"|"user", "object_id": 123, "reason": "abuse", "details": "…"}
+          {"target_type": "room"|"review"|"message"|"user", "object_id": 123, "reason": "abuse", "details": "â€¦"}
       tags:
       - reports
       requestBody:
@@ -7680,9 +7680,9 @@ components:
           - null
           type: string
           description: |-
-            * `tenant_to_landlord` - Tenant → Landlord
-            * `landlord_to_tenant` - Landlord → Tenant
-          x-spec-enum-id: a042d183b0d52418
+            * `tenant_to_landlord` - Tenant â†’ Landlord
+            * `landlord_to_tenant` - Landlord â†’ Tenant
+          x-spec-enum-id: 24b02ba2f4a75d8c
           readOnly: true
           nullable: true
         review_flags:
@@ -9490,9 +9490,9 @@ components:
           - null
           type: string
           description: |-
-            * `tenant_to_landlord` - Tenant → Landlord
-            * `landlord_to_tenant` - Landlord → Tenant
-          x-spec-enum-id: a042d183b0d52418
+            * `tenant_to_landlord` - Tenant â†’ Landlord
+            * `landlord_to_tenant` - Landlord â†’ Tenant
+          x-spec-enum-id: 24b02ba2f4a75d8c
           nullable: true
         overall_rating:
           type: integer

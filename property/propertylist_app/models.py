@@ -1,10 +1,8 @@
-from datetime import date, timedelta
+﻿from datetime import date, timedelta
 from decimal import Decimal
 from uuid import uuid4
-
 from django.conf import settings
 from django.contrib.auth import get_user_model
-from django.contrib.auth.models import User
 from django.contrib.contenttypes.fields import GenericForeignKey
 from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ValidationError
@@ -15,6 +13,21 @@ from django.db.models.functions import Lower
 from django.utils import timezone
 from django.utils.text import slugify
 from django.contrib.auth.hashers import check_password, make_password
+
+
+User = get_user_model()
+
+
+class SoftDeleteManager(models.Manager):
+    def get_queryset(self):
+        return SoftDeleteQuerySet(self.model, using=self._db)
+
+    def alive(self):
+        return self.get_queryset().alive()
+
+    def dead(self):
+        return self.get_queryset().dead()
+
 
 
 # ---------------------------
@@ -39,7 +52,8 @@ class SoftDeleteQuerySet(models.QuerySet):
 class SoftDeleteModel(models.Model):
     is_deleted = models.BooleanField(default=False, db_index=True)
     deleted_at = models.DateTimeField(null=True, blank=True)
-    objects = SoftDeleteQuerySet.as_manager()
+    objects = SoftDeleteManager()
+    all_objects = SoftDeleteQuerySet.as_manager()
 
     class Meta:
         abstract = True
@@ -444,7 +458,7 @@ class Room(SoftDeleteModel):
 
     availability_from_time = models.TimeField(null=True, blank=True)
     availability_to_time = models.TimeField(null=True, blank=True)
-    
+
     #  search engine indexing override per listing:
     # None = follow user's default, True = force allow, False = force noindex
     allow_search_indexing_override = models.BooleanField(null=True, blank=True, default=None)
@@ -711,8 +725,8 @@ class RoomImage(models.Model):
     )
 
     objects = RoomImageQuerySet.as_manager()
-    
-    
+
+
     def save(self, *args, **kwargs):
         """
         Reason:
@@ -766,13 +780,13 @@ class AvailabilitySlot(models.Model):
         ]
 
     def __str__(self):
-        return f"{self.room} | {self.start:%Y-%m-%d %H:%M} → {self.end:%Y-%m-%d %H:%M} (cap {self.max_bookings})"
+        return f"{self.room} | {self.start:%Y-%m-%d %H:%M} â†’ {self.end:%Y-%m-%d %H:%M} (cap {self.max_bookings})"
 
 
 # -------
 # Booking
 # -------
-class Booking(models.Model):
+class Booking(SoftDeleteModel):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="bookings")
     room = models.ForeignKey(Room, on_delete=models.CASCADE, related_name="bookings")
     slot = models.ForeignKey(
@@ -798,13 +812,12 @@ class Booking(models.Model):
     )
 
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_ACTIVE)
-    is_deleted = models.BooleanField(default=False)
-    deleted_at = models.DateTimeField(null=True, blank=True)
+
 
     def __str__(self):
         return f"Booking #{self.id} for {self.room} by {self.user}"
 
-    
+
     def can_transition_to(self, new_status: str) -> bool:
         """
         Enforce booking state machine.
@@ -980,8 +993,8 @@ class Review(models.Model):
     ROLE_LANDLORD_TO_TENANT = "landlord_to_tenant"
 
     ROLE_CHOICES = (
-        (ROLE_TENANT_TO_LANDLORD, "Tenant → Landlord"),
-        (ROLE_LANDLORD_TO_TENANT, "Landlord → Tenant"),
+        (ROLE_TENANT_TO_LANDLORD, "Tenant â†’ Landlord"),
+        (ROLE_LANDLORD_TO_TENANT, "Landlord â†’ Tenant"),
     )
 
     tenancy = models.ForeignKey(
@@ -989,8 +1002,8 @@ class Review(models.Model):
         on_delete=models.CASCADE,
         related_name="reviews",
     )
-  
-     
+
+
     reviewer = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
@@ -1118,13 +1131,13 @@ class SavedRoom(models.Model):
         ]
 
     def __str__(self):
-        return f"{getattr(self.user, 'username', 'user')} → {getattr(self, 'room_id', '∅')}"
+        return f"{getattr(self.user, 'username', 'user')} â†’ {getattr(self, 'room_id', 'âˆ…')}"
 
 
 # -------------
 # MessageThread
 # -------------
-class MessageThread(models.Model):
+class MessageThread(SoftDeleteModel):
     participants = models.ManyToManyField(User, related_name="message_threads")
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -1136,11 +1149,11 @@ class MessageThread(models.Model):
         help_text="Optional label for this thread (e.g. 'Viewing scheduled', 'Good fit').",
     )
 
-    is_deleted = models.BooleanField(default=False, db_index=True)
+
 
     def __str__(self):
         users = ", ".join(self.participants.values_list("username", flat=True)[:2])
-        return f"Thread {self.id} ({users}…)"
+        return f"Thread {self.id} ({users}â€¦)"
 
 
 class MessageThreadState(models.Model):
@@ -1455,8 +1468,8 @@ class PhoneOTP(models.Model):
     @property
     def is_used(self) -> bool:
         return self.used_at is not None
-    
-    
+
+
     def matches(self, value: str) -> bool:
         raw = (value or "").strip()
         if not raw:
@@ -1477,3 +1490,5 @@ class PhoneOTP(models.Model):
             code=make_password(str(code).strip()),
             expires_at=expires_at,
         )
+
+

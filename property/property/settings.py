@@ -109,6 +109,22 @@ STRIPE_PUBLISHABLE_KEY = os.getenv("STRIPE_PUBLISHABLE_KEY", "")
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
 SITE_URL = os.getenv("SITE_URL", "").strip()
 
+if not DEBUG:
+    missing_stripe = [
+        name for name in [
+            "STRIPE_SECRET_KEY",
+            "STRIPE_PUBLISHABLE_KEY",
+            "STRIPE_WEBHOOK_SECRET",
+            "SITE_URL",
+        ]
+        if not os.getenv(name)
+    ]
+    if missing_stripe:
+        raise ImproperlyConfigured(
+            f"Missing required Stripe/site env vars: {', '.join(missing_stripe)}"
+        )
+
+
 # Frontend base URL used for links in emails
 FRONTEND_BASE_URL = os.getenv("FRONTEND_BASE_URL", "https://rentout.co.uk")
 IDEAL_POSTCODES_API_KEY = os.getenv("IDEAL_POSTCODES_API_KEY", "").strip()
@@ -192,6 +208,27 @@ if not TESTING and not DEBUG:
     missing = [k for k in ["DB_NAME", "DB_USER", "DB_PASSWORD"] if not os.getenv(k)]
     if missing:
         raise ImproperlyConfigured(f"Missing required DB env vars: {', '.join(missing)}")
+
+
+
+
+
+# -----------------------------
+# Password hashing
+# -----------------------------
+PASSWORD_HASHERS = [
+    "django.contrib.auth.hashers.Argon2PasswordHasher",
+    "django.contrib.auth.hashers.PBKDF2PasswordHasher",
+    "django.contrib.auth.hashers.PBKDF2SHA1PasswordHasher",
+    "django.contrib.auth.hashers.BCryptSHA256PasswordHasher",
+    "django.contrib.auth.hashers.ScryptPasswordHasher",
+]
+
+
+
+
+
+
 
 # -----------------------------
 # Password validation
@@ -432,6 +469,12 @@ if USE_S3:
     DEFAULT_FILE_STORAGE = "storages.backends.s3boto3.S3Boto3Storage"
 
     AWS_STORAGE_BUCKET_NAME = os.getenv("AWS_STORAGE_BUCKET_NAME", "")
+    AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID", "")
+    AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY", "")
+
+    if not AWS_ACCESS_KEY_ID or not AWS_SECRET_ACCESS_KEY:
+        raise ImproperlyConfigured("AWS credentials must be set when USE_S3=True")
+         
     if not AWS_STORAGE_BUCKET_NAME:
         raise ImproperlyConfigured("AWS_STORAGE_BUCKET_NAME must be set when USE_S3=True")
     AWS_S3_REGION_NAME = os.getenv("AWS_S3_REGION_NAME", "eu-west-2")
@@ -478,8 +521,18 @@ CACHES = {
     }
 }
 
-CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "redis://127.0.0.1:6379/0")
-CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", "redis://127.0.0.1:6379/1")
+CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL")
+CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND")
+
+if not DEBUG:
+    if not CELERY_BROKER_URL:
+        raise ImproperlyConfigured("CELERY_BROKER_URL must be set in production")
+    if not CELERY_RESULT_BACKEND:
+        raise ImproperlyConfigured("CELERY_RESULT_BACKEND must be set in production")
+
+# fallback for local dev only
+CELERY_BROKER_URL = CELERY_BROKER_URL or "redis://127.0.0.1:6379/0"
+CELERY_RESULT_BACKEND = CELERY_RESULT_BACKEND or "redis://127.0.0.1:6379/1"
 
 CACHE_DEFAULT_TTL = 60
 CACHE_SEARCH_TTL = 120

@@ -1,4 +1,4 @@
-from datetime import timedelta
+﻿from datetime import timedelta
 
 from django.utils import timezone
 from django.contrib.auth import get_user_model
@@ -30,8 +30,7 @@ from propertylist_app.api.serializers import (
 )
 
 
-from .common import ok_response
-
+from .common import ok_response, error_response
 
 class RoomModerationStatusUpdateSerializer(serializers.Serializer):
     status = serializers.ChoiceField(choices=["active", "hidden"])
@@ -56,7 +55,7 @@ class ReportCreateView(generics.CreateAPIView):
     """
     POST /api/reports/
     Body:
-      {"target_type": "room"|"review"|"message"|"user", "object_id": 123, "reason": "abuse", "details": "…"}
+      {"target_type": "room"|"review"|"message"|"user", "object_id": 123, "reason": "abuse", "details": "â€¦"}
     """
     serializer_class = ReportSerializer
     permission_classes = [IsAuthenticated]
@@ -88,7 +87,7 @@ class ReportCreateView(generics.CreateAPIView):
 
 
 class ModerationReportListView(generics.ListAPIView):
-    """GET /api/moderation/reports/?status=open|in_review|resolved|rejected — staff only."""
+    """GET /api/moderation/reports/?status=open|in_review|resolved|rejected â€” staff only."""
     serializer_class = ReportSerializer
     permission_classes = [IsModerationAdmin]
     pagination_class = StandardLimitOffsetPagination
@@ -247,7 +246,7 @@ class ModerationReportModerateActionView(APIView):
         notes = (request.data.get("resolution_notes") or "").strip()
         hide_room = bool(request.data.get("hide_room"))
 
-        # map action → status
+        # map action â†’ status
         mapping = {
             "resolve": "resolved",
             "resolved": "resolved",
@@ -258,7 +257,11 @@ class ModerationReportModerateActionView(APIView):
         }
         new_status = mapping.get(action)
         if not new_status:
-            return Response({"detail": "invalid action"}, status=status.HTTP_400_BAD_REQUEST)
+            return error_response(
+                message="invalid action",
+                status_code=status.HTTP_400_BAD_REQUEST,
+                code="invalid_action",
+            )
 
         if not _can_transition_report_status(report.status, new_status):
             return Response(
@@ -302,14 +305,14 @@ class ModerationReportModerateActionView(APIView):
             {"id": report.pk, "status": report.status},
             status_code=status.HTTP_200_OK,
         )
-        
+
 
 
 
 class RoomModerationStatusView(APIView):
     """
     PATCH /api/moderation/rooms/<id>/status/
-    Body: {"status": "active"|"hidden"} — staff only.
+    Body: {"status": "active"|"hidden"} â€” staff only.
     """
     permission_classes = [IsModerationAdmin]
 
@@ -355,7 +358,7 @@ class RoomModerationStatusView(APIView):
 
 class OpsStatsView(APIView):
     """
-    GET /api/ops/stats/ — admin-only operational snapshot.
+    GET /api/ops/stats/ â€” admin-only operational snapshot.
     Amounts reported in **GBP** (Payment.amount is stored in GBP).
     """
     permission_classes = [IsOpsAdmin]
@@ -464,10 +467,10 @@ class OpsStatsView(APIView):
             data,
             message="Operational statistics retrieved successfully.",
             status_code=status.HTTP_200_OK,
-        )       
-        
-        
-        
+        )
+
+
+
 def _can_transition_report_status(current: str, new: str) -> bool:
     """
     Allowed transitions:
@@ -493,4 +496,5 @@ def _can_transition_report_status(current: str, new: str) -> bool:
 
 
 
-        
+
+
