@@ -9,10 +9,6 @@ from django.core.files.storage import default_storage
 BREAKPOINTS = (640, 1280)  # small, medium
 
 
-
-from PIL import Image
-
-
 def should_auto_approve_upload(uploaded_file) -> bool:
     """
     Minimal non-AI vetting.
