@@ -1,4 +1,17 @@
-from rest_framework import permissions
+﻿from rest_framework import permissions
+
+
+
+class IsOwner(permissions.BasePermission):
+    """
+    Strict ownership check (no read-only bypass).
+    Useful for sensitive endpoints (delete, billing, etc.)
+    """
+
+    def has_object_permission(self, request, view, obj):
+        owner = getattr(obj, "user", None) or getattr(obj, "property_owner", None)
+        return owner == request.user
+
 
 
 class IsAdminOrReadOnly(permissions.IsAdminUser):
@@ -18,7 +31,7 @@ class IsOwnerOrReadOnly(permissions.BasePermission):
         return (owner is not None and owner == request.user) or bool(request.user and request.user.is_staff)
 
 
-from rest_framework import permissions
+
 
 
 class HasAnyAdminRole(permissions.BasePermission):

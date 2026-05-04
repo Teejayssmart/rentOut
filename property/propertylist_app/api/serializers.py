@@ -1444,6 +1444,22 @@ class RegistrationSerializer(serializers.ModelSerializer):
         ]
         extra_kwargs = {"password": {"write_only": True}}
 
+
+    def validate_email(self, value):
+        email = (value or "").strip().lower()
+        if User.objects.filter(email__iexact=email).exists():
+            raise serializers.ValidationError("A user with this email already exists.")
+        return email
+
+    def validate_username(self, value):
+        username = (value or "").strip()
+        if User.objects.filter(username=username).exists():
+            raise serializers.ValidationError("A user with this username already exists.")
+        return username
+
+
+
+
     def validate(self, attrs):
         # password match
         pw = attrs.get("password") or ""
@@ -2693,4 +2709,5 @@ class LogoutDataSerializer(serializers.Serializer):
 class LogoutResponseSerializer(serializers.Serializer):
     ok = serializers.BooleanField()
     data = LogoutDataSerializer()
+
 

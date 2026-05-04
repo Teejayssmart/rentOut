@@ -1,4 +1,4 @@
-import io
+﻿import io
 import pytest
 from django.urls import reverse
 from django.contrib.auth import get_user_model
@@ -11,13 +11,13 @@ User = get_user_model()
 
 
 def _png_bytes():
-    # Tiny 1x1 transparent PNG
-    return (
-        b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
-        b"\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\x0bIDAT\x08\xd7c``\x00\x00\x00\x02\x00\x01"
-        b"\xe2!\xbc3\x00\x00\x00\x00IEND\xaeB`\x82"
-    )
+    from io import BytesIO
+    from PIL import Image
 
+    buf = BytesIO()
+    img = Image.new("RGB", (10, 10), color="white")
+    img.save(buf, format="PNG")
+    return buf.getvalue()
 
 
 @pytest.mark.django_db
@@ -131,7 +131,7 @@ def test_deactivate_account_and_login_fails():
     assert r.status_code == 200
 
     # Try to log in again -> should fail
-    
+
     login_url = reverse("v1:auth-login")
     c2 = APIClient()
     r_login = c2.post(login_url, {"username": "deact", "password": "pass123"}, format="json")

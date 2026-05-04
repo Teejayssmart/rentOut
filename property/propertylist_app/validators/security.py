@@ -1,4 +1,4 @@
-import re
+﻿import re
 import hmac, hashlib, json
 from django.core.exceptions import ValidationError
 from datetime import date
@@ -69,7 +69,7 @@ def sanitize_html_description(text: str, *, max_len: int = 10_000) -> str:
             "b", "i", "em", "strong", "u", "br", "p", "ul", "ol", "li", "span",
             "blockquote", "code", "pre", "a"
         ]
-        allowed_attrs = {"a": ["href", "title", "rel", "target"], "span": ["style"]}
+        allowed_attrs = {"a": ["href", "title", "rel", "target"]}
         allowed_protocols = ["http", "https", "mailto"]
         cleaned = bleach.clean(
             text,
@@ -82,7 +82,7 @@ def sanitize_html_description(text: str, *, max_len: int = 10_000) -> str:
         try:
             cleaned = bleach.linkify(cleaned, callbacks=[bleach.linkifier.NOFOLLOW, bleach.linkifier.TargetBlank()])
         except Exception:
-            # Older bleach versions may not support this API—ignore gracefully.
+            # Older bleach versions may not support this APIâ€”ignore gracefully.
             pass
         return cleaned
 
@@ -122,7 +122,7 @@ def normalise_email(value: str) -> str:
 
 
 
-NAME_RE = re.compile(r"^[A-Za-zÀ-ÖØ-öø-ÿ' -]{2,100}$")  # supports accents, spaces, hyphens, apostrophes
+NAME_RE = re.compile(r"^[^\W\d_][^\d_]{1,99}$", re.UNICODE) # supports accents, spaces, hyphens, apostrophes
 UK_POSTCODE_RE = re.compile(r"^[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}$", re.I)
 
 
@@ -193,7 +193,7 @@ def validate_price(value, *, min_val: float = 0.0, max_val: float = 1_000_000.0)
 
 
 def normalise_price(value) -> Decimal:
-    """Coerce price-like strings (e.g. '£1,250.50') to Decimal(1250.50)."""
+    """Coerce price-like strings (e.g. 'Â£1,250.50') to Decimal(1250.50)."""
     if value is None:
         raise ValidationError("Price is required.")
     if isinstance(value, (int, float, Decimal)):

@@ -1,15 +1,42 @@
+﻿from PIL import Image
+
 from django.core.exceptions import ValidationError
 
 ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
 MAX_BYTES = 5 * 1024 * 1024  # 5 MB
 
+
+
+def _validate_image_content(file_obj):
+    """
+    Validate actual image content using Pillow, then rewind the file.
+    """
+    try:
+        if hasattr(file_obj, "seek"):
+            file_obj.seek(0)
+
+        with Image.open(file_obj) as img:
+            img.load()
+    except Exception:
+        raise ValidationError("Invalid or corrupted image file.")
+    finally:
+        if hasattr(file_obj, "seek"):
+            file_obj.seek(0)
+
+
+
 def validate_avatar_image(file_obj):
     ctype = getattr(file_obj, "content_type", "") or ""
+
     if ctype not in ALLOWED_IMAGE_TYPES:
         raise ValidationError(f"Unsupported image type: {ctype}")
+
     size = getattr(file_obj, "size", 0) or 0
     if size <= 0 or size > MAX_BYTES:
         raise ValidationError("Image file too large (max 5MB).")
+
+    _validate_image_content(file_obj)
+
     return file_obj
 
 def validate_listing_photos(files, *, max_count=10, max_mb=10):

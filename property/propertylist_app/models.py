@@ -53,7 +53,7 @@ class SoftDeleteModel(models.Model):
     is_deleted = models.BooleanField(default=False, db_index=True)
     deleted_at = models.DateTimeField(null=True, blank=True)
     objects = SoftDeleteManager()
-    all_objects = SoftDeleteQuerySet.as_manager()
+    all_objects = models.Manager()
 
     class Meta:
         abstract = True
@@ -1490,5 +1490,6 @@ class PhoneOTP(models.Model):
             code=make_password(str(code).strip()),
             expires_at=expires_at,
         )
+
 
 
