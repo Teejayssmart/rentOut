@@ -54,12 +54,12 @@ from .security import (
     normalise_phone,
     normalise_name,
     enforce_user_caps,
-    assert_not_duplicate_listing,
     
     sanitize_plain_text,
     validate_plain_text,
     normalise_email,
 )
+from .listings import assert_not_duplicate_listing
 
 # ---- Aliases to cover US/UK spelling imports ----
 try:
