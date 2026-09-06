@@ -259,6 +259,89 @@ def test_new_message_restores_recipient_binned_thread_and_returns_it_in_messages
     )
     
     
+def test_new_message_restores_permanently_deleted_thread_without_old_history():
+    sender, recipient = make_users(2)
+
+    thread = MessageThread.objects.create()
+    thread.participants.add(sender, recipient)
+
+    old_message = Message.objects.create(
+        thread=thread,
+        sender=sender,
+        body="Old message before permanent delete",
+        message_type=Message.TYPE_TEXT,
+    )
+
+    state, _ = MessageThreadState.objects.get_or_create(
+        user=recipient,
+        thread=thread,
+    )
+    state.deleted_at = timezone.now()
+    state.in_bin = False
+    state.save(update_fields=["deleted_at", "in_bin", "updated_at"])
+
+    client = APIClient()
+    client.force_authenticate(user=recipient)
+
+    response = client.get(
+        "/api/v1/messages/threads/",
+        {"limit": 100},
+    )
+
+    assert response.status_code == 200
+
+    payload = response.data.get("data", [])
+
+    assert not any(
+        item["id"] == thread.id
+        for item in payload
+    )
+
+    new_message = Message.objects.create(
+        thread=thread,
+        sender=sender,
+        body="Fresh message after permanent delete",
+        message_type=Message.TYPE_TEXT,
+    )
+
+    state.refresh_from_db()
+
+    assert state.deleted_at is not None
+    assert state.in_bin is False
+
+    response = client.get(
+        "/api/v1/messages/threads/",
+        {"limit": 100},
+    )
+
+    assert response.status_code == 200
+
+    payload = response.data.get("data", [])
+
+    assert any(
+        item["id"] == thread.id
+        for item in payload
+    )
+
+    response = client.get(
+        f"/api/v1/messages/threads/{thread.id}/messages/",
+        {"limit": 100},
+    )
+
+    assert response.status_code == 200
+
+    payload = response.data.get("data", [])
+
+    message_ids = {
+        item["id"]
+        for item in payload
+    }
+
+    assert new_message.id in message_ids
+    assert old_message.id not in message_ids    
+    
+    
+    
 def test_thread_mark_read_emits_realtime_read_and_unread_count(
     django_assert_max_num_queries,
 ):
@@ -538,3 +621,249 @@ def test_new_message_realtime_is_partitioned_by_active_role():
             visible_message.id,
         ]
     ).count() == 2      
+    
+    
+def test_delete_forever_endpoint_sets_per_user_deleted_at():
+    user, other = make_users(2)
+
+    thread = MessageThread.objects.create()
+    thread.participants.add(user, other)
+
+    Message.objects.create(
+        thread=thread,
+        sender=other,
+        body="Message before delete",
+        message_type=Message.TYPE_TEXT,
+    )
+
+    client = APIClient()
+    client.force_authenticate(user=user)
+
+    response = client.post(
+        f"/api/v1/messages/threads/{thread.id}/delete/",
+        {},
+        format="json",
+    )
+
+    assert response.status_code == 200
+    assert response.data["thread_id"] == thread.id
+    assert response.data["deleted"] is True
+
+    state = MessageThreadState.objects.get(
+        user=user,
+        thread=thread,
+    )
+
+    assert state.deleted_at is not None
+    assert state.in_bin is False
+
+    assert not MessageThreadState.objects.filter(
+        user=other,
+        thread=thread,
+        deleted_at__isnull=False,
+    ).exists()
+
+
+def test_bulk_delete_forever_endpoint_sets_cutoff_for_selected_threads():
+    user, other = make_users(2)
+
+    thread_one = MessageThread.objects.create()
+    thread_one.participants.add(user, other)
+
+    thread_two = MessageThread.objects.create()
+    thread_two.participants.add(user, other)
+
+    client = APIClient()
+    client.force_authenticate(user=user)
+
+    response = client.post(
+        "/api/v1/messages/threads/delete/",
+        {
+            "thread_ids": [
+                thread_one.id,
+                thread_two.id,
+            ]
+        },
+        format="json",
+    )
+
+    assert response.status_code == 200
+    assert response.data["deleted"] == 2
+
+    states = MessageThreadState.objects.filter(
+        user=user,
+        thread_id__in=[
+            thread_one.id,
+            thread_two.id,
+        ],
+    )
+
+    assert states.count() == 2
+    assert all(
+        state.deleted_at is not None
+        for state in states
+    )
+
+    assert not MessageThreadState.objects.filter(
+        user=other,
+        thread_id__in=[
+            thread_one.id,
+            thread_two.id,
+        ],
+        deleted_at__isnull=False,
+    ).exists()  
+    
+    
+    
+def test_system_message_does_not_restore_permanently_deleted_thread():
+    sender, recipient = make_users(2)
+
+    thread = MessageThread.objects.create()
+    thread.participants.add(sender, recipient)
+
+    state = MessageThreadState.objects.create(
+        user=recipient,
+        thread=thread,
+        deleted_at=timezone.now(),
+        in_bin=False,
+    )
+
+    Message.objects.create(
+        thread=thread,
+        sender=sender,
+        body="System event after delete",
+        message_type=Message.TYPE_TEXT,
+        metadata={"system_event": True},
+    )
+
+    state.refresh_from_db()
+
+    assert state.deleted_at is not None
+
+    client = APIClient()
+    client.force_authenticate(user=recipient)
+
+    response = client.get(
+        "/api/v1/messages/threads/",
+        {"limit": 100},
+    )
+
+    assert response.status_code == 200
+
+    payload = response.data.get("data", [])
+
+    assert not any(
+        item["id"] == thread.id
+        for item in payload
+    )      
+    
+    
+
+    
+    
+def test_delete_forever_does_not_hide_history_from_other_participant():
+    user, other = make_users(2)
+
+    thread = MessageThread.objects.create()
+    thread.participants.add(user, other)
+
+    message = Message.objects.create(
+        thread=thread,
+        sender=other,
+        body="Shared history remains for other participant",
+        message_type=Message.TYPE_TEXT,
+    )
+
+    client = APIClient()
+    client.force_authenticate(user=user)
+
+    response = client.post(
+        f"/api/v1/messages/threads/{thread.id}/delete/",
+        {},
+        format="json",
+    )
+
+    assert response.status_code == 200
+
+    client.force_authenticate(user=other)
+
+    response = client.get(
+        f"/api/v1/messages/threads/{thread.id}/messages/",
+        {"limit": 100},
+    )
+
+    assert response.status_code == 200
+
+    payload = response.data.get("data", [])
+
+    assert any(
+        item["id"] == message.id
+        for item in payload
+    )     
+    
+    
+def test_system_message_after_delete_does_not_increase_hidden_thread_unread_total():
+    sender, recipient = make_users(2)
+
+    thread = MessageThread.objects.create()
+    thread.participants.add(sender, recipient)
+
+    state = MessageThreadState.objects.create(
+        user=recipient,
+        thread=thread,
+        deleted_at=timezone.now(),
+        in_bin=False,
+    )
+
+    Message.objects.create(
+        thread=thread,
+        sender=sender,
+        body="Hidden system event",
+        message_type=Message.TYPE_TEXT,
+        metadata={"system_event": True},
+    )
+
+    state.refresh_from_db()
+    assert state.deleted_at is not None
+
+    client = APIClient()
+    client.force_authenticate(user=recipient)
+
+    response = client.get("/api/v1/messages/stats/")
+
+    assert response.status_code == 200
+    assert response.data["total_unread"] == 0
+    
+    
+def test_mark_read_after_delete_does_not_count_hidden_system_message_in_account_total():
+    sender, recipient = make_users(2)
+
+    thread = MessageThread.objects.create()
+    thread.participants.add(sender, recipient)
+
+    MessageThreadState.objects.create(
+        user=recipient,
+        thread=thread,
+        deleted_at=timezone.now(),
+        in_bin=False,
+    )
+
+    Message.objects.create(
+        thread=thread,
+        sender=sender,
+        body="Hidden system event after permanent delete",
+        message_type=Message.TYPE_TEXT,
+        metadata={"system_event": True},
+    )
+
+    client = APIClient()
+    client.force_authenticate(user=recipient)
+
+    response = client.post(
+        f"/api/v1/messages/threads/{thread.id}/read/",
+        {},
+        format="json",
+    )
+
+    assert response.status_code == 200
+    assert response.data["data"]["account_unread_total"] == 0       

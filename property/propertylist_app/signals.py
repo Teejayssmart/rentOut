@@ -1,5 +1,5 @@
 ﻿from django.apps import apps
-from django.db.models import Avg, Count, Q
+from django.db.models import Avg, Count, Exists, OuterRef, Q
 from django.db.models.signals import post_delete, post_save, pre_save
 from django.dispatch import receiver
 from django.utils import timezone
@@ -391,10 +391,29 @@ def message_created_create_notifications(
                     "sender_id": instance.sender_id,
                 },
             )
+            
+            
+            deleted_at = (
+                MessageThreadState.objects
+                .filter(
+                    user=user,
+                    thread=thread,
+                )
+                .values_list("deleted_at", flat=True)
+                .first()
+            )
+
+            visible_thread_messages = Message.objects.filter(
+                thread=thread
+            )
+
+            if deleted_at is not None:
+                visible_thread_messages = visible_thread_messages.filter(
+                    created__gt=deleted_at
+                )
 
             thread_unread_count = (
-                Message.objects
-                .filter(thread=thread)
+                visible_thread_messages
                 .filter(
                     Q(metadata__system_event=True)
                     | ~Q(sender=user)
@@ -441,10 +460,24 @@ def message_created_create_notifications(
                 base_threads = base_threads.exclude(
                     id__in=bin_thread_ids,
                 )
+                
+            
+            hidden_by_delete = MessageThreadState.objects.filter(
+                user=user,
+                thread_id=OuterRef("thread_id"),
+                deleted_at__isnull=False,
+                deleted_at__gte=OuterRef("created"),
+            )
+            
+                
 
             account_unread_total = (
                 Message.objects
                 .filter(thread__in=base_threads)
+                .annotate(
+                    hidden_by_delete=Exists(hidden_by_delete)
+                )
+                .filter(hidden_by_delete=False)
                 .filter(
                     Q(metadata__system_event=True)
                     | ~Q(sender=user)

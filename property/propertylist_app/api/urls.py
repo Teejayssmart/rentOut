@@ -42,6 +42,7 @@ from propertylist_app.api.views import (
     # Messaging
     MessageThreadListCreateView, MessageListCreateView, ThreadMarkReadView, StartThreadFromRoomView,ThreadMoveToBinView,ThreadRestoreFromBinView,ThreadSetLabelView,
     MessageThreadStateView,MessageStatsView,InboxListView,MessageThreadDetailView,ThreadsBulkMarkReadView,
+    ThreadDeleteForeverView,ThreadsBulkDeleteForeverView,
 
     # Bookings & Availability
     create_booking, BookingListCreateView, LandlordViewingsListView, BookingDetailView, BookingCancelView, BookingRescheduleView,
@@ -172,6 +173,11 @@ urlpatterns = [
         name="message-threads-bulk-read",
     ),
     path(
+        "messages/threads/delete/",
+        ThreadsBulkDeleteForeverView.as_view(),
+        name="message-threads-bulk-delete",
+    ),    
+    path(
         "messages/threads/<int:thread_id>/",
         MessageThreadDetailView.as_view(),
         name="message-thread-detail",
@@ -183,6 +189,11 @@ urlpatterns = [
     # Bin (per-user)
     path("messages/threads/<int:thread_id>/bin/",          ThreadMoveToBinView.as_view(),         name="message-thread-bin"),
     path("messages/threads/<int:thread_id>/restore/",      ThreadRestoreFromBinView.as_view(),     name="message-thread-restore"),
+    path(
+        "messages/threads/<int:thread_id>/delete/",
+        ThreadDeleteForeverView.as_view(),
+        name="message-thread-delete",
+    ),
 
     # Set label (Good Fit, Viewing Scheduled, etc.)
     path("messages/threads/<int:thread_id>/label/",        ThreadSetLabelView.as_view(),           name="message-thread-label"),

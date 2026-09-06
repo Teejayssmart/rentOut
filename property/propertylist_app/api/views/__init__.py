@@ -80,6 +80,8 @@ from .messaging import (
     ContactMessageCreateView,
     MessageThreadDetailView,
     ThreadsBulkMarkReadView,
+    ThreadDeleteForeverView,
+    ThreadsBulkDeleteForeverView,
     )
 
 from .bookings import (

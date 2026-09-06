@@ -1518,6 +1518,7 @@ class MessageThreadState(models.Model):
 
     label = models.CharField(max_length=32, choices=LABEL_CHOICES, blank=True, default="")
     in_bin = models.BooleanField(default=False)
+    deleted_at = models.DateTimeField(null=True, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -1528,6 +1529,7 @@ class MessageThreadState(models.Model):
             models.Index(fields=["user", "thread"]),
             models.Index(fields=["user", "in_bin"]),
             models.Index(fields=["user", "label"]),
+            models.Index(fields=["user", "deleted_at"]),
         ]
 
     def __str__(self):
