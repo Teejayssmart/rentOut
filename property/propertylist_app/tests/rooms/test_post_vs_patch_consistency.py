@@ -282,6 +282,9 @@ def test_unpublished_room_remains_accessible_to_owner_and_can_be_republished(
     assert create_resp.status_code == status.HTTP_201_CREATED, create_resp.data
 
     room_id = create_resp.data["data"]["id"]
+    room = Room.objects.get(id=room_id)
+    room.paid_until = date.today() + timedelta(days=30)
+    room.save(update_fields=["paid_until"])
 
     unpublish_url = reverse(
         "api:room-unpublish",
