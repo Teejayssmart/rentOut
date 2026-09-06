@@ -42,7 +42,13 @@ def debug_urls(request):
 
 
 def health_root(request):
-    return JsonResponse({"status": "ok"}, status=200)
+    return JsonResponse(
+        {
+            "status": "ok",
+            "deploy_marker": "render-to-vercel-test",
+        },
+        status=200,
+    )
 
 
 
@@ -109,7 +115,20 @@ urlpatterns = [
 
 ]
 
-
+# Silk performance dashboard exists only during controlled profiling.
+if getattr(settings, "ENABLE_SILK", False):
+    urlpatterns = [
+        path(
+            "accounts/login/",
+            admin.site.login,
+            name="silk-login",
+        ),
+        path(
+            "silk/",
+            include("silk.urls", namespace="silk"),
+        ),
+        *urlpatterns,
+    ]
 
 # Serve uploaded media:
 # - DEBUG=True (local dev)

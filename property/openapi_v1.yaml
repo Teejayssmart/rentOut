@@ -1102,7 +1102,8 @@ paths:
   /api/v1/bookings/{id}/reschedule/:
     patch:
       operationId: bookings_reschedule_partial_update
-      description: Reschedule a viewing. Only the room owner can reschedule.
+      description: Reschedule a viewing. The landlord or seeker for the booking can
+        reschedule.
       parameters:
       - in: path
         name: id
@@ -1583,6 +1584,41 @@ paths:
                 - ok
                 - data
           description: ''
+  /api/v1/messages/threads/{thread_id}/:
+    get:
+      operationId: messages_threads_retrieve
+      description: |-
+        GET /api/v1/messages/threads/<thread_id>/
+
+        Return one message thread when the authenticated user is a participant.
+      parameters:
+      - in: path
+        name: thread_id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - messages
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  message:
+                    type: string
+                    nullable: true
+                  data:
+                    $ref: '#/components/schemas/MessageThread'
+                required:
+                - ok
+                - data
+          description: ''
   /api/v1/messages/threads/{thread_id}/bin/:
     post:
       operationId: messages_threads_bin_create
@@ -1754,7 +1790,7 @@ paths:
           description: ''
   /api/v1/messages/threads/{thread_id}/read/:
     post:
-      operationId: messages_threads_read_create
+      operationId: messages_threads_read_create_2
       description: Mark thread as read for the current user.
       parameters:
       - in: path
@@ -1862,6 +1898,20 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
           description: ''
+  /api/v1/messages/threads/read/:
+    post:
+      operationId: messages_threads_read_create
+      description: |-
+        POST /api/v1/messages/threads/read/
+
+        Mark multiple message threads as read for the authenticated user.
+      tags:
+      - messages
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          description: No response body
   /api/v1/moderation/reports/:
     get:
       operationId: moderation_reports_list
@@ -2282,6 +2332,44 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
           description: ''
+  /api/v1/payments/payment-intent/rooms/{id}/:
+    post:
+      operationId: payments_payment_intent_rooms_create
+      description: |-
+        Creates a Stripe PaymentIntent for a room listing fee.
+
+        Intended for native mobile clients using Stripe PaymentSheet.
+        The listing is NOT activated here. Stripe webhook confirmation
+        remains the trusted source of payment success.
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - payments
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateListingPaymentIntentResponse'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: ''
+        '502':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: ''
   /api/v1/payments/saved-cards/:
     get:
       operationId: payments_saved_cards_retrieve
@@ -2558,6 +2646,25 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+          description: ''
+  /api/v1/realtime/ticket/:
+    post:
+      operationId: realtime_ticket_create
+      description: |-
+        Create a short-lived signed ticket used only to authenticate
+        a new RentCrib WebSocket connection.
+
+        This does NOT replace or modify normal JWT/cookie authentication.
+      tags:
+      - realtime
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RealtimeTicketResponse'
           description: ''
   /api/v1/reports/:
     post:
@@ -3299,8 +3406,8 @@ paths:
           description: ''
     patch:
       operationId: rooms_partial_update
-      description: Partial update (owner-only). If action=preview, requires at least
-        3 photos.
+      description: Partial update (owner-only). Draft listings may be previewed before
+        publishing.
       parameters:
       - in: path
         name: id
@@ -3817,6 +3924,42 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
           description: ''
+  /api/v1/rooms/{id}/publish/:
+    post:
+      operationId: rooms_publish_create
+      description: Publish an unpublished room listing owned by the authenticated
+        user.
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - rooms
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoomPublishOkResponse'
+          description: ''
+        '401':
+          description: Authentication required.
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DetailResponse'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DetailResponse'
+          description: ''
   /api/v1/rooms/{id}/save/:
     post:
       operationId: rooms_save_create
@@ -4320,6 +4463,41 @@ paths:
                 $ref: '#/components/schemas/DetailResponse'
           description: ''
   /api/v1/tenancies/{tenancy_id}/extensions/:
+    get:
+      operationId: tenancies_extensions_retrieve
+      description: Return the complete renewal history for a tenancy. Only the tenancy
+        landlord or tenant may access it. Results are ordered from oldest to newest.
+      parameters:
+      - in: path
+        name: tenancy_id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - tenancies
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TenancyExtensionHistoryOkResponse'
+          description: ''
+        '401':
+          description: Authentication required.
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DetailResponse'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DetailResponse'
+          description: ''
     post:
       operationId: tenancies_extensions_create
       description: Create a tenancy extension proposal.
@@ -7297,6 +7475,41 @@ components:
           type: string
       required:
       - message
+    CreateListingPaymentIntentData:
+      type: object
+      properties:
+        payment_id:
+          type: integer
+        payment_intent_id:
+          type: string
+        client_secret:
+          type: string
+        customer_id:
+          type: string
+        customer_session_client_secret:
+          type: string
+        publishable_key:
+          type: string
+      required:
+      - client_secret
+      - customer_id
+      - customer_session_client_secret
+      - payment_id
+      - payment_intent_id
+      - publishable_key
+    CreateListingPaymentIntentResponse:
+      type: object
+      properties:
+        data:
+          $ref: '#/components/schemas/CreateListingPaymentIntentData'
+        ok:
+          type: boolean
+          default: true
+        message:
+          type: string
+      required:
+      - data
+      - message
     CreatePasswordData:
       type: object
       properties:
@@ -8459,6 +8672,12 @@ components:
             Emails can prepend FRONTEND_BASE_URL.
             Mobile app uses this path for navigation.
           readOnly: true
+        cta_url:
+          type: string
+          description: |-
+            Returns the web/Vercel route for browser navigation.
+            Mobile continues to use deep_link.
+          readOnly: true
         is_read:
           type: boolean
           readOnly: true
@@ -8469,6 +8688,7 @@ components:
       required:
       - body
       - created_at
+      - cta_url
       - deep_link
       - id
       - is_read
@@ -10075,6 +10295,29 @@ components:
           type: string
       required:
       - detail
+    RealtimeTicketData:
+      type: object
+      properties:
+        ticket:
+          type: string
+        expires_in:
+          type: integer
+      required:
+      - expires_in
+      - ticket
+    RealtimeTicketResponse:
+      type: object
+      properties:
+        data:
+          $ref: '#/components/schemas/RealtimeTicketData'
+        ok:
+          type: boolean
+          default: true
+        message:
+          type: string
+      required:
+      - data
+      - message
     Registration:
       type: object
       properties:
@@ -10206,6 +10449,21 @@ components:
           type: integer
           readOnly: true
           nullable: true
+        reviewer_name:
+          type: string
+          description: |-
+            Human-friendly reviewer name.
+
+            Prefer first_name + last_name where available.
+            Fall back to username if no real name is stored.
+          readOnly: true
+        reviewer_username:
+          type: string
+          readOnly: true
+        reviewer_avatar:
+          type: string
+          description: Return the reviewer's profile avatar URL when available.
+          readOnly: true
         reviewee:
           type: integer
           readOnly: true
@@ -10235,7 +10493,7 @@ components:
           type: string
           description: |-
             Hard rule:
-            - If notes exist (text option), return notes EXACTLY as stored (no edits).
+            - If notes exist (text option), return notes EXACTLY as stored.
             - If checklist option, generate a short sentence from selected labels.
           readOnly: true
         review_mode:
@@ -10276,6 +10534,9 @@ components:
       - review_mode
       - reviewee
       - reviewer
+      - reviewer_avatar
+      - reviewer_name
+      - reviewer_username
       - role
       - submitted_at
       - tenancy
@@ -11219,6 +11480,32 @@ components:
           type: string
       required:
       - message
+    RoomPublishData:
+      type: object
+      properties:
+        id:
+          type: integer
+        status:
+          type: string
+        listing_state:
+          type: string
+      required:
+      - id
+      - listing_state
+      - status
+    RoomPublishOkResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        message:
+          type: string
+          nullable: true
+        data:
+          $ref: '#/components/schemas/RoomPublishData'
+      required:
+      - data
+      - ok
     RoomSaveData:
       type: object
       properties:
@@ -11633,6 +11920,67 @@ components:
           nullable: true
         data:
           $ref: '#/components/schemas/TenancyExtensionResponse'
+      required:
+      - data
+      - ok
+    TenancyExtensionHistoryItem:
+      type: object
+      properties:
+        id:
+          type: integer
+        tenancy_id:
+          type: integer
+        proposed_by_user_id:
+          type: integer
+        proposed_by_name:
+          type: string
+        proposed_by_role:
+          enum:
+          - landlord
+          - tenant
+          type: string
+          description: |-
+            * `landlord` - landlord
+            * `tenant` - tenant
+          x-spec-enum-id: 0fa12160845685be
+        proposed_start_date:
+          type: string
+          format: date
+          nullable: true
+        proposed_duration_months:
+          type: integer
+        status:
+          type: string
+        responded_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+      required:
+      - created_at
+      - id
+      - proposed_by_name
+      - proposed_by_role
+      - proposed_by_user_id
+      - proposed_duration_months
+      - proposed_start_date
+      - responded_at
+      - status
+      - tenancy_id
+    TenancyExtensionHistoryOkResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        message:
+          type: string
+          nullable: true
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/TenancyExtensionHistoryItem'
       required:
       - data
       - ok

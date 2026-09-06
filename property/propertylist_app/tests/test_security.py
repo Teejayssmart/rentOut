@@ -209,7 +209,7 @@ class TestCaptcha(APITestCase):
         self.client = APIClient()
 
     @override_settings(
-        ENABLE_CAPTCHA=True,
+        TURNSTILE_REQUIRED=True,
         REST_FRAMEWORK={
             "DEFAULT_AUTHENTICATION_CLASSES": (
                 "rest_framework_simplejwt.authentication.JWTAuthentication",
@@ -236,18 +236,32 @@ class TestCaptcha(APITestCase):
             "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
         },
     )
-    @patch("propertylist_app.api.views.verify_captcha", return_value=False)  # patch where it's called
-    def test_login_captcha_fail_blocks(self, mocked_verify):
+    @patch(
+        "propertylist_app.api.views.auth.verify_turnstile",
+        return_value=False,
+    )
+    def test_login_turnstile_fail_blocks(self, mocked_verify):
         url = reverse("v1:auth-login")
+
         resp = self.client.post(
             url,
-            {"identifier": "any", "password": "any", "captcha_token": "bad-token"},
+            {
+                "identifier": "any",
+                "password": "any",
+                "turnstile_token": "bad-token",
+            },
             format="json",
             **_auth_headers(ip="198.51.100.55"),
         )
-        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("CAPTCHA", (resp.data.get("detail") or "").upper())
 
+        self.assertEqual(
+            resp.status_code,
+            status.HTTP_400_BAD_REQUEST,
+        )
+        self.assertIn(
+            "SECURITY CHECK FAILED",
+            (resp.data.get("detail") or "").upper(),
+        )
     @override_settings(
         ENABLE_CAPTCHA=True,
         REST_FRAMEWORK={

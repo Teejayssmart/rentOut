@@ -59,6 +59,72 @@ if not SECRET_KEY:
         SECRET_KEY = "dev-only-unsafe-secret-key-change-me"
     else:
         raise ImproperlyConfigured("DJANGO_SECRET_KEY is required in production.")
+    
+# -----------------------------
+# Observability / performance tracing
+# -----------------------------
+APP_ENVIRONMENT = os.getenv(
+    "ENVIRONMENT",
+    "development" if DEBUG else "production",
+).strip().lower()
+
+SENTRY_DSN = os.getenv("SENTRY_DSN", "").strip()
+
+try:
+    SENTRY_TRACES_SAMPLE_RATE = float(
+        os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.0")
+    )
+except ValueError as exc:
+    raise ImproperlyConfigured(
+        "SENTRY_TRACES_SAMPLE_RATE must be a number between 0.0 and 1.0."
+    ) from exc
+
+if not 0.0 <= SENTRY_TRACES_SAMPLE_RATE <= 1.0:
+    raise ImproperlyConfigured(
+        "SENTRY_TRACES_SAMPLE_RATE must be between 0.0 and 1.0."
+    )
+
+if SENTRY_DSN and not TESTING:
+    import sentry_sdk
+
+    from sentry_sdk.integrations.celery import CeleryIntegration
+    from sentry_sdk.integrations.django import DjangoIntegration
+    from sentry_sdk.integrations.redis import RedisIntegration
+
+    sentry_sdk.init(
+        dsn=SENTRY_DSN,
+        integrations=[
+            DjangoIntegration(),
+            CeleryIntegration(),
+            RedisIntegration(),
+        ],
+        environment=APP_ENVIRONMENT,
+        release=os.getenv("RENDER_GIT_COMMIT") or None,
+        traces_sample_rate=SENTRY_TRACES_SAMPLE_RATE,
+        send_default_pii=False,
+        data_collection={
+            "user_info": False,
+            "http_bodies": [],
+        },
+    )    
+
+
+# -----------------------------
+# Controlled SQL/API profiling
+# -----------------------------
+SILK_REQUESTED = os.getenv(
+    "ENABLE_SILK",
+    "false",
+).strip().lower() in {"1", "true", "yes"}
+
+if SILK_REQUESTED and APP_ENVIRONMENT == "production":
+    raise ImproperlyConfigured(
+        "ENABLE_SILK must never be enabled in production."
+    )
+
+ENABLE_SILK = SILK_REQUESTED and not TESTING
+
+
 
 # -----------------------------
 # Production-grade security (staging + production)
@@ -215,6 +281,11 @@ INSTALLED_APPS = [
 
 ]
 
+if ENABLE_SILK:
+    INSTALLED_APPS.append("silk")
+
+
+
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
@@ -228,6 +299,59 @@ MIDDLEWARE = [
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
+
+
+if ENABLE_SILK:
+    MIDDLEWARE.insert(2, "silk.middleware.SilkyMiddleware")
+
+    try:
+        SILKY_INTERCEPT_PERCENT = int(
+            os.getenv("SILKY_INTERCEPT_PERCENT", "100")
+        )
+    except ValueError as exc:
+        raise ImproperlyConfigured(
+            "SILKY_INTERCEPT_PERCENT must be an integer from 0 to 100."
+        ) from exc
+
+    if not 0 <= SILKY_INTERCEPT_PERCENT <= 100:
+        raise ImproperlyConfigured(
+            "SILKY_INTERCEPT_PERCENT must be between 0 and 100."
+        )
+
+    SILKY_AUTHENTICATION = True
+    SILKY_AUTHORISATION = True
+    SILKY_PERMISSIONS = lambda user: user.is_superuser
+
+    # Do not retain passwords, tokens, messages or API response bodies.
+    SILKY_MAX_REQUEST_BODY_SIZE = 0
+    SILKY_MAX_RESPONSE_BODY_SIZE = 0
+    SILKY_SENSITIVE_KEYS = {
+        "username",
+        "email",
+        "api",
+        "token",
+        "key",
+        "secret",
+        "password",
+        "signature",
+        "authorization",
+        "cookie",
+        "access",
+        "refresh",
+        "captcha_token",
+    }
+
+    # Keep profiling bounded and measure the profiler's own overhead.
+    SILKY_MAX_RECORDED_REQUESTS = 1000
+    SILKY_MAX_RECORDED_REQUESTS_CHECK_PERCENT = 10
+    SILKY_META = True
+
+    # Avoid concurrency overhead and unsafe query re-execution.
+    SILKY_PYTHON_PROFILER = False
+    SILKY_ANALYZE_QUERIES = False
+
+
+
 
 ROOT_URLCONF = "property.urls"
 
