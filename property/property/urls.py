@@ -42,13 +42,7 @@ def debug_urls(request):
 
 
 def health_root(request):
-    return JsonResponse(
-        {
-            "status": "ok",
-            "deploy_marker": "render-to-vercel-test",
-        },
-        status=200,
-    )
+    return JsonResponse({"status": "ok"}, status=200)
 
 
 
