@@ -835,31 +835,40 @@ paths:
   /api/v1/auth/token/refresh/:
     post:
       operationId: auth_token_refresh_create
-      description: Rotate a valid refresh token and return a replacement access and
-        refresh token pair. The submitted refresh token is blacklisted.
+      description: Refresh JWT access token and return it in the API success envelope.
       tags:
       - auth
       requestBody:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/TokenRefreshRequest'
+              $ref: '#/components/schemas/TokenRefreshEnvelopeRequest'
           application/x-www-form-urlencoded:
             schema:
-              $ref: '#/components/schemas/TokenRefreshRequest'
+              $ref: '#/components/schemas/TokenRefreshEnvelopeRequest'
           multipart/form-data:
             schema:
-              $ref: '#/components/schemas/TokenRefreshRequest'
+              $ref: '#/components/schemas/TokenRefreshEnvelopeRequest'
         required: true
       responses:
         '200':
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/TokenRefreshOkResponse'
+                $ref: '#/components/schemas/TokenRefreshEnvelopeOkResponse'
           description: ''
         '400':
-          description: Invalid or expired refresh token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DetailResponse'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DetailResponse'
+          description: ''
   /api/v1/auth/verify-otp/:
     post:
       operationId: auth_verify_otp_create
@@ -1492,11 +1501,12 @@ paths:
     get:
       operationId: messages_threads_list
       description: |-
-        GET /api/messages/threads/
+        GET /api/v1/messages/threads/
 
         Query params:
           - folder : inbox (default) | sent | bin | new | waiting_reply
-          - label  : filter by per-user label (Viewing scheduled, Good fit, etc.)
+          - role   : landlord | seeker
+          - label  : filter by per-user label
           - q      : search in message body or participant username
           - sort_by: latest (default) | oldest
       parameters:
@@ -1518,6 +1528,15 @@ paths:
         description: Which field to use when ordering the results.
         schema:
           type: string
+      - in: query
+        name: role
+        schema:
+          type: string
+          enum:
+          - landlord
+          - seeker
+        description: Return threads where the authenticated user has the authoritative
+          landlord or seeker role.
       tags:
       - messages
       security:
@@ -1543,11 +1562,12 @@ paths:
     post:
       operationId: messages_threads_create
       description: |-
-        GET /api/messages/threads/
+        GET /api/v1/messages/threads/
 
         Query params:
           - folder : inbox (default) | sent | bin | new | waiting_reply
-          - label  : filter by per-user label (Viewing scheduled, Good fit, etc.)
+          - role   : landlord | seeker
+          - label  : filter by per-user label
           - q      : search in message body or participant username
           - sort_by: latest (default) | oldest
       tags:
@@ -1658,6 +1678,30 @@ paths:
           description: Authentication required.
         '404':
           description: Thread not found.
+  /api/v1/messages/threads/{thread_id}/delete/:
+    post:
+      operationId: messages_threads_delete_create_2
+      description: |-
+        POST /api/v1/messages/threads/<thread_id>/delete/
+
+        Permanently delete a message thread for the authenticated user only.
+
+        This does not delete the shared MessageThread or the other participant's
+        history. It records a per-user deletion cutoff. Messages created at or
+        before deleted_at are hidden from this user.
+      parameters:
+      - in: path
+        name: thread_id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - messages
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          description: No response body
   /api/v1/messages/threads/{thread_id}/label/:
     post:
       operationId: messages_threads_label_create
@@ -1898,6 +1942,20 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
           description: ''
+  /api/v1/messages/threads/delete/:
+    post:
+      operationId: messages_threads_delete_create
+      description: |-
+        POST /api/v1/messages/threads/delete/
+
+        Permanently delete multiple message threads for the authenticated user.
+      tags:
+      - messages
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          description: No response body
   /api/v1/messages/threads/read/:
     post:
       operationId: messages_threads_read_create
@@ -8396,6 +8454,7 @@ components:
           readOnly: true
         body:
           type: string
+          readOnly: true
         message_type:
           enum:
           - text
@@ -8494,6 +8553,64 @@ components:
             nullable: true
           nullable: true
           readOnly: true
+        participant_role:
+          enum:
+          - landlord
+          - seeker
+          - unscoped
+          - null
+          type: string
+          description: |-
+            * `landlord` - Landlord
+            * `seeker` - Seeker
+            * `unscoped` - Unscoped
+          x-spec-enum-id: 3a26260bf5850b4b
+          nullable: true
+          readOnly: true
+        relationship_type:
+          enum:
+          - room_enquiry
+          - legacy_direct
+          type: string
+          description: |-
+            * `room_enquiry` - Room enquiry
+            * `legacy_direct` - Legacy direct
+          x-spec-enum-id: 1cf05d7eebd8f608
+          readOnly: true
+        room_id:
+          type: integer
+          readOnly: true
+          nullable: true
+        landlord_id:
+          type: integer
+          readOnly: true
+          nullable: true
+        seeker_id:
+          type: integer
+          readOnly: true
+          nullable: true
+        inbox_side:
+          enum:
+          - landlord
+          - seeker
+          - unscoped
+          - null
+          type: string
+          description: |-
+            * `landlord` - Landlord
+            * `seeker` - Seeker
+            * `unscoped` - Unscoped
+          x-spec-enum-id: 3a26260bf5850b4b
+          nullable: true
+          readOnly: true
+        relationship_id:
+          type: integer
+          readOnly: true
+          nullable: true
+        property_id:
+          type: integer
+          readOnly: true
+          nullable: true
         created_at:
           type: string
           format: date-time
@@ -8517,10 +8634,18 @@ components:
       - created_at
       - id
       - in_bin
+      - inbox_side
       - label
+      - landlord_id
       - last_message
       - other_user
+      - participant_role
       - participants
+      - property_id
+      - relationship_id
+      - relationship_type
+      - room_id
+      - seeker_id
       - unread_count
     MessageThreadStateUpdateResponse:
       type: object
@@ -8646,6 +8771,18 @@ components:
         title:
           type: string
           readOnly: true
+        audience:
+          enum:
+          - landlord
+          - seeker
+          - both
+          type: string
+          description: |-
+            * `landlord` - Landlord
+            * `seeker` - Seeker
+            * `both` - Both
+          x-spec-enum-id: 1b992e85c6d8080f
+          readOnly: true
         body:
           type: string
           readOnly: true
@@ -8686,6 +8823,7 @@ components:
           format: date-time
           readOnly: true
       required:
+      - audience
       - body
       - created_at
       - cta_url
@@ -8710,9 +8848,12 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Notification'
+        unread_total:
+          type: integer
       required:
       - data
       - ok
+      - unread_total
     NotificationMarkAllReadData:
       type: object
       properties:
@@ -9361,6 +9502,10 @@ components:
           type: integer
           writeOnly: true
           nullable: true
+        avg_rating:
+          type: number
+          format: float
+          readOnly: true
         is_saved:
           type: boolean
           readOnly: true
@@ -9397,8 +9542,14 @@ components:
         listing_state:
           type: string
           description: |-
-            Returns one of: 'draft', 'active', 'expired', 'hidden', 'rented'.
-            Used by the 'My Listings' page to group listings into tabs.
+            Authoritative state used by My Listings.
+
+            Returns one of:
+            draft, active, pending_review, expired, hidden, rented.
+
+            Lifecycle states take priority over image moderation:
+            a rented, draft, expired, or hidden listing must remain in that
+            lifecycle bucket regardless of its image status.
           readOnly: true
         landlord_type:
           type: string
@@ -9615,10 +9766,6 @@ components:
           x-spec-enum-id: fb3aa58064314015
         parking_available:
           type: boolean
-        avg_rating:
-          type: number
-          format: double
-          readOnly: true
         number_rating:
           type: integer
           readOnly: true
@@ -10499,6 +10646,9 @@ components:
         review_mode:
           type: string
           readOnly: true
+        review_location:
+          type: string
+          readOnly: true
         positive_labels:
           type: array
           items:
@@ -10521,6 +10671,12 @@ components:
         active:
           type: boolean
           readOnly: true
+        room_id:
+          type: integer
+          readOnly: true
+        room_title:
+          type: string
+          readOnly: true
       required:
       - active
       - display_summary
@@ -10531,6 +10687,7 @@ components:
       - positive_labels
       - reveal_at
       - review_flags
+      - review_location
       - review_mode
       - reviewee
       - reviewer
@@ -10538,6 +10695,8 @@ components:
       - reviewer_name
       - reviewer_username
       - role
+      - room_id
+      - room_title
       - submitted_at
       - tenancy
     ReviewCreate:
@@ -10574,6 +10733,10 @@ components:
           type: integer
           writeOnly: true
           nullable: true
+        avg_rating:
+          type: number
+          format: float
+          readOnly: true
         is_saved:
           type: boolean
           readOnly: true
@@ -10610,8 +10773,14 @@ components:
         listing_state:
           type: string
           description: |-
-            Returns one of: 'draft', 'active', 'expired', 'hidden', 'rented'.
-            Used by the 'My Listings' page to group listings into tabs.
+            Authoritative state used by My Listings.
+
+            Returns one of:
+            draft, active, pending_review, expired, hidden, rented.
+
+            Lifecycle states take priority over image moderation:
+            a rented, draft, expired, or hidden listing must remain in that
+            lifecycle bucket regardless of its image status.
           readOnly: true
         landlord_type:
           type: string
@@ -10828,10 +10997,6 @@ components:
           x-spec-enum-id: fb3aa58064314015
         parking_available:
           type: boolean
-        avg_rating:
-          type: number
-          format: double
-          readOnly: true
         number_rating:
           type: integer
           readOnly: true
@@ -12174,8 +12339,14 @@ components:
       properties:
         marked:
           type: integer
+        thread_unread_count:
+          type: integer
+        account_unread_total:
+          type: integer
       required:
+      - account_unread_total
       - marked
+      - thread_unread_count
     ThreadMarkReadOkResponse:
       type: object
       properties:
@@ -12286,7 +12457,7 @@ components:
       required:
       - data
       - ok
-    TokenRefreshData:
+    TokenRefreshEnvelopeData:
       type: object
       properties:
         access:
@@ -12295,29 +12466,21 @@ components:
           type: string
         access_expires_at:
           type: string
-          format: date-time
         refresh_expires_at:
           type: string
-          format: date-time
       required:
       - access
-      - access_expires_at
-      - refresh
-      - refresh_expires_at
-    TokenRefreshOkResponse:
+    TokenRefreshEnvelopeOkResponse:
       type: object
       properties:
         ok:
           type: boolean
-        message:
-          type: string
-          nullable: true
         data:
-          $ref: '#/components/schemas/TokenRefreshData'
+          $ref: '#/components/schemas/TokenRefreshEnvelopeData'
       required:
       - data
       - ok
-    TokenRefreshRequest:
+    TokenRefreshEnvelopeRequest:
       type: object
       properties:
         refresh:
