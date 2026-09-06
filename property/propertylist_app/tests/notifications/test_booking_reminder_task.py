@@ -229,6 +229,16 @@ def test_upcoming_viewing_reminds_both_seeker_and_landlord():
         context__booking_id=booking.id,
     ).count() == 1
 
+
+    seeker_email = OutboundNotification.objects.get(
+        user=seeker,
+        template_key="booking.reminder",
+        context__booking_id=booking.id,
+    )
+
+    assert f"/viewings/{booking.id}" in seeker_email.context["cta_url"]
+    assert "/login?next=" not in seeker_email.context["cta_url"]
+
     landlord_email = OutboundNotification.objects.get(
         user=landlord,
         template_key="booking.reminder_landlord",

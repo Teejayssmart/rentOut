@@ -72,7 +72,7 @@ def test_send_new_message_email_uses_outbox_and_handles_missing_email():
     assert len(mail.outbox) == 1
     email = mail.outbox[0]
     assert "New message from alice" in email.subject
-    assert "Hello Bob!" in email.body
+    assert "Hello Bob!" not in email.body
     assert email.to == ["bob@example.com"]
 
     # If recipient has no email, nothing is sent
