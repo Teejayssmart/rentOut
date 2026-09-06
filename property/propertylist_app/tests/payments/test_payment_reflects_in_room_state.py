@@ -45,7 +45,17 @@ def test_payment_reflects_in_room_state(monkeypatch, api_client, user_factory):
 
     RoomImage.objects.create(
         room=room,
-        image="room_images/payment-state-approved.jpg",
+        image="room_images/payment-state-approved-1.jpg",
+        status="approved",
+    )
+    RoomImage.objects.create(
+        room=room,
+        image="room_images/payment-state-approved-2.jpg",
+        status="approved",
+    )
+    RoomImage.objects.create(
+        room=room,
+        image="room_images/payment-state-approved-3.jpg",
         status="approved",
     )
 
