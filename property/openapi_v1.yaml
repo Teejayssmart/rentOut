@@ -3,3 +3,4 @@ info:
   title: RentOut API
   version: v1
   description: Backend API for RentOut property platform.
+paths: {}
