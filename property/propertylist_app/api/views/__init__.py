@@ -40,8 +40,8 @@ from .rooms import (
     RoomAvailabilityPublicView,
     MyRoomsView,
     MyListingsView,
+    RoomPublishView,
 )
-from .room_publish import RoomPublishView
 
 from .reviews import (
     UserReviewsView,
