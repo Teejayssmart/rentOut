@@ -243,6 +243,77 @@ def test_still_living_check_at_triggers_notification_for_both_users(user_factory
 
     assert after == before + 2
 
-    qs = Notification.objects.filter(type="tenancy_still_living_check").order_by("-id")[:2]
-    user_ids = {n.user_id for n in qs}
-    assert user_ids == {landlord.id, tenant.id}
+    qs = Notification.objects.filter(
+    type="tenancy_still_living_check",
+    user_id__in=[landlord.id, tenant.id],
+    ).order_by("-id")[:2]
+
+    notifications = {n.user_id: n for n in qs}
+
+    assert set(notifications) == {landlord.id, tenant.id}
+
+    assert notifications[landlord.id].target_type == "still_living_check"
+    assert notifications[landlord.id].target_id == tenancy.id
+
+    assert notifications[tenant.id].target_type == "still_living_check"
+    assert notifications[tenant.id].target_id == tenancy.id
+    
+    
+def test_still_living_check_does_not_duplicate_legacy_landlord_booking_target(
+    user_factory,
+    room_factory,
+):
+    Notification = __import__("django.apps").apps.apps.get_model(
+        "propertylist_app",
+        "Notification",
+    )
+    Tenancy = __import__("django.apps").apps.apps.get_model(
+        "propertylist_app",
+        "Tenancy",
+    )
+
+    landlord = user_factory(username="nt_landlord_legacy_dedupe")
+    tenant = user_factory(username="nt_tenant_legacy_dedupe")
+    room = room_factory(property_owner=landlord)
+
+    booking = _make_booking(tenant, room)
+
+    tenancy = _make_tenancy(
+        room=room,
+        landlord=landlord,
+        tenant=tenant,
+        proposed_by=landlord,
+        status=Tenancy.STATUS_ACTIVE,
+    )
+
+    tenancy.still_living_check_at = timezone.now() - timedelta(days=1)
+    tenancy.still_living_confirmed_at = None
+    tenancy.save(
+        update_fields=[
+            "still_living_check_at",
+            "still_living_confirmed_at",
+        ]
+    )
+
+    Notification.objects.create(
+        user=landlord,
+        type="tenancy_still_living_check",
+        target_type="booking",
+        target_id=booking.id,
+        title="Your tenancy is ending soon",
+        body="Legacy landlord reminder",
+    )
+
+    landlord_before = Notification.objects.filter(
+        user=landlord,
+        type="tenancy_still_living_check",
+    ).count()
+
+    task_tenancy_prompts_sweep()
+
+    landlord_after = Notification.objects.filter(
+        user=landlord,
+        type="tenancy_still_living_check",
+    ).count()
+
+    assert landlord_after == landlord_before    

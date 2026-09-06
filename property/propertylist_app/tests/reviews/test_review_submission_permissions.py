@@ -227,3 +227,43 @@ def test_landlord_cannot_submit_tenant_to_landlord_review_flags(
         "Invalid review flag(s) for landlord_to_tenant: responsive"
         in response.data["field_errors"]["review_flags"]
     ) 
+    
+    
+def test_random_user_cannot_view_revealed_review_detail(
+    user_factory,
+    room_factory,
+):
+    Tenancy = _get_model("propertylist_app", "Tenancy")
+    Review = _get_model("propertylist_app", "Review")
+
+    landlord = user_factory(username="review_detail_landlord")
+    tenant = user_factory(username="review_detail_tenant")
+    stranger = user_factory(username="review_detail_stranger")
+    room = room_factory(property_owner=landlord)
+
+    tenancy = _make_tenancy(
+        room,
+        landlord,
+        tenant,
+        status=Tenancy.STATUS_ENDED,
+    )
+
+    review = Review.objects.create(
+        tenancy=tenancy,
+        reviewer=tenant,
+        reviewee=landlord,
+        role=Review.ROLE_TENANT_TO_LANDLORD,
+        overall_rating=4,
+        notes="Private revealed review",
+        active=True,
+        reveal_at=timezone.now() - timedelta(minutes=1),
+    )
+
+    client = APIClient()
+    client.force_authenticate(user=stranger)
+
+    response = client.get(
+        f"/api/v1/reviews/{review.id}/"
+    )
+
+    assert response.status_code == 403    

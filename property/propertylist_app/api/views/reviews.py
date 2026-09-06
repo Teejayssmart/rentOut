@@ -195,15 +195,17 @@ class ReviewDetailView(generics.RetrieveAPIView):
     def get_object(self):
         obj = super().get_object()
         user = self.request.user
-        now = timezone.now()
 
-        is_visible = (
-            (obj.reveal_at and obj.reveal_at <= now) or
-            (obj.reviewer_id == user.id) or
-            (obj.reviewee_id == user.id)
+        is_participant = (
+            obj.reviewer_id == user.id
+            or obj.reviewee_id == user.id
         )
-        if not is_visible:
-            raise PermissionDenied("You do not have permission to view this review yet.")
+
+        if not is_participant:
+            raise PermissionDenied(
+                "You do not have permission to view this review."
+            )
+
         return obj
 
 

@@ -260,7 +260,7 @@ def test_timer_one_does_not_schedule_timer_two(
     )
 
     assert timer_one_email.context["cta_url"].endswith(
-        f"/my-bookings/{booking.id}"
+        f"/viewings/{booking.id}"
     )
 
 

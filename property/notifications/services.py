@@ -1,5 +1,3 @@
-from urllib.parse import quote, urlsplit
-
 from django.conf import settings
 from django.core.mail import EmailMultiAlternatives
 from django.db import transaction
@@ -45,14 +43,7 @@ def _frontend_base() -> str:
     return base.rstrip("/")
 
 
-def build_login_redirect_url(next_path: str | None = "/inbox") -> str:
-    """
-    Returns: '{FRONTEND_BASE_URL}/login?next=/inbox...'
-    """
-    base = _frontend_base()
-    safe_next = _safe_next_path(next_path, default="/inbox")
-    # keep common URL chars safe (so '/inbox?focus=thread&id=1' stays readable)
-    return f"{base}/login?next={quote(safe_next, safe='/?:&=')}"
+
 
 
 def _frontend_base_url() -> str:
@@ -71,19 +62,6 @@ def _safe_next_path(next_path: str | None, default: str = "/inbox") -> str:
     if not next_path.startswith("/"):
         return default
     return next_path
-
-
-def build_frontend_login_redirect(next_path: str | None = "/inbox") -> str:
-    """
-    Output:
-      <FRONTEND_BASE_URL>/login?next=<encoded next_path>
-    Example:
-      https://staging.rentout.co.uk/login?next=/inbox?focus=thread&id=12
-    """
-    base = _frontend_base_url()
-    safe_next = _safe_next_path(next_path, default="/inbox")
-    return f"{base}/login?next={quote(safe_next, safe='/?:&=')}"
-
 
 
 
@@ -194,44 +172,30 @@ Thank you for using RentCrib.
 
 
 
-def _login_gate_cta_url(cta_url: str | None, next_path: str) -> str:
+def _direct_cta_url(cta_url: str | None, next_path: str) -> str:
     """
-    Force internal RentCrib email CTAs through login while leaving
-    external URLs and already login-gated URLs unchanged.
-    """
-    if not cta_url:
-        return build_frontend_login_redirect(next_path)
+    Build a direct RentCrib frontend CTA.
 
-    value = str(cta_url).strip()
+    Authentication is handled by the frontend/app session.
+    Email links must not force authenticated users through /login.
+
+    - Relative internal paths become absolute frontend URLs.
+    - Absolute frontend URLs stay unchanged.
+    - External URLs stay unchanged.
+    - If no CTA is supplied, fall back to the safe internal next_path.
+    """
     base = _frontend_base_url()
 
-    # Relative internal URL.
+    if not cta_url:
+        safe_next = _safe_next_path(next_path, default="/inbox")
+        return f"{base}{safe_next}"
+
+    value = str(cta_url).strip()
+
     if value.startswith("/"):
-        if value.startswith("/login"):
-            return f"{base}{value}"
-        return build_frontend_login_redirect(value)
+        return f"{base}{value}"
 
-    # Absolute URL on our own frontend.
-    parsed = urlsplit(value)
-    base_parsed = urlsplit(base)
-
-    if (
-        parsed.scheme in {"http", "https"}
-        and parsed.netloc == base_parsed.netloc
-    ):
-        internal_path = parsed.path or "/"
-
-        if parsed.query:
-            internal_path += f"?{parsed.query}"
-
-        if internal_path.startswith("/login"):
-            return value
-
-        return build_frontend_login_redirect(internal_path)
-
-    # External URLs must not be rewritten.
     return value
-
 
 class NotificationService:
     @staticmethod
@@ -260,11 +224,11 @@ class NotificationService:
 
         # provide standard CTA URLs for templates
         ctx.setdefault("next_path", next_path)
-        ctx["cta_url"] = _login_gate_cta_url(
+        ctx["cta_url"] = _direct_cta_url(
             ctx.get("cta_url"),
             next_path,
         )
-        ctx.setdefault("inbox_url", build_login_redirect_url("/inbox"))
+        ctx.setdefault("inbox_url", f"{base}/messages")
 
         return ctx
 
@@ -273,8 +237,8 @@ class NotificationService:
         """
         Adds standard URL context for email templates:
         - next_path: internal path like '/inbox?...'
-        - cta_url:   frontend login redirect URL that preserves next_path
-        - inbox_url: shortcut to inbox via login
+        - cta_url:   direct frontend URL for the intended destination
+        - inbox_url: direct frontend messages/inbox URL
         - frontend_base_url: base frontend domain
         """
         context_dict = dict(context_dict or {})
@@ -296,11 +260,14 @@ class NotificationService:
         # Inject new keys that templates can use.
         context_dict.setdefault("frontend_base_url", _frontend_base_url())
         context_dict.setdefault("next_path", next_path)
-        context_dict["cta_url"] = _login_gate_cta_url(
+        context_dict["cta_url"] = _direct_cta_url(
             context_dict.get("cta_url"),
             next_path,
         )
-        context_dict.setdefault("inbox_url", build_frontend_login_redirect("/inbox"))
+        context_dict.setdefault(
+            "inbox_url",
+            f"{_frontend_base_url()}/messages",
+        )
 
         subject_tpl = Template(template_obj.subject or "")
         body_tpl = Template(template_obj.body or "")

@@ -1168,27 +1168,9 @@ def task_tenancy_prompts_sweep() -> int:
                     else tenancy.created_at
                 )
 
-            # Tenant keeps the existing tenancy target.
+            # Both parties should open the tenancy itself.
             target_type = "still_living_check"
             target_id = tenancy.id
-
-            # Landlord should open the completed viewing detail page because that is
-            # where the web app exposes "Update tenancy information".
-            if user.id == tenancy.landlord_id:
-                viewing_booking = (
-                    Booking.objects
-                    .filter(
-                        room=tenancy.room,
-                        user=tenancy.tenant,
-                        is_deleted=False,
-                    )
-                    .order_by("-start", "-id")
-                    .first()
-                )
-
-                if viewing_booking:
-                    target_type = "booking"
-                    target_id = viewing_booking.id
 
             audience = (
                 Notification.Audience.LANDLORD
@@ -1197,13 +1179,33 @@ def task_tenancy_prompts_sweep() -> int:
             )
 
 
-            reminder_exists = Notification.objects.filter(
-                user=user,
-                type="tenancy_still_living_check",
-                target_type=target_type,
-                target_id=target_id,
-                created_at__gte=cycle_started_at,
-            ).exists()
+            reminder_target = Q(
+                target_type="still_living_check",
+                target_id=tenancy.id,
+            )
+
+            if user.id == tenancy.landlord_id:
+                legacy_booking_ids = Booking.objects.filter(
+                    room=tenancy.room,
+                    user=tenancy.tenant,
+                    is_deleted=False,
+                ).values_list("id", flat=True)
+
+                reminder_target |= Q(
+                    target_type="booking",
+                    target_id__in=legacy_booking_ids,
+                )
+
+            reminder_exists = (
+                Notification.objects
+                .filter(
+                    user=user,
+                    type="tenancy_still_living_check",
+                    created_at__gte=cycle_started_at,
+                )
+                .filter(reminder_target)
+                .exists()
+            )
 
             if reminder_exists:
                 return 0
@@ -1678,7 +1680,10 @@ def task_tenancy_prompts_sweep() -> int:
                 deep_link=f"/app/tenancies/{tenancy.id}/reviews",
 
                 # Web/Vercel route used by email button.
-                cta_path=f"/reviews/{review.id}",
+                cta_path=(
+                    f"/reviews/{review.id}?role="
+                    f"{'landlord' if reviewee_audience == Notification.Audience.LANDLORD else 'seeker'}"
+                ),
 
                 room_title=tenancy.room.title,
                 tenancy_id=tenancy.id,

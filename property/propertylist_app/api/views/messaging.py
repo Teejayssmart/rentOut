@@ -550,10 +550,24 @@ class MessageThreadListCreateView(generics.ListCreateAPIView):
 
         user = self.request.user
         params = self.request.query_params
+        
+        
+        hidden_by_delete = MessageThreadState.objects.filter(
+            user=user,
+            thread_id=OuterRef("thread_id"),
+            deleted_at__isnull=False,
+            deleted_at__gte=OuterRef("created"),
+        )
+        
+        
 
         unread_messages = (
             Message.objects
             .filter(thread=OuterRef("pk"))
+            .annotate(
+                hidden_by_delete=Exists(hidden_by_delete)
+            )
+            .filter(hidden_by_delete=False)
             .filter(
                 Q(metadata__system_event=True)
                 | ~Q(sender=user)
@@ -625,7 +639,36 @@ class MessageThreadListCreateView(generics.ListCreateAPIView):
                 )
             )
 
+        deleted_states = (
+            MessageThreadState.objects
+            .filter(
+                user=user,
+                deleted_at__isnull=False,
+            )
+            .values(
+                "thread_id",
+                "deleted_at",
+            )
+        )
 
+        for deleted_state in deleted_states:
+            has_new_incoming_message = (
+                Message.objects
+                .filter(
+                    thread_id=deleted_state["thread_id"],
+                    created__gt=deleted_state["deleted_at"],
+                    message_type=Message.TYPE_TEXT,
+                )
+                .exclude(sender=user)
+                .filter(
+                    Q(metadata__system_event__isnull=True)
+                    | Q(metadata__system_event=False)
+                )
+                .exists()
+            )
+
+            if not has_new_incoming_message:
+                qs = qs.exclude(id=deleted_state["thread_id"])
 
         folder = (params.get("folder") or "").strip().lower()
 
@@ -645,6 +688,10 @@ class MessageThreadListCreateView(generics.ListCreateAPIView):
                 unread_exists = (
                     Message.objects
                     .filter(thread=OuterRef("pk"))
+                    .annotate(
+                        hidden_by_delete=Exists(hidden_by_delete)
+                    )
+                    .filter(hidden_by_delete=False)
                     .filter(
                         Q(metadata__system_event=True)
                         | ~Q(sender=user)
@@ -904,10 +951,21 @@ class MessageThreadDetailView(generics.RetrieveAPIView):
             user=user
         )
         active_role = profile.role
+        
+        hidden_by_delete = MessageThreadState.objects.filter(
+            user=user,
+            thread_id=OuterRef("thread_id"),
+            deleted_at__isnull=False,
+            deleted_at__gte=OuterRef("created"),
+        )
 
         unread_messages = (
             Message.objects
             .filter(thread=OuterRef("pk"))
+            .annotate(
+                hidden_by_delete=Exists(hidden_by_delete)
+            )
+            .filter(hidden_by_delete=False)
             .filter(
                 Q(metadata__system_event=True)
                 | ~Q(sender=user)
@@ -1112,6 +1170,40 @@ class MessageStatsView(APIView):
         )
         if bin_thread_ids:
             base_threads = base_threads.exclude(id__in=bin_thread_ids)
+            
+            
+        deleted_states = (
+            MessageThreadState.objects
+            .filter(
+                user=user,
+                deleted_at__isnull=False,
+            )
+            .values(
+                "thread_id",
+                "deleted_at",
+            )
+        )
+
+        for deleted_state in deleted_states:
+            has_new_incoming_message = (
+                Message.objects
+                .filter(
+                    thread_id=deleted_state["thread_id"],
+                    created__gt=deleted_state["deleted_at"],
+                    message_type=Message.TYPE_TEXT,
+                )
+                .exclude(sender=user)
+                .filter(
+                    Q(metadata__system_event__isnull=True)
+                    | Q(metadata__system_event=False)
+                )
+                .exists()
+            )
+
+            if not has_new_incoming_message:
+                base_threads = base_threads.exclude(
+                    id=deleted_state["thread_id"]
+                )    
 
         # Good-fit threads
         good_fit_ids = MessageThreadState.objects.filter(
@@ -1129,9 +1221,23 @@ class MessageStatsView(APIView):
         # Keep stats consistent with the thread-list unread rule:
         # system events or messages from the other participant remain
         # unread until this user reads them.
+        
+        hidden_by_delete = MessageThreadState.objects.filter(
+            user=user,
+            thread_id=OuterRef("thread_id"),
+            deleted_at__isnull=False,
+            deleted_at__gte=OuterRef("created"),
+        )
+        
+        
+        
         total_unread = (
             Message.objects
             .filter(thread__in=base_threads)
+            .annotate(
+                hidden_by_delete=Exists(hidden_by_delete)
+            )
+            .filter(hidden_by_delete=False)
             .filter(
                 Q(metadata__system_event=True)
                 | ~Q(sender=user)
@@ -1144,6 +1250,10 @@ class MessageStatsView(APIView):
         good_fit_unread = (
             Message.objects
             .filter(thread__in=good_fit_threads)
+            .annotate(
+                hidden_by_delete=Exists(hidden_by_delete)
+            )
+            .filter(hidden_by_delete=False)
             .filter(
                 Q(metadata__system_event=True)
                 | ~Q(sender=user)
@@ -1199,6 +1309,18 @@ class MessageListCreateView(generics.ListCreateAPIView):
         )
 
         qs = Message.objects.filter(thread__id=thread_id).order_by("-created")
+        deleted_at = (
+            MessageThreadState.objects
+            .filter(
+                user=user,
+                thread_id=thread_id,
+            )
+            .values_list("deleted_at", flat=True)
+            .first()
+        )
+
+        if deleted_at is not None:
+            qs = qs.filter(created__gt=deleted_at)
 
         q = (self.request.query_params.get("q") or "").strip()
         if q:
@@ -1362,8 +1484,27 @@ class ThreadMarkReadView(APIView):
         #
         # Therefore system_event messages must be markable as read by BOTH
         # participants, including the user whose id happens to be in sender_id.
+        
+        deleted_at = (
+            MessageThreadState.objects
+            .filter(
+                user=request.user,
+                thread=thread,
+            )
+            .values_list("deleted_at", flat=True)
+            .first()
+        )
+
+        visible_messages = thread.messages.all()
+
+        if deleted_at is not None:
+            visible_messages = visible_messages.filter(
+                created__gt=deleted_at
+            )
+        
+        
         messages_to_mark = list(
-            thread.messages
+            visible_messages
             .filter(
                 Q(metadata__system_event=True)
                 | ~Q(sender=request.user)
@@ -1434,9 +1575,21 @@ class ThreadMarkReadView(APIView):
                 id__in=bin_thread_ids,
             )
 
+        hidden_by_delete = MessageThreadState.objects.filter(
+            user=request.user,
+            thread_id=OuterRef("thread_id"),
+            deleted_at__isnull=False,
+            deleted_at__gte=OuterRef("created"),
+        )
+        
+        
         total_unread = (
             Message.objects
             .filter(thread__in=base_threads)
+            .annotate(
+                hidden_by_delete=Exists(hidden_by_delete)
+            )
+            .filter(hidden_by_delete=False)
             .filter(
                 Q(metadata__system_event=True)
                 | ~Q(sender=request.user)
@@ -1511,9 +1664,23 @@ class ThreadsBulkMarkReadView(APIView):
                 }
             )
 
+        hidden_by_delete = MessageThreadState.objects.filter(
+            user=request.user,
+            thread_id=OuterRef("thread_id"),
+            deleted_at__isnull=False,
+            deleted_at__gte=OuterRef("created"),
+        )
+
+
+
+
         messages_to_mark = list(
             Message.objects
             .filter(thread__in=threads)
+            .annotate(
+                hidden_by_delete=Exists(hidden_by_delete)
+            )
+            .filter(hidden_by_delete=False)
             .filter(
                 Q(metadata__system_event=True)
                 | ~Q(sender=request.user)
@@ -1577,10 +1744,22 @@ class ThreadsBulkMarkReadView(APIView):
             base_threads = base_threads.exclude(
                 id__in=bin_thread_ids,
             )
-
+            
+            
+        hidden_by_delete = MessageThreadState.objects.filter(
+            user=request.user,
+            thread_id=OuterRef("thread_id"),
+            deleted_at__isnull=False,
+            deleted_at__gte=OuterRef("created"),
+        )     
+            
         total_unread = (
             Message.objects
             .filter(thread__in=base_threads)
+            .annotate(
+                hidden_by_delete=Exists(hidden_by_delete)
+            )
+            .filter(hidden_by_delete=False)
             .filter(
                 Q(metadata__system_event=True)
                 | ~Q(sender=request.user)
@@ -1611,6 +1790,139 @@ class ThreadsBulkMarkReadView(APIView):
             },
             status_code=status.HTTP_200_OK,
         )        
+
+
+class ThreadDeleteForeverView(APIView):
+    """
+    POST /api/v1/messages/threads/<thread_id>/delete/
+
+    Permanently delete a message thread for the authenticated user only.
+
+    This does not delete the shared MessageThread or the other participant's
+    history. It records a per-user deletion cutoff. Messages created at or
+    before deleted_at are hidden from this user.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, thread_id):
+        thread = get_object_or_404(
+            _role_scoped_threads(request.user),
+            id=thread_id,
+        )
+
+        state, _ = MessageThreadState.objects.get_or_create(
+            user=request.user,
+            thread=thread,
+        )
+
+        state.deleted_at = timezone.now()
+        state.in_bin = False
+        state.save(update_fields=["deleted_at", "in_bin", "updated_at"])
+
+        return Response(
+            {
+                "thread_id": thread.id,
+                "deleted": True,
+                "deleted_at": state.deleted_at,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class ThreadsBulkDeleteForeverView(APIView):
+    """
+    POST /api/v1/messages/threads/delete/
+
+    Permanently delete multiple message threads for the authenticated user.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        thread_ids = request.data.get("thread_ids") or []
+
+        if not isinstance(thread_ids, list) or not thread_ids:
+            raise ValidationError(
+                {"thread_ids": "Provide a non-empty list of thread ids."}
+            )
+
+        try:
+            thread_ids = list({int(thread_id) for thread_id in thread_ids})
+        except (TypeError, ValueError):
+            raise ValidationError(
+                {"thread_ids": "All thread ids must be integers."}
+            )
+
+        threads = list(
+            _role_scoped_threads(request.user)
+            .filter(id__in=thread_ids)
+            .distinct()
+        )
+
+        found_ids = {thread.id for thread in threads}
+        missing_ids = sorted(set(thread_ids) - found_ids)
+
+        if missing_ids:
+            raise ValidationError(
+                {
+                    "thread_ids": (
+                        "One or more threads do not exist or do not belong "
+                        f"to this user: {missing_ids}"
+                    )
+                }
+            )
+
+        deleted_at = timezone.now()
+
+        existing_states = {
+            state.thread_id: state
+            for state in MessageThreadState.objects.filter(
+                user=request.user,
+                thread_id__in=thread_ids,
+            )
+        }
+
+        states_to_create = []
+        states_to_update = []
+
+        for thread in threads:
+            state = existing_states.get(thread.id)
+
+            if state is None:
+                states_to_create.append(
+                    MessageThreadState(
+                        user=request.user,
+                        thread=thread,
+                        deleted_at=deleted_at,
+                        in_bin=False,
+                    )
+                )
+            else:
+                state.deleted_at = deleted_at
+                state.in_bin = False
+                state.updated_at = deleted_at
+                states_to_update.append(state)
+
+        if states_to_create:
+            MessageThreadState.objects.bulk_create(states_to_create)
+
+        if states_to_update:
+            MessageThreadState.objects.bulk_update(
+                states_to_update,
+                ["deleted_at", "in_bin", "updated_at"],
+            )
+
+        return Response(
+            {
+                "thread_ids": sorted(thread_ids),
+                "deleted": len(thread_ids),
+                "deleted_at": deleted_at,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
 
 
 class ThreadSetLabelView(APIView):

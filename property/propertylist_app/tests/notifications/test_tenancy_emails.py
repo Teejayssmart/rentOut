@@ -6,6 +6,7 @@ from django.contrib.auth import get_user_model
 from notifications.models import NotificationTemplate, OutboundNotification
 from propertylist_app.models import (
     Notification,
+    Review,
     Room,
     RoomCategorie,
     Tenancy,
@@ -537,3 +538,93 @@ def test_tenancy_extension_rejected_queues_email_for_proposer():
         user=tenant,
         template_key="tenancy.extension.rejected",
     ).exists()
+    
+@pytest.mark.django_db
+def test_review_revealed_email_cta_preserves_recipient_role():
+    NotificationTemplate.objects.create(
+        key="tenancy.review_revealed",
+        channel="email",
+        subject="Review revealed",
+        body="Open: {{ cta_url }}",
+        is_active=True,
+    )
+
+    landlord = User.objects.create_user(
+        username="review_revealed_landlord",
+        email="review_revealed_landlord@example.com",
+        password="password123",
+    )
+    tenant = User.objects.create_user(
+        username="review_revealed_tenant",
+        email="review_revealed_tenant@example.com",
+        password="password123",
+    )
+
+    cat = RoomCategorie.objects.create(
+        name="Review Revealed Category",
+        active=True,
+    )
+
+    room = Room.objects.create(
+        property_owner=landlord,
+        title="Review Revealed Room",
+        description="desc",
+        price_per_month=800,
+        location="SW1A 1AA",
+        category=cat,
+    )
+
+    tenancy = Tenancy.objects.create(
+        room=room,
+        landlord=landlord,
+        tenant=tenant,
+        proposed_by=landlord,
+        move_in_date=date.today() - timedelta(days=200),
+        duration_months=6,
+        status=Tenancy.STATUS_ENDED,
+        review_open_at=timezone.now() - timedelta(days=30),
+    )
+
+    landlord_review = Review.objects.create(
+        tenancy=tenancy,
+        reviewer=tenant,
+        reviewee=landlord,
+        role=Review.ROLE_TENANT_TO_LANDLORD,
+        overall_rating=4,
+        notes="Landlord review",
+        active=False,
+        reveal_at=timezone.now() - timedelta(minutes=1),
+    )
+
+    tenant_review = Review.objects.create(
+        tenancy=tenancy,
+        reviewer=landlord,
+        reviewee=tenant,
+        role=Review.ROLE_LANDLORD_TO_TENANT,
+        overall_rating=4,
+        notes="Tenant review",
+        active=False,
+        reveal_at=timezone.now() - timedelta(minutes=1),
+    )
+
+    from propertylist_app.tasks import task_tenancy_prompts_sweep
+
+    task_tenancy_prompts_sweep()
+
+    landlord_email = OutboundNotification.objects.get(
+        user=landlord,
+        template_key="tenancy.review_revealed",
+    )
+    tenant_email = OutboundNotification.objects.get(
+        user=tenant,
+        template_key="tenancy.review_revealed",
+    )
+
+    assert (
+        f"/reviews/{landlord_review.id}?role=landlord"
+        in landlord_email.context["cta_url"]
+    )
+    assert (
+        f"/reviews/{tenant_review.id}?role=seeker"
+        in tenant_email.context["cta_url"]
+    )    

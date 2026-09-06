@@ -58,7 +58,7 @@ def test_checkout_creates_session_for_owner_room(mocker, owner, room):
     views_mod = __import__("propertylist_app.api.views", fromlist=["stripe"])
     mock_stripe = mocker.MagicMock()
     mock_stripe.checkout.Session.create.return_value = mock_session
-    views_mod.stripe = mock_stripe
+    mocker.patch.object(views_mod, "stripe", mock_stripe)
 
     # Auth using DRF APIClient
     c = APIClient()
@@ -99,7 +99,7 @@ def test_success_sets_paid_until_and_status_active(mocker, api_client, owner, ro
     views_mod = __import__("propertylist_app.api.views", fromlist=["stripe"])
     mock_stripe = mocker.MagicMock()
     mock_stripe.Webhook.construct_event.return_value = event
-    views_mod.stripe = mock_stripe
+    mocker.patch.object(views_mod, "stripe", mock_stripe)
 
     resp = api_client.post(
         reverse("v1:stripe-webhook"),
