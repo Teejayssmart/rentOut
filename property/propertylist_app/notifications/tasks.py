@@ -512,7 +512,7 @@ def notify_completed_viewings(hours_back: int = 24) -> int:
                         "booking_id": booking.id,
                         "room_title": room_title,
                         "ended_at": start_str,
-                        "cta_url": f"{_frontend_base_url()}/my-bookings/{booking.id}",
+                        "cta_url": f"{_frontend_base_url()}/viewings/{booking.id}",
                     },
                 )
                 timer_one_created = True
