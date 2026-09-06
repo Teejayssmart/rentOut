@@ -5,7 +5,7 @@ from django.utils import timezone
 from django.urls import reverse
 
 from propertylist_app.api import views as api_views
-from propertylist_app.models import Payment, Room, RoomCategorie
+from propertylist_app.models import Payment, Room, RoomCategorie, RoomImage
 
 
 @pytest.mark.django_db
@@ -41,6 +41,12 @@ def test_payment_reflects_in_room_state(monkeypatch, api_client, user_factory):
         status="active",
         is_deleted=False,
         paid_until=None,
+    )
+
+    RoomImage.objects.create(
+        room=room,
+        image="room_images/payment-state-approved.jpg",
+        status="approved",
     )
 
     payment = Payment.objects.create(
