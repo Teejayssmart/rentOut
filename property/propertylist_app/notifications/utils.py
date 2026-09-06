@@ -1,7 +1,6 @@
 from __future__ import annotations
 from typing import Optional
 from propertylist_app.models import Notification, UserProfile
-from urllib.parse import quote
 from django.conf import settings
 
 

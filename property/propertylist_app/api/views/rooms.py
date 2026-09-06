@@ -14,6 +14,7 @@ from django.db.models import (
     Subquery,
     Value,
     When,
+    Count,
 )
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -1416,39 +1417,84 @@ class MyListingsView(generics.ListAPIView):
 
         state = self.request.query_params.get("state")
 
-        # Annotate listing_state so serializer can reuse it
+        # A listing only clears photo moderation once it has at least
+        # three approved RoomImage records.
+        approved_images = RoomImage.objects.filter(
+            room=OuterRef("pk"),
+            status=RoomImage.STATUS_APPROVED,
+        ).values("room").annotate(
+            approved_count=Count("pk")
+        ).filter(
+            approved_count__gte=3
+        )
+
         qs = qs.annotate(
+            has_approved_images=Exists(approved_images)
+        ).annotate(
             listing_state=Case(
-                # Rented/unavailable must take priority over payment lifecycle.
-                When(is_available=False, then=Value("rented")),
+                # 1. Occupied/rented always wins over every other state.
+                When(
+                    is_available=False,
+                    then=Value("rented"),
+                ),
 
-                # Explicit draft status must remain draft.
-                When(status="draft", then=Value("draft")),
+                # 2. Explicit draft.
+                When(
+                    status="draft",
+                    then=Value("draft"),
+                ),
 
-                # Never paid / not yet listed.
-                When(paid_until__isnull=True, then=Value("draft")),
+                # 3. Never paid / never activated.
+                When(
+                    paid_until__isnull=True,
+                    then=Value("draft"),
+                ),
 
-                # Paid period has ended.
-                When(paid_until__lt=today, then=Value("expired")),
+                # 4. Paid listing whose advertising period has ended.
+                When(
+                    paid_until__lt=today,
+                    then=Value("expired"),
+                ),
 
-                # Explicitly hidden/unpublished while payment is still valid.
-                When(status="hidden", then=Value("hidden")),
+                # 5. Explicitly unpublished while its paid period is valid.
+                When(
+                    status="hidden",
+                    then=Value("hidden"),
+                ),
 
-                # Only an explicitly active, available, currently-paid room is live.
+                # 6. Otherwise-live listing whose photos have not yet
+                # cleared the minimum three-approved-photo requirement.
                 When(
                     Q(status="active")
                     & Q(is_available=True)
-                    & Q(paid_until__gte=today),
+                    & Q(paid_until__gte=today)
+                    & Q(has_approved_images=False),
+                    then=Value("pending_review"),
+                ),
+
+                # 7. Fully live listing.
+                When(
+                    Q(status="active")
+                    & Q(is_available=True)
+                    & Q(paid_until__gte=today)
+                    & Q(has_approved_images=True),
                     then=Value("active"),
                 ),
 
-                # Anything else must not accidentally appear as live.
+                # Unknown combinations fail closed.
                 default=Value("draft"),
                 output_field=CharField(),
             )
         )
 
-        if state in ("draft", "active", "expired", "hidden", "rented"):
+        if state in (
+            "draft",
+            "active",
+            "pending_review",
+            "expired",
+            "hidden",
+            "rented",
+        ):
             qs = qs.filter(listing_state=state)
 
         return qs.order_by("-created_at")

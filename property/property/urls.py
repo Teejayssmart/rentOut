@@ -109,7 +109,20 @@ urlpatterns = [
 
 ]
 
-
+# Silk performance dashboard exists only during controlled profiling.
+if getattr(settings, "ENABLE_SILK", False):
+    urlpatterns = [
+        path(
+            "accounts/login/",
+            admin.site.login,
+            name="silk-login",
+        ),
+        path(
+            "silk/",
+            include("silk.urls", namespace="silk"),
+        ),
+        *urlpatterns,
+    ]
 
 # Serve uploaded media:
 # - DEBUG=True (local dev)
