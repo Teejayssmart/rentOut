@@ -4015,6 +4015,15 @@ class MessageSerializer(serializers.ModelSerializer):
             }:
                 return []
 
+            tenancy_exists = Tenancy.objects.filter(
+                room_id=booking.room_id,
+                landlord_id=owner_id,
+                tenant_id=booking.user_id,
+            ).exists()
+
+            if tenancy_exists:
+                return []
+
             return ["update_tenancy"]
                 
                 

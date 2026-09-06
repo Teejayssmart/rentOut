@@ -6,7 +6,7 @@ from django.contrib.auth import get_user_model
 from django.urls import reverse
 from rest_framework.test import APIClient
 
-from propertylist_app.models import Room, RoomCategorie
+from propertylist_app.models import Room, RoomCategorie, RoomImage
 
 
 User = get_user_model()
@@ -63,10 +63,18 @@ def _make_room(owner, title, paid_until, *, category, status="active"):
     return room
 
 
+def _add_approved_images(room, count=3):
+    for _ in range(count):
+        RoomImage.objects.create(
+            room=room,
+            status=RoomImage.STATUS_APPROVED,
+        )
+
+
 @pytest.mark.django_db
 def test_my_listings_filters_by_state(auth_client, landlord, other_landlord, default_category):
     today = date.today()
-
+    
     _make_room(
         landlord,
         "Draft Room",
@@ -74,12 +82,34 @@ def test_my_listings_filters_by_state(auth_client, landlord, other_landlord, def
         category=default_category,
     )
 
-    _make_room(
+    active_room = _make_room(
         landlord,
         "Active Room",
         paid_until=today + timedelta(days=7),
         category=default_category,
     )
+    
+    _make_room(
+        landlord,
+        "Pending Review Room",
+        paid_until=today + timedelta(days=7),
+        category=default_category,
+    )
+
+    rented_room = _make_room(
+        landlord,
+        "Rented Room",
+        paid_until=today + timedelta(days=7),
+        category=default_category,
+    )
+    rented_room.is_available = False
+    rented_room.save(update_fields=["is_available"])
+    
+    
+    
+    _add_approved_images(active_room, 3)
+
+   
 
     _make_room(
         landlord,
@@ -118,6 +148,19 @@ def test_my_listings_filters_by_state(auth_client, landlord, other_landlord, def
     states = {r["listing_state"] for r in resp.data}
     assert titles == {"Active Room"}
     assert states == {"active"}
+    resp = auth_client.get(url, {"state": "pending_review"})
+    assert resp.status_code == 200
+    titles = {r["title"] for r in resp.data}
+    states = {r["listing_state"] for r in resp.data}
+    assert titles == {"Pending Review Room"}
+    assert states == {"pending_review"}
+
+    resp = auth_client.get(url, {"state": "rented"})
+    assert resp.status_code == 200
+    titles = {r["title"] for r in resp.data}
+    states = {r["listing_state"] for r in resp.data}
+    assert titles == {"Rented Room"}
+    assert states == {"rented"}
 
     resp = auth_client.get(url, {"state": "expired"})
     assert resp.status_code == 200
@@ -137,4 +180,11 @@ def test_my_listings_filters_by_state(auth_client, landlord, other_landlord, def
     assert resp.status_code == 200
     titles = {r["title"] for r in resp.data}
     assert "Other Landlord Room" not in titles
-    assert {"Draft Room", "Active Room", "Expired Room", "Hidden Room"}.issubset(titles)
+    assert {
+        "Draft Room",
+        "Active Room",
+        "Pending Review Room",
+        "Expired Room",
+        "Hidden Room",
+        "Rented Room",
+    }.issubset(titles)
