@@ -11,6 +11,10 @@ class PropertylistAppConfig(AppConfig):
         from .services.homepage_query_optimization import (
             install_homepage_owner_profile_query_optimization,
         )
+        from .services.saved_rooms_query_optimization import (
+            install_saved_rooms_related_query_optimization,
+        )
 
         install_room_serializer_image_cache()
         install_homepage_owner_profile_query_optimization()
+        install_saved_rooms_related_query_optimization()
