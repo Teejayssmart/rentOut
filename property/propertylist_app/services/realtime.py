@@ -7,6 +7,10 @@ from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 from django.db import transaction
 
+from propertylist_app.services.message_unread import (
+    system_message_unread_payload,
+)
+
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +100,31 @@ def push_user_realtime_event(
                 group_send_ms,
                 safe_ids,
             )
+
+            # Human chat messages already publish unread_count_changed from
+            # their Message post-save signal. RentCrib system messages bypass
+            # that signal, so add the same authoritative companion event here
+            # for every persisted workflow/system new_message.
+            if event_type == "new_message":
+                try:
+                    unread_payload = system_message_unread_payload(
+                        user_id,
+                        data,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Realtime system-message unread calculation failed "
+                        "user_id=%s %s",
+                        user_id,
+                        safe_ids,
+                    )
+                else:
+                    if unread_payload is not None:
+                        push_user_realtime_event(
+                            user_id,
+                            "unread_count_changed",
+                            unread_payload,
+                        )
 
         except Exception:
             logger.exception(
