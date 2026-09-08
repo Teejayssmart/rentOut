@@ -20,9 +20,13 @@ class PropertylistAppConfig(AppConfig):
         from .services.booking_list_query_optimization import (
             install_booking_list_query_optimization,
         )
+        from .services.my_rooms_query_optimization import (
+            install_my_rooms_related_query_optimization,
+        )
 
         install_room_serializer_image_cache()
         install_homepage_owner_profile_query_optimization()
         install_saved_rooms_related_query_optimization()
         install_availability_only_free_query_optimization()
         install_booking_list_query_optimization()
+        install_my_rooms_related_query_optimization()
