@@ -1791,14 +1791,22 @@ def task_refresh_tenancy_status_and_review_windows():
             # Make the room available immediately for reletting.
             room = t.room
 
+            room_update_fields = []
+
             if not room.is_available:
                 room.is_available = True
-                room.save(
-                    update_fields=[
-                        "is_available",
-                        "updated_at",
-                    ]
-                )
+                room_update_fields.append("is_available")
+
+            # A completed tenancy starts a fresh letting cycle. Any relist
+            # stamp belongs to the previous cycle and must be cleared even
+            # when the room was already marked available.
+            if room.relisted_at is not None:
+                room.relisted_at = None
+                room_update_fields.append("relisted_at")
+
+            if room_update_fields:
+                room_update_fields.append("updated_at")
+                room.save(update_fields=room_update_fields)
 
         if (
             t.review_open_at is None

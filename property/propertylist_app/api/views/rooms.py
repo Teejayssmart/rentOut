@@ -763,11 +763,16 @@ class RoomPublishView(APIView):
             room.is_available = True
             update_fields.append("is_available")
 
-        if update_fields:
-            update_fields.append("updated_at")
-            room.save(
-                update_fields=update_fields,
-            )
+        # Publishing is also the authoritative relist action. This must
+        # be recorded even when status/is_available are already correct
+        # after the previous tenancy ended.
+        room.relisted_at = timezone.now()
+        update_fields.append("relisted_at")
+
+        update_fields.append("updated_at")
+        room.save(
+            update_fields=update_fields,
+        )
 
         return ok_response(
             {

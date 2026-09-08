@@ -133,6 +133,7 @@ class Room(SoftDeleteModel):
         help_text="Date from which the room will be available for listing / move-in.",
     )
     is_available = models.BooleanField(default=True)
+    relisted_at = models.DateTimeField(null=True, default=None)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
