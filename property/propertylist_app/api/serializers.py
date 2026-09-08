@@ -1604,6 +1604,7 @@ class RoomSerializer(serializers.ModelSerializer):
             "avg_rating",
             "number_rating",
             "paid_until",
+            "relisted_at",
             "is_deleted",
             "deleted_at",
         )
