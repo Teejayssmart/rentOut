@@ -7,6 +7,7 @@ class PropertylistAppConfig(AppConfig):
     def ready(self):
         # import signals so receivers are registered
         from . import signals  # noqa: F401
+        from . import tenancy_lifecycle_signals  # noqa: F401
         from .services.room_serializer_cache import install_room_serializer_image_cache
         from .services.homepage_query_optimization import (
             install_homepage_owner_profile_query_optimization,
