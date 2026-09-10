@@ -8,6 +8,7 @@ class PropertylistAppConfig(AppConfig):
         # import signals so receivers are registered
         from . import signals  # noqa: F401
         from . import tenancy_lifecycle_signals  # noqa: F401
+        from . import tenancy_extension_action_retirement  # noqa: F401
         from .notification_routing import install_bell_notification_routing
         from .services.room_serializer_cache import install_room_serializer_image_cache
         from .services.homepage_query_optimization import (
