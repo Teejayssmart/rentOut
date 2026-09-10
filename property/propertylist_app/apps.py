@@ -30,6 +30,9 @@ class PropertylistAppConfig(AppConfig):
         from .services.message_thread_query_optimization import (
             install_message_thread_query_optimization,
         )
+        from .services.tenancy_review_query_optimization import (
+            install_tenancy_review_query_optimization,
+        )
 
         install_room_serializer_image_cache()
         install_homepage_owner_profile_query_optimization()
@@ -39,3 +42,4 @@ class PropertylistAppConfig(AppConfig):
         install_my_rooms_related_query_optimization()
         install_room_detail_query_optimization()
         install_message_thread_query_optimization()
+        install_tenancy_review_query_optimization()
