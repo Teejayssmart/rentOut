@@ -34,6 +34,9 @@ class PropertylistAppConfig(AppConfig):
         from .services.tenancy_review_query_optimization import (
             install_tenancy_review_query_optimization,
         )
+        from .services.profile_review_query_optimization import (
+            install_profile_review_query_optimization,
+        )
 
         install_bell_notification_routing()
         install_room_serializer_image_cache()
@@ -45,3 +48,4 @@ class PropertylistAppConfig(AppConfig):
         install_room_detail_query_optimization()
         install_message_thread_query_optimization()
         install_tenancy_review_query_optimization()
+        install_profile_review_query_optimization()
