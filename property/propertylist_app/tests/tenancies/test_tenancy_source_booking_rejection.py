@@ -82,3 +82,78 @@ def test_tenant_proposal_preserves_source_booking_for_rejection_notification():
     )
 
     assert f"(booking_id={booking.id})" in rejection.body
+
+
+def test_tenant_proposal_rejects_booking_from_another_room():
+    User = get_user_model()
+
+    landlord = User.objects.create_user(
+        username="source_booking_guard_landlord",
+        password="pass12345",
+    )
+    tenant = User.objects.create_user(
+        username="source_booking_guard_tenant",
+        password="pass12345",
+    )
+
+    category = RoomCategorie.objects.create(
+        name="Source booking guard category",
+        active=True,
+    )
+    room = Room.objects.create(
+        title="Source booking target room",
+        description="Target room for tenancy booking provenance validation.",
+        price_per_month="700.00",
+        location="Southampton",
+        category=category,
+        property_owner=landlord,
+        property_type="flat",
+    )
+    other_room = Room.objects.create(
+        title="Source booking other room",
+        description="Other room whose booking must not be attached to this tenancy.",
+        price_per_month="725.00",
+        location="Southampton",
+        category=category,
+        property_owner=landlord,
+        property_type="flat",
+    )
+
+    now = timezone.now()
+    Booking.objects.create(
+        user=tenant,
+        room=room,
+        start=now - timedelta(days=2),
+        end=now - timedelta(days=2) + timedelta(minutes=30),
+        status=Booking.STATUS_ACTIVE,
+        is_deleted=False,
+        canceled_at=None,
+    )
+    unrelated_booking = Booking.objects.create(
+        user=tenant,
+        room=other_room,
+        start=now - timedelta(days=1),
+        end=now - timedelta(days=1) + timedelta(minutes=30),
+        status=Booking.STATUS_ACTIVE,
+        is_deleted=False,
+        canceled_at=None,
+    )
+
+    client = APIClient()
+    client.force_authenticate(user=tenant)
+
+    response = client.post(
+        "/api/v1/tenancies/propose/",
+        data={
+            "room_id": room.id,
+            "booking_id": unrelated_booking.id,
+            "counterparty_user_id": landlord.id,
+            "move_in_date": str(date.today() + timedelta(days=7)),
+            "duration_months": 6,
+        },
+        format="json",
+    )
+
+    assert response.status_code == 400, response.data
+    assert "booking_id" in response.data
+    assert Tenancy.objects.filter(room=room, tenant=tenant).exists() is False
