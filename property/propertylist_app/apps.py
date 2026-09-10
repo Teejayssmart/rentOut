@@ -38,6 +38,9 @@ class PropertylistAppConfig(AppConfig):
         from .services.profile_review_query_optimization import (
             install_profile_review_query_optimization,
         )
+        from .services.city_list_query_optimization import (
+            install_city_list_query_optimization,
+        )
 
         install_bell_notification_routing()
         install_room_serializer_image_cache()
@@ -50,3 +53,4 @@ class PropertylistAppConfig(AppConfig):
         install_message_thread_query_optimization()
         install_tenancy_review_query_optimization()
         install_profile_review_query_optimization()
+        install_city_list_query_optimization()
