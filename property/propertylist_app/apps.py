@@ -27,6 +27,9 @@ class PropertylistAppConfig(AppConfig):
         from .services.room_detail_query_optimization import (
             install_room_detail_query_optimization,
         )
+        from .services.message_thread_query_optimization import (
+            install_message_thread_query_optimization,
+        )
 
         install_room_serializer_image_cache()
         install_homepage_owner_profile_query_optimization()
@@ -35,3 +38,4 @@ class PropertylistAppConfig(AppConfig):
         install_booking_list_query_optimization()
         install_my_rooms_related_query_optimization()
         install_room_detail_query_optimization()
+        install_message_thread_query_optimization()
