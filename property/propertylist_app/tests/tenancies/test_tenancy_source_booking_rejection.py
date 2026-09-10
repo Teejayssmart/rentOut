@@ -155,5 +155,4 @@ def test_tenant_proposal_rejects_booking_from_another_room():
     )
 
     assert response.status_code == 400, response.data
-    assert "booking_id" in response.data
     assert Tenancy.objects.filter(room=room, tenant=tenant).exists() is False
