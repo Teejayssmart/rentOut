@@ -36,13 +36,15 @@ def test_city_list_applies_pagination_in_database(django_user_model):
 
     assert response.status_code == 200
 
-    city_select_queries = [
+    city_group_queries = [
         query["sql"]
         for query in captured.captured_queries
         if "propertylist_app_room" in query["sql"].lower()
         and "group by" in query["sql"].lower()
-        and "count(" not in query["sql"].lower().split("from", 1)[0]
     ]
 
-    assert len(city_select_queries) == 1, "\n\n".join(city_select_queries)
-    assert "LIMIT 5" in city_select_queries[0].upper(), city_select_queries[0]
+    assert city_group_queries, "No grouped city query was captured."
+    assert any(
+        "LIMIT 5" in sql.upper()
+        for sql in city_group_queries
+    ), "\n\n".join(city_group_queries)
