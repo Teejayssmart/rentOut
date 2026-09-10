@@ -568,6 +568,11 @@ def task_send_tenancy_notification(tenancy_id: int, event: str) -> int:
                 f"{landlord_name} could not verify the tenancy information "
                 f"you submitted for {room_title}. Your submission has been "
                 "cancelled."
+                + (
+                    f" (booking_id={tenancy.source_booking_id})"
+                    if tenancy.source_booking_id
+                    else ""
+                )
             ),
             target_type="tenancy",
             target_id=tenancy.id,

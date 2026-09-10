@@ -598,6 +598,7 @@ class TenancyProposalSerializer(serializers.Serializer):
     """
 
     room_id = serializers.IntegerField()
+    booking_id = serializers.IntegerField(required=False)
     counterparty_user_id = serializers.IntegerField()  # landlord supplies tenant, tenant supplies landlord
     move_in_date = serializers.DateField()
     duration_months = serializers.IntegerField(min_value=1, max_value=12)
@@ -664,6 +665,36 @@ class TenancyProposalSerializer(serializers.Serializer):
                 )
 
 
+
+        booking_id = attrs.get("booking_id")
+        if booking_id is not None:
+            completion_cutoff = timezone.now() - timedelta(minutes=10)
+
+            source_booking = (
+                Booking.objects
+                .filter(
+                    id=booking_id,
+                    room=room,
+                    user=tenant,
+                    is_deleted=False,
+                    status=Booking.STATUS_ACTIVE,
+                    canceled_at__isnull=True,
+                    start__lte=completion_cutoff,
+                )
+                .first()
+            )
+
+            if not source_booking:
+                raise serializers.ValidationError(
+                    {
+                        "booking_id": (
+                            "Booking must be a completed viewing for this room "
+                            "and tenant."
+                        )
+                    }
+                )
+
+            attrs["source_booking"] = source_booking
 
         attrs["room"] = room
         attrs["landlord"] = landlord
@@ -767,6 +798,7 @@ class TenancyProposalSerializer(serializers.Serializer):
 
         tenancy = Tenancy.objects.create(
             room=room,
+            source_booking=validated_data.get("source_booking"),
             landlord=landlord,
             tenant=tenant,
             proposed_by=user,
