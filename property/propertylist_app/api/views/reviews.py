@@ -272,7 +272,7 @@ class TenancyReviewListView(APIView):
         if other_review and other_review.reveal_at:
             other_reveal_at = other_review.reveal_at
         else:
-            other_reveal_at = tenancy.review_open_at
+            other_reveal_at = None
 
         other_visible = bool(other_review and other_reveal_at and now >= other_reveal_at)
 

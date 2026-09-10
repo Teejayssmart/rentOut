@@ -8,6 +8,8 @@ class PropertylistAppConfig(AppConfig):
         # import signals so receivers are registered
         from . import signals  # noqa: F401
         from . import tenancy_lifecycle_signals  # noqa: F401
+        from . import tenancy_extension_action_retirement  # noqa: F401
+        from .notification_routing import install_bell_notification_routing
         from .services.room_serializer_cache import install_room_serializer_image_cache
         from .services.homepage_query_optimization import (
             install_homepage_owner_profile_query_optimization,
@@ -30,7 +32,20 @@ class PropertylistAppConfig(AppConfig):
         from .services.message_thread_query_optimization import (
             install_message_thread_query_optimization,
         )
+        from .services.tenancy_review_query_optimization import (
+            install_tenancy_review_query_optimization,
+        )
+        from .services.profile_review_query_optimization import (
+            install_profile_review_query_optimization,
+        )
+        from .services.city_list_query_optimization import (
+            install_city_list_query_optimization,
+        )
+        from .services.tenancy_extension_lock import (
+            install_tenancy_extension_rejection_lock,
+        )
 
+        install_bell_notification_routing()
         install_room_serializer_image_cache()
         install_homepage_owner_profile_query_optimization()
         install_saved_rooms_related_query_optimization()
@@ -39,3 +54,7 @@ class PropertylistAppConfig(AppConfig):
         install_my_rooms_related_query_optimization()
         install_room_detail_query_optimization()
         install_message_thread_query_optimization()
+        install_tenancy_review_query_optimization()
+        install_profile_review_query_optimization()
+        install_city_list_query_optimization()
+        install_tenancy_extension_rejection_lock()
