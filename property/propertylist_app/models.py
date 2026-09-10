@@ -1149,6 +1149,14 @@ class Tenancy(models.Model):
         related_name="tenancies",
     )
 
+    source_booking = models.ForeignKey(
+        "Booking",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="tenancies_proposed",
+    )
+
     landlord = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
