@@ -7,3 +7,8 @@ class PropertylistAppConfig(AppConfig):
     def ready(self):
         # import signals so receivers are registered
         from . import signals  # noqa: F401
+        from .services.city_list_query_optimization import (
+            install_city_list_query_optimization,
+        )
+
+        install_city_list_query_optimization()
